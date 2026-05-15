@@ -28,7 +28,7 @@ function uid() {
 }
 
 const DEFAULT_FEATURES = {
-  brief: true, capture: true, result_draft: true,
+  brief: true, capture: true, result_draft: true, reentry: true,
   theme_tagging: false, digest: false, cross_meeting: false, drift: false,
 };
 
@@ -372,6 +372,46 @@ async function draftResult({ db, userId, settings, encryptionKey, refType, refId
   return { draft, cost_cents };
 }
 
+// ── Feature: Re-Entry Briefing (W-AI03, Phase 2) ─────────────
+async function summarizeReentry({ db, userId, settings, encryptionKey, frameId, confirmed }) {
+  assertActive(settings, 'reentry');
+
+  const f = db.prepare('SELECT * FROM stack_frames WHERE id=? AND user_id=?').get(frameId, userId);
+  if (!f) throw httpErr(404, 'Frame nicht gefunden');
+
+  // Resolve referenced topic/todo for context
+  let title = '(gelöscht)', description = '', lastResult = '';
+  if (f.ref_type === 'topic') {
+    const t = db.prepare('SELECT title, description, result FROM topics WHERE id=?').get(f.ref_id);
+    if (t) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
+  } else if (f.ref_type === 'todo') {
+    const t = db.prepare('SELECT title, description, result FROM todos WHERE id=? AND user_id=?').get(f.ref_id, userId);
+    if (t) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
+  }
+
+  const tpl = loadPrompt('reentry');
+  const userText = interpolate(tpl.user, {
+    title,
+    nextStepNote: f.next_step_note,
+    description:  stripHtml(description).slice(0, 2000),
+    lastResult:   stripHtml(lastResult).slice(0, 2000) || '—',
+  });
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'reentry', confirmed };
+  const { raw, cost_cents } = await dispatchCall({
+    ...ctx, system: tpl.system, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.reentry, json: false,
+  });
+
+  const summary = String(raw.content || '').trim();
+  const artifactId = uid();
+  db.prepare(
+    'INSERT INTO ai_artifacts(id,user_id,ref_type,ref_id,feature,content,model,created_at) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(artifactId, userId, 'frame', frameId, 'reentry', JSON.stringify({ summary }), settings.model, new Date().toISOString());
+
+  return { artifact_id: artifactId, content: { summary }, cost_cents };
+}
+
 // ── Apply capture suggestions (after user confirmation) ──────
 function applyCapture(db, userId, meetingId, apply) {
   if (!db.prepare('SELECT 1 FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId)) {
@@ -471,7 +511,7 @@ module.exports = {
   // settings
   loadSettings, saveSettings, clearApiKey, publicSettings, DEFAULT_FEATURES,
   // features
-  briefMeeting, captureMeeting, draftResult, applyCapture, testConnection,
+  briefMeeting, captureMeeting, draftResult, summarizeReentry, applyCapture, testConnection,
   // usage re-exports
   usageSummary: (db, uid, period) => usage.usageSummary(db, uid, period),
   // CLI

@@ -204,6 +204,23 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ai_artifacts_ref ON ai_artifacts(ref_type, ref_id);
 `);
 
+// ── Migration: Stack-Layer (Erweiterung v1.1, Phase 2) ───────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stack_frames (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ref_type        TEXT NOT NULL,
+    ref_id          TEXT NOT NULL,
+    next_step_note  TEXT NOT NULL,
+    pushed_at       TEXT NOT NULL,
+    popped_at       TEXT,
+    parent_frame_id TEXT,
+    pop_resolution  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_stack_user_open ON stack_frames(user_id, popped_at);
+  CREATE INDEX IF NOT EXISTS idx_stack_ref       ON stack_frames(ref_type, ref_id);
+`);
+
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
 let encryptionKey;
@@ -833,6 +850,250 @@ app.post(`${A}/ai/todo/:id/result-draft`, requireAuth, async (req, res) => {
     res.json(r);
   } catch (e) { aiErr(res, e); }
 });
+
+app.post(`${A}/ai/stack/:frameId/reentry`, requireAuth, async (req, res) => {
+  try {
+    const s = ai.loadSettings(db, req.session.uid);
+    const r = await ai.summarizeReentry({
+      db, userId: req.session.uid, settings: s, encryptionKey,
+      frameId: req.params.frameId,
+      confirmed: req.query.confirm === 'true',
+    });
+    res.json(r);
+  } catch (e) { aiErr(res, e); }
+});
+
+// ── Stack-Layer routes (Erweiterung v1.1, Phase 2) ───────────
+const MAX_NOTE = 1000;
+const VALID_RESOLUTIONS = new Set(['done', 'snoozed', 'dropped', 'resumed']);
+
+function ownsRef(uid, refType, refId) {
+  if (refType === 'topic') {
+    return !!db.prepare(
+      'SELECT 1 FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?'
+    ).get(refId, uid);
+  }
+  if (refType === 'todo') {
+    return !!db.prepare('SELECT 1 FROM todos WHERE id=? AND user_id=?').get(refId, uid);
+  }
+  return false;
+}
+
+function refTitleAndDescription(refType, refId) {
+  if (refType === 'topic') {
+    const t = db.prepare('SELECT title, description, result FROM topics WHERE id=?').get(refId);
+    return t ? { title: t.title, description: t.description, result: t.result, exists: true }
+             : { title: '(gelöscht)', description: '', result: '', exists: false };
+  }
+  if (refType === 'todo') {
+    const t = db.prepare('SELECT title, description, result FROM todos WHERE id=?').get(refId);
+    return t ? { title: t.title, description: t.description, result: t.result, exists: true }
+             : { title: '(gelöscht)', description: '', result: '', exists: false };
+  }
+  return { title: '(unbekannt)', description: '', result: '', exists: false };
+}
+
+function frameToJson(f) {
+  const ref = refTitleAndDescription(f.ref_type, f.ref_id);
+  return {
+    id: f.id,
+    ref_type: f.ref_type,
+    ref_id: f.ref_id,
+    title: ref.title,
+    ref_exists: ref.exists,
+    next_step_note: f.next_step_note,
+    pushed_at: f.pushed_at,
+    popped_at: f.popped_at || null,
+    parent_frame_id: f.parent_frame_id || null,
+    pop_resolution: f.pop_resolution || null,
+    age_seconds: Math.max(0, Math.floor((Date.now() - new Date(f.pushed_at).getTime()) / 1000)),
+  };
+}
+
+// Sort open frames so the current "active" frame is first. We chase the
+// parent_frame_id chain backwards: the frame referenced by no other open
+// frame is the active one (it has no child).
+function orderActiveFirst(openFrames) {
+  if (openFrames.length === 0) return [];
+  const byId   = new Map(openFrames.map(f => [f.id, f]));
+  const isParent = new Set(openFrames.map(f => f.parent_frame_id).filter(Boolean));
+  // Active = the one nobody points to as parent
+  let active = openFrames.find(f => !isParent.has(f.id));
+  // Defensive fallback: newest pushed_at wins
+  if (!active) active = [...openFrames].sort((a, b) => b.pushed_at.localeCompare(a.pushed_at))[0];
+  const out = [active];
+  let cur = active;
+  while (cur && cur.parent_frame_id && byId.has(cur.parent_frame_id)) {
+    cur = byId.get(cur.parent_frame_id);
+    out.push(cur);
+  }
+  // Append any leftover frames (shouldn't happen with consistent state)
+  for (const f of openFrames) if (!out.includes(f)) out.push(f);
+  return out;
+}
+
+app.get(`${A}/stack`, requireAuth, (req, res) => {
+  const rows = db.prepare(
+    'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
+  ).all(req.session.uid);
+  const ordered = orderActiveFirst(rows);
+  res.json({ frames: ordered.map(frameToJson), depth: ordered.length });
+});
+
+app.post(`${A}/stack/push`, requireAuth, (req, res) => {
+  const { refType, refId, nextStepNote } = req.body || {};
+  if (!refType || !refId)                  return res.status(400).json({ error: 'refType und refId erforderlich' });
+  if (!['topic','todo'].includes(refType)) return res.status(400).json({ error: 'Ungültiger refType' });
+  const note = String(nextStepNote || '').trim();
+  if (!note)                  return res.status(400).json({ error: 'next_step_note erforderlich' });
+  if (note.length > MAX_NOTE) return res.status(400).json({ error: 'next_step_note zu lang (max 1000)' });
+
+  if (!ownsRef(req.session.uid, refType, refId)) return res.status(404).json({ error: 'Referenz nicht gefunden' });
+
+  const dup = db.prepare(
+    'SELECT id FROM stack_frames WHERE user_id=? AND ref_type=? AND ref_id=? AND popped_at IS NULL'
+  ).get(req.session.uid, refType, refId);
+  if (dup) return res.status(409).json({ error: 'Referenz ist bereits in einem offenen Frame', code: 'conflict_existing', frame_id: dup.id });
+
+  // Current top = parent of the new frame
+  const open = db.prepare(
+    'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
+  ).all(req.session.uid);
+  const ordered = orderActiveFirst(open);
+  const parentId = ordered[0]?.id || null;
+
+  const id = uid();
+  db.prepare(
+    'INSERT INTO stack_frames(id,user_id,ref_type,ref_id,next_step_note,pushed_at,parent_frame_id) VALUES (?,?,?,?,?,?,?)'
+  ).run(id, req.session.uid, refType, refId, note, new Date().toISOString(), parentId);
+
+  const frame = db.prepare('SELECT * FROM stack_frames WHERE id=?').get(id);
+  const newDepth = ordered.length + 1;
+  res.status(201).json({
+    frame: frameToJson(frame),
+    depth: newDepth,
+    depth_warning: newDepth >= 4,
+  });
+});
+
+app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
+  const { resolution, result, resultDate, snoozedUntil } = req.body || {};
+  if (!VALID_RESOLUTIONS.has(resolution)) return res.status(400).json({ error: 'Ungültige resolution' });
+
+  const f = db.prepare(
+    'SELECT * FROM stack_frames WHERE id=? AND user_id=? AND popped_at IS NULL'
+  ).get(req.params.frameId, req.session.uid);
+  if (!f) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
+
+  const now = new Date().toISOString();
+  const applied = {};
+
+  if (resolution === 'resumed') {
+    // Frame stays open; just make it the active top by rewiring parent chain.
+    const openOthers = db.prepare(
+      'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL AND id != ?'
+    ).all(req.session.uid, f.id);
+    const ordered = orderActiveFirst(openOthers);
+    const newParent = ordered[0]?.id || null;
+    if (newParent !== f.parent_frame_id) {
+      db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE id=?').run(newParent, f.id);
+    }
+    const updated = db.prepare('SELECT * FROM stack_frames WHERE id=?').get(f.id);
+    return res.json({
+      frame: frameToJson(updated),
+      next_active: frameToJson(updated),
+      applied,
+      drift_warning: false,
+    });
+  }
+
+  // Apply side effects on referenced topic/todo
+  if (resolution === 'done') {
+    const date = resultDate || new Date().toISOString().slice(0, 10);
+    if (f.ref_type === 'topic') {
+      const upd = db.prepare('UPDATE topics SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date) WHERE id=?')
+        .run(result != null ? stripUnsafeHtml(String(result)) : null,
+             result != null ? date : null,
+             f.ref_id);
+      applied.topicDone = upd.changes === 1;
+      if (result != null) applied.resultSaved = true;
+    } else if (f.ref_type === 'todo') {
+      const upd = db.prepare('UPDATE todos SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date) WHERE id=? AND user_id=?')
+        .run(result != null ? stripUnsafeHtml(String(result)) : null,
+             result != null ? date : null,
+             f.ref_id, req.session.uid);
+      applied.todoDone = upd.changes === 1;
+      if (result != null) applied.resultSaved = true;
+    }
+  } else if (resolution === 'snoozed') {
+    const until = snoozedUntil || defaultSnoozeUntilTomorrow();
+    if (f.ref_type === 'topic') {
+      const upd = db.prepare('UPDATE topics SET snoozed_until=? WHERE id=?').run(until, f.ref_id);
+      if (upd.changes === 1) applied.snoozedUntil = until;
+    } else if (f.ref_type === 'todo') {
+      const upd = db.prepare('UPDATE todos SET snoozed_until=? WHERE id=? AND user_id=?').run(until, f.ref_id, req.session.uid);
+      if (upd.changes === 1) applied.snoozedUntil = until;
+    }
+  }
+  // 'dropped': no side effect.
+
+  // Close the frame
+  db.prepare('UPDATE stack_frames SET popped_at=?, pop_resolution=? WHERE id=?').run(now, resolution, f.id);
+
+  // Determine new active frame
+  const openAfter = db.prepare(
+    'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
+  ).all(req.session.uid);
+  const ordered = orderActiveFirst(openAfter);
+  const nextActive = ordered[0] ? frameToJson(ordered[0]) : null;
+
+  // Drift detection (W-S09)
+  const ageSec = (new Date(now).getTime() - new Date(f.pushed_at).getTime()) / 1000;
+  const drift = ageSec < 30 && resolution !== 'done';
+
+  const updated = db.prepare('SELECT * FROM stack_frames WHERE id=?').get(f.id);
+  res.json({
+    frame: frameToJson(updated),
+    next_active: nextActive,
+    applied,
+    drift_warning: drift,
+  });
+});
+
+app.get(`${A}/stack/peek/:frameId`, requireAuth, (req, res) => {
+  const f = db.prepare('SELECT * FROM stack_frames WHERE id=? AND user_id=?').get(req.params.frameId, req.session.uid);
+  if (!f) return res.status(404).json({ error: 'Frame nicht gefunden' });
+  res.json({ frame: frameToJson(f) });
+});
+
+app.get(`${A}/stack/history`, requireAuth, (req, res) => {
+  const where = ['user_id=?', 'popped_at IS NOT NULL'];
+  const params = [req.session.uid];
+  if (req.query.from)       { where.push('popped_at >= ?'); params.push(String(req.query.from)); }
+  if (req.query.to)         { where.push('popped_at <= ?'); params.push(String(req.query.to) + 'T23:59:59'); }
+  if (req.query.resolution) { where.push('pop_resolution = ?'); params.push(String(req.query.resolution)); }
+  const rows = db.prepare(
+    `SELECT * FROM stack_frames WHERE ${where.join(' AND ')} ORDER BY popped_at DESC LIMIT 500`
+  ).all(...params);
+  res.json({ frames: rows.map(frameToJson), count: rows.length });
+});
+
+app.put(`${A}/stack/:frameId/note`, requireAuth, (req, res) => {
+  const note = String(req.body?.nextStepNote || '').trim();
+  if (!note)                  return res.status(400).json({ error: 'next_step_note erforderlich' });
+  if (note.length > MAX_NOTE) return res.status(400).json({ error: 'next_step_note zu lang (max 1000)' });
+  const r = db.prepare(
+    'UPDATE stack_frames SET next_step_note=? WHERE id=? AND user_id=? AND popped_at IS NULL'
+  ).run(note, req.params.frameId, req.session.uid);
+  if (!r.changes) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
+  res.json({ ok: true });
+});
+
+function defaultSnoozeUntilTomorrow() {
+  const d = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  d.setHours(9, 0, 0, 0);
+  return d.toISOString();
+}
 
 // ── Frontend ─────────────────────────────────────────────────
 app.get(BASE || '/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));

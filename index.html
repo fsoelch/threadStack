@@ -906,6 +906,109 @@ body.ai-disabled .ai-action { display: none !important; }
 .ai-status-line {
   font-size:.75rem; color:var(--text-muted); margin-top:.5rem;
 }
+
+/* ─── Stack panel (Phase 2) ──────────────────────────────────── */
+.stack-panel {
+  position:fixed; right:1rem; bottom:1rem; z-index:30;
+  width:320px; max-width:calc(100vw - 2rem);
+  background:white; border:1px solid var(--border); border-radius:12px;
+  box-shadow:var(--shadow-lg); font-size:.8125rem;
+  transition: transform .2s ease, opacity .2s ease;
+}
+.stack-panel.collapsed {
+  width:auto;
+}
+.stack-panel-header {
+  display:flex; align-items:center; gap:.5rem;
+  padding:.5rem .75rem; border-bottom:1px solid var(--border);
+  cursor:pointer; user-select:none;
+}
+.stack-panel.collapsed .stack-panel-header { border-bottom:0; }
+.stack-panel-header .title { font-weight:600; flex:1; }
+.stack-panel-header .badge {
+  background:var(--primary); color:white;
+  padding:.125rem .375rem; border-radius:999px;
+  font-size:.6875rem; font-weight:600; min-width:1.25rem; text-align:center;
+}
+.stack-panel-header .icon-btn {
+  background:none; border:0; padding:.25rem; cursor:pointer;
+  color:var(--text-muted); font-size:.875rem;
+}
+.stack-panel-header .icon-btn:hover { color:var(--text); }
+.stack-panel-body {
+  max-height:50vh; overflow-y:auto; padding:.5rem;
+}
+.stack-panel.collapsed .stack-panel-body { display:none; }
+.stack-frame {
+  border:1px solid var(--border); border-radius:8px;
+  padding:.5rem .625rem; margin-bottom:.375rem;
+  background:var(--card2);
+}
+.stack-frame.active {
+  border:2px solid var(--primary); background:var(--primary-light);
+}
+.stack-frame.parked { opacity:.65; }
+.stack-frame .frame-title {
+  font-weight:600; font-size:.8125rem; margin-bottom:.125rem;
+  display:flex; align-items:center; gap:.375rem;
+}
+.stack-frame .frame-type-pill {
+  font-size:.625rem; padding:.0625rem .375rem; border-radius:4px;
+  background:var(--border); color:var(--text-muted); font-weight:500;
+}
+.stack-frame .frame-note {
+  font-size:.75rem; color:var(--text); margin-bottom:.25rem;
+  white-space:pre-wrap; word-break:break-word;
+}
+.stack-frame .frame-meta {
+  font-size:.6875rem; color:var(--text-muted);
+}
+.stack-frame .frame-actions {
+  display:flex; gap:.25rem; margin-top:.375rem; flex-wrap:wrap;
+}
+.stack-frame .frame-actions .btn-sm {
+  padding:.25rem .5rem; font-size:.6875rem;
+}
+.stack-panel-footer {
+  padding:.375rem .75rem; border-top:1px solid var(--border);
+  font-size:.6875rem; color:var(--text-muted); display:flex; gap:.75rem;
+  flex-wrap:wrap;
+}
+.stack-empty {
+  text-align:center; padding:1rem .5rem;
+  color:var(--text-muted); font-style:italic; font-size:.8125rem;
+}
+.stack-reentry-banner {
+  background:var(--primary-glow); border-radius:6px;
+  padding:.375rem .5rem; margin-top:.25rem;
+  font-size:.75rem; color:var(--primary-dark);
+  border-left:2px solid var(--primary);
+}
+
+/* Stack-history & End-of-day cards */
+.stack-history-row {
+  display:flex; align-items:flex-start; gap:.75rem;
+  padding:.75rem; border:1px solid var(--border); border-radius:8px;
+  margin-bottom:.5rem; background:var(--card);
+}
+.stack-history-row .resolution-badge {
+  font-size:.625rem; font-weight:600; padding:.0625rem .375rem;
+  border-radius:4px; text-transform:uppercase;
+}
+.resolution-done    { background:#dcfce7; color:#166534; }
+.resolution-snoozed { background:#e0e7ff; color:#3730a3; }
+.resolution-dropped { background:#fee2e2; color:#991b1b; }
+.resolution-resumed { background:#fef3c7; color:#92400e; }
+
+@media (max-width: 640px) {
+  .stack-panel {
+    right:.5rem; bottom:.5rem; left:.5rem; width:auto;
+  }
+  .stack-panel-body { max-height:40vh; }
+}
+
+/* Hide stack panel + actions when AI globally disabled — stack itself stays
+   independent of AI, but the re-entry button is wrapped in .ai-action */
 </style>
 </head>
 <body>
@@ -1472,6 +1575,162 @@ body.ai-disabled .ai-action { display: none !important; }
   </div>
 </div>
 
+<!-- ── Stack Panel (Phase 2) ───────────────────────────────────── -->
+<div id="stack-panel" class="stack-panel collapsed" style="display:none">
+  <div class="stack-panel-header" onclick="toggleStackPanel()">
+    <span style="font-size:1rem">📚</span>
+    <span class="title">Stack</span>
+    <span class="badge" id="stack-badge">0</span>
+    <button class="icon-btn" onclick="event.stopPropagation(); openEodReview()" title="Tagesabschluss">🌙</button>
+    <button class="icon-btn" onclick="event.stopPropagation(); openStackHistory()" title="Historie">📜</button>
+    <button class="icon-btn" id="stack-toggle-icon">▾</button>
+  </div>
+  <div class="stack-panel-body" id="stack-panel-body"></div>
+  <div class="stack-panel-footer" id="stack-panel-footer">
+    <span>⌘⇧P Push</span>
+    <span>⌘⇧O Pop</span>
+  </div>
+</div>
+
+<!-- ── Stack Push Modal ────────────────────────────────────────── -->
+<div id="stack-push-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'stack-push-modal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>📚 Auf Stack legen</h2>
+      <button class="modal-close" onclick="document.getElementById('stack-push-modal').style.display='none'">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Ziel</label>
+        <div id="sp-target" class="form-control" style="background:var(--card2); cursor:default"></div>
+      </div>
+      <div class="form-group" id="sp-target-pick-wrap" style="display:none">
+        <label class="form-label">Topic oder Todo wählen</label>
+        <select class="form-control" id="sp-target-pick"></select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Was ist der nächste Schritt? <span style="color:var(--red)">*</span></label>
+        <textarea class="form-control" id="sp-note" rows="3" maxlength="1000"
+                  placeholder="Beim Zurückkommen weißt du genau, wo du weitergemacht hast …"
+                  oninput="document.getElementById('sp-count').textContent = this.value.length"></textarea>
+        <div class="form-hint"><span id="sp-count">0</span> / 1000</div>
+      </div>
+      <div id="sp-depth-warning" class="form-error" style="display:none">
+        <strong>Achtung — Stack-Tiefe ≥ 4.</strong>
+        <p style="margin:.25rem 0 .5rem 0">Wähle, wie du fortfahren willst:</p>
+        <div style="display:flex; gap:.5rem; flex-wrap:wrap">
+          <button class="btn btn-ai btn-sm" onclick="doStackPushForce()">Dennoch pushen</button>
+          <button class="btn btn-secondary btn-sm" onclick="quickCaptureAsTodo()">Als Quick-Todo</button>
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('stack-push-modal').style.display='none'">Abbruch</button>
+        </div>
+      </div>
+      <div id="sp-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('stack-push-modal').style.display='none'">Abbrechen</button>
+      <button class="btn btn-primary" id="sp-save-btn" onclick="submitStackPush()">Auf Stack legen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Stack Pop Modal ─────────────────────────────────────────── -->
+<div id="stack-pop-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'stack-pop-modal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>⏏ Frame schließen</h2>
+      <button class="modal-close" onclick="document.getElementById('stack-pop-modal').style.display='none'">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="pop-frame-info" class="ai-status-line" style="margin-bottom:.5rem"></div>
+      <div class="form-group">
+        <label class="form-label">Wie soll dieses Frame geschlossen werden?</label>
+        <div style="display:flex; flex-direction:column; gap:.375rem">
+          <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer">
+            <input type="radio" name="pop-res" value="done" checked onchange="onPopResolutionChange()">
+            <span>✓ <strong>Erledigt</strong> — markiert das Topic/Todo zusätzlich als erledigt</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer">
+            <input type="radio" name="pop-res" value="snoozed" onchange="onPopResolutionChange()">
+            <span>😴 <strong>Schlafend</strong> — Topic/Todo wird gesnoozed</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer">
+            <input type="radio" name="pop-res" value="dropped" onchange="onPopResolutionChange()">
+            <span>✗ <strong>Verworfen</strong> — Frame schließen ohne Folgeaktion</span>
+          </label>
+          <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer">
+            <input type="radio" name="pop-res" value="resumed" onchange="onPopResolutionChange()">
+            <span>↻ <strong>Wieder aktiv</strong> — Frame bleibt offen und kommt zurück nach oben</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group" id="pop-result-fields">
+        <label class="form-label">Ergebnis / Antwort <span class="opt">(optional)</span></label>
+        <div class="rt-wrapper">
+          <div class="rt-toolbar" id="pop-result-tb"></div>
+          <div class="rt-content" id="pop-result" contenteditable="true" data-placeholder="Was wurde besprochen, entschieden oder vereinbart?"></div>
+        </div>
+        <label class="form-label" style="margin-top:.5rem">Datum</label>
+        <input type="date" class="form-control" id="pop-result-date">
+      </div>
+
+      <div class="form-group" id="pop-snooze-fields" style="display:none">
+        <label class="form-label">Aufwachen am</label>
+        <input type="datetime-local" class="form-control" id="pop-snooze-until">
+      </div>
+
+      <div id="pop-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('stack-pop-modal').style.display='none'">Abbrechen</button>
+      <button class="btn btn-primary" id="pop-save-btn" onclick="submitStackPop()">Frame schließen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Pop Drift Dialog ────────────────────────────────────────── -->
+<div id="pop-drift-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'pop-drift-modal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>🤔 Wurde der Kontext verdrängt?</h2>
+      <button class="modal-close" onclick="document.getElementById('pop-drift-modal').style.display='none'">×</button>
+    </div>
+    <div class="modal-body">
+      <p>Der Frame wurde sehr schnell wieder geschlossen. War der ursprüngliche Inhalt durch etwas anderes verdrängt?</p>
+      <p style="margin-top:.5rem; font-size:.875rem; color:var(--text-muted)">
+        Wenn ja, kannst du das Topic/Todo in den Backlog schicken (snoozen bis morgen 9:00).
+      </p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('pop-drift-modal').style.display='none'">Nein, alles okay</button>
+      <button class="btn btn-primary" onclick="confirmDriftToBacklog()">Ja, in Backlog</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Stack Note Edit Modal ───────────────────────────────────── -->
+<div id="stack-note-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'stack-note-modal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>📝 Notiz bearbeiten</h2>
+      <button class="modal-close" onclick="document.getElementById('stack-note-modal').style.display='none'">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Was ist der nächste Schritt?</label>
+        <textarea class="form-control" id="sn-note" rows="3" maxlength="1000"
+                  oninput="document.getElementById('sn-count').textContent = this.value.length"></textarea>
+        <div class="form-hint"><span id="sn-count">0</span> / 1000</div>
+      </div>
+      <div id="sn-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('stack-note-modal').style.display='none'">Abbrechen</button>
+      <button class="btn btn-primary" onclick="submitStackNote()">Speichern</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── AI Capture Modal ────────────────────────────────────────── -->
 <div id="ai-capture-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'ai-capture-modal')">
   <div class="modal modal-wide" onclick="event.stopPropagation()">
@@ -1761,7 +2020,7 @@ async function doLogin() {
   setBusy('login-btn', true);
   try {
     currentUser = await api('POST', '/login', { username, password });
-    await Promise.all([loadMeetings(), loadTodos(), loadThemes()]);
+    await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadAiSettings(), loadStack()]);
     showApp(); render();
   } catch(e) { errEl.textContent = e.message; errEl.style.display = ''; }
   finally { setBusy('login-btn', false); }
@@ -1820,6 +2079,15 @@ function renderTodosNav() {
       <div class="todo-nav-icon">✓</div>
       <span class="todo-nav-label">Meine Todos</span>
       ${total > 0 ? `<span class="pill pill-open">${total}</span>` : ''}
+    </div>
+    <div class="todo-nav-item ${selectedId === '__eod__' ? 'active' : ''}" onclick="selectView('__eod__')">
+      <div class="todo-nav-icon" style="background:#fef3c7; color:#92400e">🌙</div>
+      <span class="todo-nav-label">Tagesabschluss</span>
+      ${stackState.depth > 0 ? `<span class="pill pill-open">${stackState.depth}</span>` : ''}
+    </div>
+    <div class="todo-nav-item ${selectedId === '__stack_history__' ? 'active' : ''}" onclick="selectView('__stack_history__')">
+      <div class="todo-nav-icon" style="background:#e0e7ff; color:#3730a3">📜</div>
+      <span class="todo-nav-label">Stack-Historie</span>
     </div>`;
 }
 
@@ -1876,7 +2144,9 @@ function renderSidebar() {
 function renderMain() {
   const el = document.getElementById('main-content');
   if (selectedId === '__themes__') { renderThemesView(el); return; }
-  if (selectedId === '__todos__') { renderTodosView(el); return; }
+  if (selectedId === '__todos__')  { renderTodosView(el); return; }
+  if (selectedId === '__eod__')    { renderEodView(el); return; }
+  if (selectedId === '__stack_history__') { renderStackHistoryView(el); return; }
   if (!selectedId) {
     el.innerHTML = `
       <div class="empty-state">
@@ -2068,6 +2338,9 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           <button class="btn btn-secondary btn-sm btn-icon"
             onclick="openThemeLinkModalForTodo('${t.id}')"
             title="Topic zuweisen">🏷️</button>
+          ${!isDone ? `<button class="btn btn-ghost btn-sm btn-icon"
+            onclick="openStackPushModal('todo','${t.id}')"
+            title="Auf Stack legen (⌘⇧P)">📚</button>` : ''}
           <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteTodo('${t.id}','${escHtml(t.title)}')" title="Löschen">🗑️</button>
         </div>
       </div>
@@ -2154,6 +2427,9 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
             onclick="toggleTopicTodo('${mid}','${t.id}')"
             title="${t.isTodo ? 'Von Todos entfernen' : 'Als Todo markieren'}"
             style="${t.isTodo ? 'color:var(--green)' : ''}">📌</button>
+          ${!t.done ? `<button class="btn btn-ghost btn-sm btn-icon"
+            onclick="openStackPushModal('topic','${t.id}')"
+            title="Auf Stack legen (⌘⇧P)">📚</button>` : ''}
           <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDelete('topic','${mid}','${t.id}')" title="Löschen">🗑️</button>
         </div>
       </div>
@@ -3478,24 +3754,476 @@ async function runResultDraft() {
   }
 }
 
+// ── Stack-Layer (Phase 2) ────────────────────────────────────
+let stackState = { frames: [], depth: 0 };
+let stackPanelCollapsed = localStorage.getItem('stackPanelCollapsed') !== 'false';
+let stackPushCtx     = null;  // { refType, refId, title } | null wenn picker-Modus
+let stackPopCtx      = null;
+let stackNoteCtx     = null;
+let driftPopContext  = null;  // { refType, refId } für drift→backlog
+const SHORTCUT_DEFAULTS = { push: 'mod+shift+p', pop: 'mod+shift+o' };
+function getShortcuts() {
+  try {
+    const s = JSON.parse(localStorage.getItem('stackShortcuts') || 'null');
+    return s && s.push && s.pop ? s : SHORTCUT_DEFAULTS;
+  } catch { return SHORTCUT_DEFAULTS; }
+}
+function setShortcuts(s) { localStorage.setItem('stackShortcuts', JSON.stringify(s)); }
+
+function refDisplayTitle(refType, refId) {
+  if (refType === 'topic') {
+    for (const m of meetings) for (const t of (m.topics || [])) if (t.id === refId) return t.title;
+  }
+  if (refType === 'todo') {
+    const t = todos.find(x => x.id === refId);
+    if (t) return t.title;
+  }
+  return '(gelöscht)';
+}
+
+function fmtDurationSec(sec) {
+  if (sec < 60) return `${sec | 0}s`;
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  return rm ? `${h}h ${rm}min` : `${h}h`;
+}
+
+async function loadStack() {
+  try {
+    stackState = await api('GET', '/stack');
+    renderStackPanel();
+  } catch (_) { /* ignore */ }
+}
+
+function renderStackPanel() {
+  const panel = document.getElementById('stack-panel');
+  if (!currentUser) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  document.getElementById('stack-badge').textContent = stackState.depth;
+  document.getElementById('stack-toggle-icon').textContent = stackPanelCollapsed ? '▴' : '▾';
+  panel.classList.toggle('collapsed', stackPanelCollapsed);
+
+  const body = document.getElementById('stack-panel-body');
+  if (stackState.frames.length === 0) {
+    body.innerHTML = '<div class="stack-empty">Kein offenes Frame.<br><small>⌘⇧P legt eines an.</small></div>';
+    return;
+  }
+
+  body.innerHTML = stackState.frames.map((f, i) => {
+    const isActive = i === 0;
+    const typePill = f.ref_type === 'topic' ? '💬 Topic' : '✓ Todo';
+    const note = escHtml(f.next_step_note || '').replace(/\n/g, '<br>');
+    const meta = isActive
+      ? `läuft seit ${fmtDurationSec(f.age_seconds)}`
+      : `geparkt seit ${fmtDurationSec(f.age_seconds)}`;
+    const actions = isActive ? `
+      <div class="frame-actions">
+        <button class="btn btn-primary btn-sm" onclick="openStackPopModalFor('${f.id}')">⏏ Pop</button>
+        <button class="btn btn-secondary btn-sm" onclick="openStackNoteModal('${f.id}')">📝 Notiz</button>
+        <button class="btn btn-ai btn-sm ai-action" onclick="runReentryFor('${f.id}')">🤖 Re-Entry</button>
+      </div>
+      <div id="reentry-banner-${f.id}"></div>
+    ` : '';
+    return `
+      <div class="stack-frame ${isActive ? 'active' : 'parked'}" data-frame-id="${f.id}">
+        <div class="frame-title">
+          <span class="frame-type-pill">${typePill}</span>
+          <span>${escHtml(f.title)}</span>
+        </div>
+        <div class="frame-note">${note}</div>
+        <div class="frame-meta">${meta}</div>
+        ${actions}
+      </div>`;
+  }).join('');
+}
+
+function toggleStackPanel() {
+  stackPanelCollapsed = !stackPanelCollapsed;
+  localStorage.setItem('stackPanelCollapsed', String(stackPanelCollapsed));
+  renderStackPanel();
+}
+
+// ── Push ─────────────────────────────────────────────────────
+function openStackPushModal(refType, refId) {
+  stackPushCtx = (refType && refId) ? { refType, refId } : null;
+  document.getElementById('sp-note').value = '';
+  document.getElementById('sp-count').textContent = '0';
+  document.getElementById('sp-depth-warning').style.display = 'none';
+  document.getElementById('sp-error').style.display = 'none';
+  document.getElementById('sp-save-btn').style.display = '';
+
+  if (stackPushCtx) {
+    const title = refDisplayTitle(refType, refId);
+    document.getElementById('sp-target').textContent = `${refType === 'topic' ? '💬' : '✓'} ${title}`;
+    document.getElementById('sp-target').style.display = '';
+    document.getElementById('sp-target-pick-wrap').style.display = 'none';
+  } else {
+    // Quick-Pick: list open topics + todos
+    document.getElementById('sp-target').style.display = 'none';
+    document.getElementById('sp-target-pick-wrap').style.display = '';
+    const sel = document.getElementById('sp-target-pick');
+    sel.innerHTML = '<option value="">— bitte wählen —</option>';
+    meetings.forEach(m => {
+      (m.topics || []).filter(t => !t.done).forEach(t => {
+        const o = document.createElement('option');
+        o.value = `topic:${t.id}`;
+        o.textContent = `💬 ${m.title} — ${t.title}`;
+        sel.appendChild(o);
+      });
+    });
+    todos.filter(t => !t.done).forEach(t => {
+      const o = document.createElement('option');
+      o.value = `todo:${t.id}`;
+      o.textContent = `✓ ${t.title}`;
+      sel.appendChild(o);
+    });
+  }
+
+  // Pre-flight depth warning
+  if (stackState.depth >= 4) {
+    document.getElementById('sp-depth-warning').style.display = '';
+    document.getElementById('sp-save-btn').style.display = 'none';
+  }
+
+  document.getElementById('stack-push-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('sp-note').focus(), 50);
+}
+
+function ensurePushCtx() {
+  if (stackPushCtx) return stackPushCtx;
+  const v = document.getElementById('sp-target-pick').value;
+  if (!v) return null;
+  const [refType, refId] = v.split(':');
+  return { refType, refId };
+}
+
+async function submitStackPush() {
+  const note = document.getElementById('sp-note').value.trim();
+  const errEl = document.getElementById('sp-error');
+  errEl.style.display = 'none';
+  if (!note) { errEl.textContent = 'Bitte den nächsten Schritt eintragen.'; errEl.style.display = ''; return; }
+  const ctx = ensurePushCtx();
+  if (!ctx) { errEl.textContent = 'Bitte ein Topic oder Todo wählen.'; errEl.style.display = ''; return; }
+  try {
+    const r = await api('POST', '/stack/push', { refType: ctx.refType, refId: ctx.refId, nextStepNote: note });
+    toast('Auf Stack gelegt');
+    document.getElementById('stack-push-modal').style.display = 'none';
+    if (r.depth_warning) toast('Stack-Tiefe ist hoch (≥4) — denk an Tagesabschluss!', 'success');
+    await loadStack();
+    stackPanelCollapsed = false; localStorage.setItem('stackPanelCollapsed', 'false'); renderStackPanel();
+  } catch (e) {
+    if (e.status === 409) {
+      errEl.textContent = 'Dieses Topic/Todo liegt bereits auf dem Stack.';
+      errEl.style.display = '';
+    } else {
+      errEl.textContent = e.message || 'Fehler';
+      errEl.style.display = '';
+    }
+  }
+}
+
+async function doStackPushForce() {
+  // Bypass: same as submit, depth warning was just informational
+  document.getElementById('sp-depth-warning').style.display = 'none';
+  document.getElementById('sp-save-btn').style.display = '';
+  await submitStackPush();
+}
+
+async function quickCaptureAsTodo() {
+  const note = document.getElementById('sp-note').value.trim();
+  const ctx = ensurePushCtx();
+  if (!ctx) { toast('Bitte ein Topic oder Todo wählen.', 'error'); return; }
+  const title = refDisplayTitle(ctx.refType, ctx.refId);
+  try {
+    await api('POST', '/todos', { title: `Quick: ${title}`, description: note });
+    await loadTodos();
+    render();
+    toast('Als Quick-Todo erfasst (nicht auf Stack)');
+    document.getElementById('stack-push-modal').style.display = 'none';
+  } catch (e) {
+    toast(e.message || 'Fehler', 'error');
+  }
+}
+
+// ── Pop ──────────────────────────────────────────────────────
+function openStackPopModalFor(frameId) {
+  const f = stackState.frames.find(x => x.id === frameId);
+  if (!f) { toast('Frame nicht gefunden', 'error'); return; }
+  stackPopCtx = { frame: f };
+  document.getElementById('pop-frame-info').textContent =
+    `${f.ref_type === 'topic' ? '💬' : '✓'} ${f.title} — läuft seit ${fmtDurationSec(f.age_seconds)}`;
+  // Reset to "done" default
+  document.querySelectorAll('input[name=pop-res]').forEach(r => r.checked = r.value === 'done');
+  setRT('pop-result', '');
+  document.getElementById('pop-result-date').value = new Date().toISOString().slice(0, 10);
+  // Default snooze: tomorrow 09:00 local
+  const t = new Date(); t.setDate(t.getDate() + 1); t.setHours(9, 0, 0, 0);
+  document.getElementById('pop-snooze-until').value =
+    t.getFullYear() + '-' + String(t.getMonth()+1).padStart(2,'0') + '-' + String(t.getDate()).padStart(2,'0') + 'T09:00';
+  onPopResolutionChange();
+  document.getElementById('pop-error').style.display = 'none';
+  document.getElementById('stack-pop-modal').style.display = 'flex';
+}
+
+function onPopResolutionChange() {
+  const v = document.querySelector('input[name=pop-res]:checked')?.value || 'done';
+  document.getElementById('pop-result-fields').style.display = (v === 'done')    ? '' : 'none';
+  document.getElementById('pop-snooze-fields').style.display = (v === 'snoozed') ? '' : 'none';
+}
+
+async function submitStackPop() {
+  if (!stackPopCtx) return;
+  const f = stackPopCtx.frame;
+  const resolution = document.querySelector('input[name=pop-res]:checked').value;
+  const body = { resolution };
+  if (resolution === 'done') {
+    const result = getRT('pop-result');
+    if (result) { body.result = result; body.resultDate = document.getElementById('pop-result-date').value; }
+  } else if (resolution === 'snoozed') {
+    const local = document.getElementById('pop-snooze-until').value;
+    if (local) body.snoozedUntil = new Date(local).toISOString();
+  }
+  try {
+    const r = await api('POST', `/stack/pop/${f.id}`, body);
+    document.getElementById('stack-pop-modal').style.display = 'none';
+    toast(resolution === 'resumed' ? 'Frame wieder aktiv' : 'Frame geschlossen');
+    await Promise.all([loadStack(), loadMeetings(), loadTodos()]);
+    render();
+    if (r.drift_warning) {
+      driftPopContext = { refType: f.ref_type, refId: f.ref_id };
+      document.getElementById('pop-drift-modal').style.display = 'flex';
+    }
+  } catch (e) {
+    const errEl = document.getElementById('pop-error');
+    errEl.textContent = e.message || 'Fehler'; errEl.style.display = '';
+  }
+}
+
+async function confirmDriftToBacklog() {
+  if (!driftPopContext) { document.getElementById('pop-drift-modal').style.display = 'none'; return; }
+  const tomorrow9 = (() => { const d = new Date(); d.setDate(d.getDate()+1); d.setHours(9,0,0,0); return d.toISOString(); })();
+  try {
+    if (driftPopContext.refType === 'topic') {
+      // find meeting for topic
+      let mid = null;
+      for (const m of meetings) for (const t of (m.topics || [])) if (t.id === driftPopContext.refId) { mid = m.id; break; }
+      if (mid) await api('PUT', `/meetings/${mid}/topics/${driftPopContext.refId}`, { snoozedUntil: tomorrow9 });
+    } else {
+      await api('PUT', `/todos/${driftPopContext.refId}`, { snoozedUntil: tomorrow9 });
+    }
+    toast('In Backlog verschoben (snoozed bis morgen 9:00)');
+    await Promise.all([loadMeetings(), loadTodos()]); render();
+  } catch (e) { toast(e.message || 'Fehler', 'error'); }
+  document.getElementById('pop-drift-modal').style.display = 'none';
+  driftPopContext = null;
+}
+
+// ── Stack Note Edit ──────────────────────────────────────────
+function openStackNoteModal(frameId) {
+  const f = stackState.frames.find(x => x.id === frameId);
+  if (!f) return;
+  stackNoteCtx = { frameId };
+  document.getElementById('sn-note').value = f.next_step_note || '';
+  document.getElementById('sn-count').textContent = (f.next_step_note || '').length;
+  document.getElementById('sn-error').style.display = 'none';
+  document.getElementById('stack-note-modal').style.display = 'flex';
+}
+async function submitStackNote() {
+  const note = document.getElementById('sn-note').value.trim();
+  const errEl = document.getElementById('sn-error');
+  if (!note) { errEl.textContent = 'Notiz darf nicht leer sein.'; errEl.style.display = ''; return; }
+  try {
+    await api('PUT', `/stack/${stackNoteCtx.frameId}/note`, { nextStepNote: note });
+    toast('Notiz aktualisiert');
+    document.getElementById('stack-note-modal').style.display = 'none';
+    await loadStack();
+  } catch (e) {
+    errEl.textContent = e.message || 'Fehler'; errEl.style.display = '';
+  }
+}
+
+// ── Re-Entry Briefing ────────────────────────────────────────
+async function runReentryFor(frameId) {
+  const banner = document.getElementById(`reentry-banner-${frameId}`);
+  if (!banner) return;
+  banner.innerHTML = '<div class="stack-reentry-banner"><span class="ai-spinner"></span> erzeuge …</div>';
+  try {
+    const r = await aiCall('POST', `/ai/stack/${frameId}/reentry`);
+    banner.innerHTML = `<div class="stack-reentry-banner">${escHtml(r.content.summary || '')}</div>`;
+  } catch (e) {
+    if (e.cancelled) banner.innerHTML = '';
+    else banner.innerHTML = `<div class="stack-reentry-banner" style="border-left-color:var(--red); color:var(--red)">Fehler: ${escHtml(e.message || '')}</div>`;
+  }
+}
+
+// ── End-of-Day Review & Stack History views ─────────────────
+function openEodReview()   { selectView('__eod__'); }
+function openStackHistory() { selectView('__stack_history__'); }
+
+async function renderEodView(el) {
+  let frames = [];
+  try { const r = await api('GET', '/stack'); frames = r.frames; } catch (_) {}
+  if (frames.length === 0) {
+    el.innerHTML = `<div class="content-empty">
+      <div class="content-empty-icon">🌙</div>
+      <h2>Tagesabschluss</h2>
+      <p>Kein offenes Frame — alles erledigt.</p>
+    </div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div class="content-header">
+      <h1>🌙 Tagesabschluss <span class="badge">${frames.length}</span></h1>
+      <p class="muted">Diese Frames sind noch offen. Was möchtest du mit jedem tun?</p>
+    </div>
+    <div style="max-width:900px; margin:0 auto">
+      ${frames.map(f => `
+        <div class="stack-history-row">
+          <div style="flex:1; min-width:0">
+            <div style="font-weight:600; margin-bottom:.25rem">${escHtml(f.title)} <span class="frame-type-pill">${f.ref_type === 'topic' ? '💬 Topic' : '✓ Todo'}</span></div>
+            <div style="font-size:.8125rem; color:var(--text-muted); white-space:pre-wrap">${escHtml(f.next_step_note || '')}</div>
+            <div style="font-size:.6875rem; color:var(--text-light); margin-top:.25rem">läuft seit ${fmtDurationSec(f.age_seconds)}</div>
+          </div>
+          <div style="display:flex; gap:.25rem; flex-direction:column">
+            <button class="btn btn-primary btn-sm"   onclick="eodAction('${f.id}','tomorrow')">Morgen weitermachen</button>
+            <button class="btn btn-secondary btn-sm" onclick="eodAction('${f.id}','snoozed')">Snoozen …</button>
+            <button class="btn btn-danger btn-sm"    onclick="eodAction('${f.id}','dropped')">Droppen</button>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function eodAction(frameId, kind) {
+  const f = stackState.frames.find(x => x.id === frameId) || (await api('GET', '/stack')).frames.find(x => x.id === frameId);
+  if (!f) return;
+  if (kind === 'tomorrow') {
+    const d = new Date(); d.setDate(d.getDate()+1); d.setHours(9,0,0,0);
+    // Snooze the referenced topic/todo. Frame stays open.
+    if (f.ref_type === 'topic') {
+      let mid = null;
+      for (const m of meetings) for (const t of (m.topics || [])) if (t.id === f.ref_id) { mid = m.id; break; }
+      if (mid) await api('PUT', `/meetings/${mid}/topics/${f.ref_id}`, { snoozedUntil: d.toISOString() });
+    } else {
+      await api('PUT', `/todos/${f.ref_id}`, { snoozedUntil: d.toISOString() });
+    }
+    toast('Wird morgen 9:00 wieder aufgenommen');
+  } else if (kind === 'snoozed') {
+    // Pop with snoozed using a simple prompt for date
+    const def = (() => { const d = new Date(); d.setDate(d.getDate()+1); d.setHours(9,0,0,0); return d.toISOString().slice(0,16); })();
+    const v = prompt('Aufwachen am (YYYY-MM-DDTHH:MM):', def);
+    if (!v) return;
+    await api('POST', `/stack/pop/${frameId}`, { resolution: 'snoozed', snoozedUntil: new Date(v).toISOString() });
+    toast('Frame geschlossen & gesnoozed');
+  } else if (kind === 'dropped') {
+    await api('POST', `/stack/pop/${frameId}`, { resolution: 'dropped' });
+    toast('Frame verworfen');
+  }
+  await Promise.all([loadStack(), loadMeetings(), loadTodos()]);
+  render();
+}
+
+async function renderStackHistoryView(el) {
+  const fromEl = document.getElementById('sh-from'), toEl = document.getElementById('sh-to'), resEl = document.getElementById('sh-res');
+  const from = fromEl?.value || '', to = toEl?.value || '', res = resEl?.value || '';
+  let frames = [];
+  try {
+    const q = [from && `from=${from}`, to && `to=${to}`, res && `resolution=${res}`].filter(Boolean).join('&');
+    const r = await api('GET', '/stack/history' + (q ? '?' + q : ''));
+    frames = r.frames;
+  } catch (_) {}
+  el.innerHTML = `
+    <div class="content-header">
+      <h1>📜 Stack-Historie</h1>
+      <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-top:.5rem">
+        <label style="font-size:.8125rem">Von: <input type="date" class="form-control" id="sh-from" value="${from}" style="display:inline-block; width:auto"></label>
+        <label style="font-size:.8125rem">Bis: <input type="date" class="form-control" id="sh-to" value="${to}" style="display:inline-block; width:auto"></label>
+        <label style="font-size:.8125rem">Resolution:
+          <select class="form-control" id="sh-res" style="display:inline-block; width:auto">
+            <option value="">alle</option>
+            <option value="done"    ${res==='done'?'selected':''}>done</option>
+            <option value="snoozed" ${res==='snoozed'?'selected':''}>snoozed</option>
+            <option value="dropped" ${res==='dropped'?'selected':''}>dropped</option>
+          </select>
+        </label>
+        <button class="btn btn-secondary btn-sm" onclick="renderStackHistoryView(document.getElementById('main-content'))">Filtern</button>
+      </div>
+    </div>
+    <div style="max-width:900px; margin:0 auto">
+      ${frames.length === 0 ? '<div class="content-empty">Keine Frames im Filter.</div>' : frames.map(f => `
+        <div class="stack-history-row">
+          <span class="resolution-badge resolution-${f.pop_resolution}">${f.pop_resolution || '—'}</span>
+          <div style="flex:1; min-width:0">
+            <div style="font-weight:600">${escHtml(f.title)} <span class="frame-type-pill">${f.ref_type === 'topic' ? '💬' : '✓'}</span></div>
+            <div style="font-size:.8125rem; color:var(--text-muted); white-space:pre-wrap; margin-top:.25rem">${escHtml(f.next_step_note || '')}</div>
+            <div style="font-size:.6875rem; color:var(--text-light); margin-top:.25rem">
+              gepusht ${fmtDateTime(f.pushed_at)} · gepoppt ${fmtDateTime(f.popped_at)}
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+// ── Keyboard shortcut matcher ────────────────────────────────
+function eventMatchesShortcut(e, combo) {
+  const parts = combo.toLowerCase().split('+').map(s => s.trim());
+  const need = { mod: false, ctrl: false, shift: false, alt: false, key: '' };
+  for (const p of parts) {
+    if (p === 'mod')   need.mod = true;
+    else if (p === 'ctrl')  need.ctrl = true;
+    else if (p === 'shift') need.shift = true;
+    else if (p === 'alt' || p === 'option') need.alt = true;
+    else need.key = p;
+  }
+  const isMac = navigator.platform.toLowerCase().includes('mac');
+  const modPressed = isMac ? e.metaKey : e.ctrlKey;
+  if (need.mod && !modPressed) return false;
+  if (need.ctrl && !e.ctrlKey) return false;
+  if (need.shift !== e.shiftKey) return false;
+  if (need.alt !== e.altKey) return false;
+  return e.key.toLowerCase() === need.key;
+}
+
 // ── Keyboard ─────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
-  if (e.key !== 'Escape') return;
-  closeMobileSidebar();
-  ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal']
-    .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
-  closeConfirm();
+  if (e.key === 'Escape') {
+    closeMobileSidebar();
+    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    closeConfirm();
+    return;
+  }
+  if (!currentUser) return;
+  const sc = getShortcuts();
+  if (eventMatchesShortcut(e, sc.push)) {
+    e.preventDefault();
+    openStackPushModal(null, null);
+    return;
+  }
+  if (eventMatchesShortcut(e, sc.pop)) {
+    e.preventDefault();
+    const top = stackState.frames[0];
+    if (top) openStackPopModalFor(top.id);
+    else toast('Stack ist leer', 'error');
+    return;
+  }
 });
 document.getElementById('login-pw').addEventListener('keydown',   e => { if (e.key==='Enter') doLogin(); });
 document.getElementById('login-user').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('login-pw').focus(); });
 
 // ── Init ─────────────────────────────────────────────────────
-['m-desc','t-desc','t-result','c-result','todo-desc','todo-result'].forEach(id => initRtToolbar(id+'-tb', id));
+['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result'].forEach(id => initRtToolbar(id+'-tb', id));
 
 (async () => {
   try {
     currentUser = await api('GET', '/me');
-    await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadAiSettings()]);
+    await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadAiSettings(), loadStack()]);
     showApp(); render();
   } catch { showLogin(); }
 })();

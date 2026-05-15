@@ -54,4 +54,14 @@ function cleanup(dir) {
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-module.exports = { setupEnv, loadServer, login, ensureTestAdmin, cleanup, REPO_ROOT };
+// Convenience: log in admin, create a meeting + topic + todo, return ids.
+async function bootstrapStackFixture(request, app, db) {
+  const admin = ensureTestAdmin(db);
+  const agent = await login(request, app, admin.username, admin.password);
+  const m = await agent.post('/api/meetings').send({ title: 'M', color: '#6366f1' });
+  const t = await agent.post(`/api/meetings/${m.body.id}/topics`).send({ title: 'Topic-1', description: 'desc' });
+  const d = await agent.post('/api/todos').send({ title: 'Todo-1' });
+  return { admin, agent, meetingId: m.body.id, topicId: t.body.id, todoId: d.body.id };
+}
+
+module.exports = { setupEnv, loadServer, login, ensureTestAdmin, cleanup, REPO_ROOT, bootstrapStackFixture };
