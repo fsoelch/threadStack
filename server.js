@@ -204,6 +204,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_ai_artifacts_ref ON ai_artifacts(ref_type, ref_id);
 `);
 
+// ── Migration: updated_at + AI settings extensions (v1.1, Phase 3) ──
+(function migratePhase3() {
+  function hasCol(table, name) {
+    return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === name);
+  }
+  if (!hasCol('topics', 'updated_at')) {
+    db.exec(`ALTER TABLE topics ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
+    db.exec(`UPDATE topics SET updated_at = created_at WHERE updated_at = ''`);
+  }
+  if (!hasCol('todos', 'updated_at')) {
+    db.exec(`ALTER TABLE todos ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
+    db.exec(`UPDATE todos SET updated_at = created_at WHERE updated_at = ''`);
+  }
+  const aiCols = db.prepare(`PRAGMA table_info(ai_settings)`).all().map(c => c.name);
+  const add = (name, sql) => { if (!aiCols.includes(name)) db.exec(`ALTER TABLE ai_settings ADD COLUMN ${sql}`); };
+  add('drift_days',            'drift_days INTEGER NOT NULL DEFAULT 21');
+  add('theme_tag_threshold',   'theme_tag_threshold REAL NOT NULL DEFAULT 0.7');
+  add('weekly_digest_enabled', 'weekly_digest_enabled INTEGER NOT NULL DEFAULT 0');
+  add('weekly_digest_dow',     'weekly_digest_dow INTEGER NOT NULL DEFAULT 0');
+  add('weekly_digest_hour',    'weekly_digest_hour INTEGER NOT NULL DEFAULT 18');
+})();
+
 // ── Migration: Stack-Layer (Erweiterung v1.1, Phase 2) ───────
 db.exec(`
   CREATE TABLE IF NOT EXISTS stack_frames (
@@ -552,19 +574,21 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   const { title=t.title, description=t.description, done, result, resultDate, isTodo, snoozedUntil } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   const cleanDesc = stripUnsafeHtml(description);
-  db.prepare('UPDATE topics SET title=?,description=?,done=?,result=?,result_date=?,is_todo=?,snoozed_until=? WHERE id=?').run(
+  const nowIso = new Date().toISOString();
+  db.prepare('UPDATE topics SET title=?,description=?,done=?,result=?,result_date=?,is_todo=?,snoozed_until=?,updated_at=? WHERE id=?').run(
     title, cleanDesc,
     done !== undefined ? (done?1:0) : t.done,
     result ?? t.result,
     resultDate ?? t.result_date,
     isTodo !== undefined ? (isTodo?1:0) : t.is_todo,
     snoozedUntil !== undefined ? (snoozedUntil || '') : t.snoozed_until,
+    nowIso,
     t.id
   );
   // Propagate title+description changes to all group members
   if (t.group_id) {
-    db.prepare('UPDATE topics SET title=?, description=? WHERE group_id=? AND id!=?')
-      .run(title, cleanDesc, t.group_id, t.id);
+    db.prepare('UPDATE topics SET title=?, description=?, updated_at=? WHERE group_id=? AND id!=?')
+      .run(title, cleanDesc, nowIso, t.group_id, t.id);
   }
   res.json({ ok: true });
 });
@@ -621,10 +645,11 @@ app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
-  db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=? WHERE id=?').run(
+  db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,updated_at=? WHERE id=?').run(
     title, stripUnsafeHtml(description), done !== undefined ? (done?1:0) : t.done,
     stripUnsafeHtml(result ?? t.result), resultDate ?? t.result_date,
     snoozedUntil !== undefined ? (snoozedUntil || '') : t.snoozed_until,
+    new Date().toISOString(),
     t.id);
   res.json({ ok: true });
 });
@@ -863,6 +888,86 @@ app.post(`${A}/ai/stack/:frameId/reentry`, requireAuth, async (req, res) => {
   } catch (e) { aiErr(res, e); }
 });
 
+// ── Phase 3: Auto-Theme-Tagging (W-AI04) ─────────────────────
+app.post(`${A}/ai/topic/:id/suggest-themes`, requireAuth, async (req, res) => {
+  try {
+    const s = ai.loadSettings(db, req.session.uid);
+    const r = await ai.suggestThemes({
+      db, userId: req.session.uid, settings: s, encryptionKey,
+      refType: 'topic', refId: req.params.id,
+      confirmed: req.query.confirm === 'true',
+    });
+    res.json(r);
+  } catch (e) { aiErr(res, e); }
+});
+app.post(`${A}/ai/todo/:id/suggest-themes`, requireAuth, async (req, res) => {
+  try {
+    const s = ai.loadSettings(db, req.session.uid);
+    const r = await ai.suggestThemes({
+      db, userId: req.session.uid, settings: s, encryptionKey,
+      refType: 'todo', refId: req.params.id,
+      confirmed: req.query.confirm === 'true',
+    });
+    res.json(r);
+  } catch (e) { aiErr(res, e); }
+});
+
+// ── Phase 3: Weekly Digest (W-AI06) ──────────────────────────
+app.get(`${A}/ai/digest/weekly`, requireAuth, async (req, res) => {
+  try {
+    const s = ai.loadSettings(db, req.session.uid);
+    const r = await ai.weeklyDigest({
+      db, userId: req.session.uid, settings: s, encryptionKey,
+      confirmed: req.query.confirm === 'true',
+      force: false,
+    });
+    res.json(r);
+  } catch (e) { aiErr(res, e); }
+});
+app.post(`${A}/ai/digest/weekly`, requireAuth, async (req, res) => {
+  try {
+    const s = ai.loadSettings(db, req.session.uid);
+    const r = await ai.weeklyDigest({
+      db, userId: req.session.uid, settings: s, encryptionKey,
+      confirmed: req.query.confirm === 'true',
+      force: true,
+    });
+    res.json(r);
+  } catch (e) { aiErr(res, e); }
+});
+app.get(`${A}/ai/digest/archive`, requireAuth, (req, res) => {
+  res.json({ entries: ai.listDigestArchive(db, req.session.uid) });
+});
+
+// ── Phase 3: Cross-Meeting-Insight (W-AI07) ──────────────────
+app.get(`${A}/ai/insights/cross-meeting/:meetingId`, requireAuth, (req, res) => {
+  const c = ai.loadCrossMeeting(db, req.session.uid, req.params.meetingId);
+  res.json(c || { artifact_id: null, content: { matches: [] } });
+});
+app.post(`${A}/ai/insights/cross-meeting/:meetingId`, requireAuth, async (req, res) => {
+  try {
+    const s = ai.loadSettings(db, req.session.uid);
+    const r = await ai.crossMeetingInsight({
+      db, userId: req.session.uid, settings: s, encryptionKey,
+      meetingId: req.params.meetingId,
+      confirmed: req.query.confirm === 'true',
+    });
+    res.json(r);
+  } catch (e) { aiErr(res, e); }
+});
+app.delete(`${A}/ai/insights/cross-meeting/:meetingId/:artifactId`, requireAuth, (req, res) => {
+  const ok = ai.deleteCrossMeeting(db, req.session.uid, req.params.artifactId);
+  if (!ok) return res.status(404).json({ error: 'Artefakt nicht gefunden' });
+  res.json({ ok: true });
+});
+
+// ── Phase 3: Drift-Detection (W-AI08) ────────────────────────
+app.get(`${A}/ai/insights/drift`, requireAuth, (req, res) => {
+  const s = ai.loadSettings(db, req.session.uid);
+  const driftDays = (s && s.drift_days) || 21;
+  res.json({ drifted: ai.driftDetection(db, req.session.uid, driftDays), drift_days: driftDays });
+});
+
 // ── Stack-Layer routes (Erweiterung v1.1, Phase 2) ───────────
 const MAX_NOTE = 1000;
 const VALID_RESOLUTIONS = new Set(['done', 'snoozed', 'dropped', 'resumed']);
@@ -1010,17 +1115,20 @@ app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
   // Apply side effects on referenced topic/todo
   if (resolution === 'done') {
     const date = resultDate || new Date().toISOString().slice(0, 10);
+    const nowIso = new Date().toISOString();
     if (f.ref_type === 'topic') {
-      const upd = db.prepare('UPDATE topics SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date) WHERE id=?')
+      const upd = db.prepare('UPDATE topics SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date), updated_at=? WHERE id=?')
         .run(result != null ? stripUnsafeHtml(String(result)) : null,
              result != null ? date : null,
+             nowIso,
              f.ref_id);
       applied.topicDone = upd.changes === 1;
       if (result != null) applied.resultSaved = true;
     } else if (f.ref_type === 'todo') {
-      const upd = db.prepare('UPDATE todos SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date) WHERE id=? AND user_id=?')
+      const upd = db.prepare('UPDATE todos SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date), updated_at=? WHERE id=? AND user_id=?')
         .run(result != null ? stripUnsafeHtml(String(result)) : null,
              result != null ? date : null,
+             nowIso,
              f.ref_id, req.session.uid);
       applied.todoDone = upd.changes === 1;
       if (result != null) applied.resultSaved = true;
@@ -1100,6 +1208,16 @@ app.get(BASE || '/', (req, res) => res.sendFile(path.join(__dirname, 'index.html
 if (BASE) app.get('/', (req, res) => res.redirect(BASE));
 
 module.exports = { app, db };
+
+if (require.main === module) {
+  // Phase 3: schlanker Wochen-Digest-Scheduler (kein eigener Worker)
+  try {
+    const aiJobs = require('./ai/jobs');
+    aiJobs.start({ db, encryptionKey });
+  } catch (e) {
+    console.error('[ai/jobs] start failed:', e.message || e);
+  }
+}
 
 if (require.main === module) app.listen(PORT, () => {
   console.log(`✓ Server läuft auf Port ${PORT}`);

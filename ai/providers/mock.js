@@ -17,12 +17,19 @@ const FIXTURES = {
   },
   result_draft:   'Mock-Ergebnistext.',
   reentry:        'Mock-Reentry-Briefing.',
-  theme_tagging:  { suggestions: [] },
-  digest:         { summary: 'Mock-Digest.' },
+  theme_tagging:  { matches: [] },           // wird in tests pro Test überschrieben
+  digest:         {
+    summary:    'Mock-Digest der Woche.',
+    highlights: ['Highlight 1', 'Highlight 2'],
+    focus_next: ['Fokus 1', 'Fokus 2'],
+  },
   cross_meeting:  { matches: [] },
   drift:          { drifted: [] },
   test:           'OK',
 };
+
+// Allows tests to override the response for a specific feature.
+function setMockResponse(feature, value) { FIXTURES[feature] = value; }
 
 async function callModel({ feature, json = false, maxTokens = 1024 }) {
   const f = feature || 'test';
@@ -36,4 +43,4 @@ async function testConnection() {
   return { ok: true, model: 'mock', sample: 'OK' };
 }
 
-module.exports = { callModel, testConnection };
+module.exports = { callModel, testConnection, setMockResponse };

@@ -64,6 +64,11 @@ function saveSettings(db, userId, patch, encryptionKey) {
   if (patch.max_monthly_cost_cents != null)  set('max_monthly_cost_cents', patch.max_monthly_cost_cents | 0);
   if (patch.confirm_threshold_cents != null) set('confirm_threshold_cents', patch.confirm_threshold_cents | 0);
   if (patch.globally_disabled != null)       set('globally_disabled', patch.globally_disabled ? 1 : 0);
+  if (patch.drift_days != null)              set('drift_days', Math.max(1, patch.drift_days | 0));
+  if (patch.theme_tag_threshold != null)     set('theme_tag_threshold', Math.max(0, Math.min(1, Number(patch.theme_tag_threshold))));
+  if (patch.weekly_digest_enabled != null)   set('weekly_digest_enabled', patch.weekly_digest_enabled ? 1 : 0);
+  if (patch.weekly_digest_dow != null)       set('weekly_digest_dow', Math.max(0, Math.min(6, patch.weekly_digest_dow | 0)));
+  if (patch.weekly_digest_hour != null)      set('weekly_digest_hour', Math.max(0, Math.min(23, patch.weekly_digest_hour | 0)));
   if (patch.features_enabled != null) {
     const merged = { ...DEFAULT_FEATURES, ...patch.features_enabled };
     set('features_enabled', JSON.stringify(merged));
@@ -99,6 +104,11 @@ function publicSettings(s) {
       features_enabled: { ...DEFAULT_FEATURES },
       max_monthly_cost_cents: 0, confirm_threshold_cents: 10,
       globally_disabled: false,
+      drift_days: 21,
+      theme_tag_threshold: 0.7,
+      weekly_digest_enabled: false,
+      weekly_digest_dow: 0,
+      weekly_digest_hour: 18,
       configured: false,
     };
   }
@@ -112,6 +122,11 @@ function publicSettings(s) {
     max_monthly_cost_cents:  s.max_monthly_cost_cents  | 0,
     confirm_threshold_cents: s.confirm_threshold_cents | 0,
     globally_disabled: !!s.globally_disabled,
+    drift_days:            (s.drift_days != null) ? (s.drift_days | 0) : 21,
+    theme_tag_threshold:   (s.theme_tag_threshold != null) ? Number(s.theme_tag_threshold) : 0.7,
+    weekly_digest_enabled: !!s.weekly_digest_enabled,
+    weekly_digest_dow:     (s.weekly_digest_dow != null) ? (s.weekly_digest_dow | 0) : 0,
+    weekly_digest_hour:    (s.weekly_digest_hour != null) ? (s.weekly_digest_hour | 0) : 18,
     configured: !!(s.provider && s.api_key_last4),
   };
 }
@@ -412,6 +427,303 @@ async function summarizeReentry({ db, userId, settings, encryptionKey, frameId, 
   return { artifact_id: artifactId, content: { summary }, cost_cents };
 }
 
+// ── Feature: Auto-Theme-Tagging (W-AI04, Phase 3) ────────────
+const THEME_TAG_SCHEMA = {
+  matches: 'array',
+};
+function validateThemeTagging(obj) {
+  if (!obj || typeof obj !== 'object') throw new Error('Top-level must be object');
+  if (!Array.isArray(obj.matches)) obj.matches = [];
+  return obj;
+}
+
+async function suggestThemes({ db, userId, settings, encryptionKey, refType, refId, confirmed }) {
+  assertActive(settings, 'theme_tagging');
+
+  let title, description;
+  if (refType === 'topic') {
+    const t = db.prepare(
+      'SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?'
+    ).get(refId, userId);
+    if (!t) throw httpErr(404, 'Thema nicht gefunden');
+    title = t.title; description = t.description;
+  } else if (refType === 'todo') {
+    const t = db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(refId, userId);
+    if (!t) throw httpErr(404, 'Todo nicht gefunden');
+    title = t.title; description = t.description;
+  } else {
+    throw httpErr(400, 'Ungültiger refType');
+  }
+
+  const themes = db.prepare('SELECT id, title, description FROM themes WHERE user_id=?').all(userId);
+  if (themes.length === 0) {
+    return { suggestions: [], cost_cents: 0, note: 'Keine Topic-Bereiche vorhanden.' };
+  }
+
+  const tpl = loadPrompt('theme-tagging');
+  const userText = interpolate(tpl.user, {
+    title,
+    description: stripHtml(description || '').slice(0, 2000),
+    themesList:  themes.map(th => `${th.id} → ${th.title}${th.description ? ' | ' + stripHtml(th.description).slice(0, 120) : ''}`).join('\n'),
+  });
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'theme_tagging', confirmed };
+  const { obj, cost_cents } = await callWithRetryJson({
+    ctx, system: tpl.system, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.theme_tagging,
+    validate: validateThemeTagging,
+  });
+
+  // Filter by user's threshold and resolve theme titles. Drop unknown ids.
+  const threshold = (settings.theme_tag_threshold != null) ? settings.theme_tag_threshold : 0.7;
+  const byId = new Map(themes.map(t => [t.id, t]));
+  const suggestions = (obj.matches || [])
+    .map(m => ({
+      theme_id:    m.theme_id,
+      theme_title: byId.get(m.theme_id)?.title || '(unbekannt)',
+      confidence:  typeof m.confidence === 'number' ? m.confidence : 0,
+      existing:    !!byId.get(m.theme_id),
+    }))
+    .filter(m => m.existing && m.confidence >= threshold)
+    .slice(0, 5);
+
+  return { suggestions, cost_cents };
+}
+
+// ── Feature: Weekly Digest (W-AI06, Phase 3) ─────────────────
+function isoYearWeek(d = new Date()) {
+  // ISO week: Thursday determines the year.
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day  = (date.getUTCDay() + 6) % 7;  // Mon=0
+  date.setUTCDate(date.getUTCDate() - day + 3);
+  const isoYear  = date.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(isoYear, 0, 4));
+  const isoWeek  = 1 + Math.round(((date - yearStart) / 86400000 - 3 + ((yearStart.getUTCDay() + 6) % 7)) / 7);
+  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
+}
+
+function gatherWeeklyStats(db, userId) {
+  const now = new Date();
+  const sinceIso = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const done = db.prepare(
+    `SELECT t.title, t.result, t.result_date, m.title AS meeting
+       FROM topics t JOIN meetings m ON m.id=t.meeting_id
+      WHERE m.user_id=? AND t.done=1 AND t.result_date >= ?
+      ORDER BY t.result_date DESC LIMIT 30`
+  ).all(userId, sinceIso.slice(0, 10));
+
+  const fresh = db.prepare(
+    `SELECT t.title, m.title AS meeting
+       FROM topics t JOIN meetings m ON m.id=t.meeting_id
+      WHERE m.user_id=? AND t.created_at >= ?
+      ORDER BY t.created_at DESC LIMIT 30`
+  ).all(userId, sinceIso);
+
+  const themesTop = db.prepare(
+    `SELECT th.title AS theme, COUNT(*) AS n
+       FROM theme_links l
+       JOIN themes th ON th.id=l.theme_id
+      WHERE th.user_id=? AND l.created_at >= ?
+   GROUP BY th.id ORDER BY n DESC LIMIT 5`
+  ).all(userId, sinceIso);
+
+  const longFrames = db.prepare(
+    `SELECT id, next_step_note, pushed_at, ref_type, ref_id
+       FROM stack_frames
+      WHERE user_id=? AND popped_at IS NULL
+      ORDER BY pushed_at ASC LIMIT 5`
+  ).all(userId);
+
+  const stackStats = db.prepare(
+    `SELECT COUNT(*) AS pushes,
+            SUM(CASE WHEN pop_resolution='done' THEN 1 ELSE 0 END) AS done_count,
+            SUM(CASE WHEN pop_resolution='dropped' THEN 1 ELSE 0 END) AS dropped_count
+       FROM stack_frames
+      WHERE user_id=? AND pushed_at >= ?`
+  ).get(userId, sinceIso);
+
+  return { done, fresh, themesTop, longFrames, stackStats };
+}
+
+async function weeklyDigest({ db, userId, settings, encryptionKey, confirmed, force }) {
+  assertActive(settings, 'digest');
+
+  const week = isoYearWeek();
+
+  // Cached: if a digest for this week already exists, return it.
+  if (!force) {
+    const cached = db.prepare(
+      `SELECT * FROM ai_artifacts WHERE user_id=? AND feature='digest' AND ref_id=? ORDER BY created_at DESC LIMIT 1`
+    ).get(userId, week);
+    if (cached) {
+      let content; try { content = JSON.parse(cached.content); } catch { content = { summary: '' }; }
+      return { artifact_id: cached.id, content, week, cached: true, cost_cents: 0 };
+    }
+  }
+
+  const s = gatherWeeklyStats(db, userId);
+
+  const fmtList = (arr, fn) => arr.length ? arr.map(fn).join('\n') : '— keine —';
+  const tpl = loadPrompt('weekly-digest');
+  const userText = interpolate(tpl.user, {
+    week,
+    doneCount: s.done.length,
+    newCount:  s.fresh.length,
+    doneList:  fmtList(s.done,       d => `- ${d.meeting}: ${d.title}${d.result ? ' — ' + stripHtml(d.result).slice(0,120) : ''}`),
+    newList:   fmtList(s.fresh,      d => `- ${d.meeting}: ${d.title}`),
+    themesTop: fmtList(s.themesTop,  d => `- ${d.theme} (${d.n})`),
+    longFrames: fmtList(s.longFrames, f => `- ${f.next_step_note.slice(0, 80)} (seit ${f.pushed_at.slice(0,10)})`),
+    stackStats: s.stackStats ? `Pushes: ${s.stackStats.pushes} · erledigt: ${s.stackStats.done_count} · verworfen: ${s.stackStats.dropped_count}` : '—',
+  });
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'digest', confirmed };
+  const { raw, cost_cents } = await dispatchCall({
+    ...ctx, system: tpl.system, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.digest, json: true,
+  });
+
+  let parsed;
+  try { parsed = typeof raw.content === 'object' ? raw.content : parseJsonStrict(raw.content); }
+  catch { parsed = { summary: String(raw.content || ''), highlights: [], focus_next: [] }; }
+
+  const artifactId = uid();
+  db.prepare(
+    'INSERT INTO ai_artifacts(id,user_id,ref_type,ref_id,feature,content,model,created_at) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(artifactId, userId, 'digest', week, 'digest', JSON.stringify(parsed), settings.model, new Date().toISOString());
+
+  return { artifact_id: artifactId, content: parsed, week, cached: false, cost_cents };
+}
+
+function listDigestArchive(db, userId) {
+  const rows = db.prepare(
+    `SELECT id, ref_id AS week, content, model, created_at FROM ai_artifacts
+      WHERE user_id=? AND feature='digest'
+      ORDER BY created_at DESC LIMIT 100`
+  ).all(userId);
+  return rows.map(r => {
+    let content; try { content = JSON.parse(r.content); } catch { content = { summary: '' }; }
+    return { artifact_id: r.id, week: r.week, model: r.model, created_at: r.created_at, content };
+  });
+}
+
+// ── Feature: Cross-Meeting-Insight (W-AI07, Phase 3) ─────────
+const CMI_SCHEMA = { matches: 'array' };
+function validateCMI(obj) {
+  if (!obj || typeof obj !== 'object') throw new Error('Top-level must be object');
+  if (!Array.isArray(obj.matches)) obj.matches = [];
+  return obj;
+}
+
+async function crossMeetingInsight({ db, userId, settings, encryptionKey, meetingId, confirmed }) {
+  assertActive(settings, 'cross_meeting');
+
+  const meeting = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId);
+  if (!meeting) throw httpErr(404, 'Meeting nicht gefunden');
+
+  const thisTopics = db.prepare(
+    `SELECT id, title, description FROM topics WHERE meeting_id=? AND done=0`
+  ).all(meetingId);
+  if (thisTopics.length === 0) {
+    return { artifact_id: null, content: { matches: [] }, cost_cents: 0 };
+  }
+
+  const otherTopics = db.prepare(
+    `SELECT t.id, t.title, t.description, m.title AS meeting
+       FROM topics t JOIN meetings m ON m.id=t.meeting_id
+      WHERE m.user_id=? AND t.meeting_id!=? AND t.done=0 LIMIT 100`
+  ).all(userId, meetingId);
+  if (otherTopics.length === 0) {
+    return { artifact_id: null, content: { matches: [] }, cost_cents: 0 };
+  }
+
+  const tpl = loadPrompt('cross-meeting');
+  const userText = interpolate(tpl.user, {
+    thisList:  thisTopics.map(t => `${t.id} → ${t.title}${t.description ? ' | ' + stripHtml(t.description).slice(0, 120) : ''}`).join('\n'),
+    otherList: otherTopics.map(t => `${t.id} → ${t.meeting} | ${t.title}${t.description ? ' | ' + stripHtml(t.description).slice(0, 120) : ''}`).join('\n'),
+  });
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'cross_meeting', confirmed };
+  const { obj, cost_cents } = await callWithRetryJson({
+    ctx, system: tpl.system, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.cross_meeting,
+    validate: validateCMI,
+  });
+
+  // Enrich matches with titles and meeting names for the frontend.
+  const thisById  = new Map(thisTopics.map(t => [t.id, t]));
+  const otherById = new Map(otherTopics.map(t => [t.id, t]));
+  const enriched = (obj.matches || [])
+    .filter(m => m && thisById.has(m.this_topic_id) && otherById.has(m.other_topic_id))
+    .map(m => ({
+      this_topic_id:    m.this_topic_id,
+      this_topic_title: thisById.get(m.this_topic_id).title,
+      other_topic_id:   m.other_topic_id,
+      other_topic_title: otherById.get(m.other_topic_id).title,
+      other_meeting:    otherById.get(m.other_topic_id).meeting,
+      confidence:       typeof m.confidence === 'number' ? m.confidence : 0,
+      reason:           String(m.reason || '').slice(0, 200),
+    }));
+
+  // Remove previous artifact for this meeting, then insert a fresh one.
+  db.prepare(`DELETE FROM ai_artifacts WHERE user_id=? AND feature='cross_meeting' AND ref_id=?`).run(userId, meetingId);
+  const artifactId = uid();
+  db.prepare(
+    'INSERT INTO ai_artifacts(id,user_id,ref_type,ref_id,feature,content,model,created_at) VALUES (?,?,?,?,?,?,?,?)'
+  ).run(artifactId, userId, 'meeting', meetingId, 'cross_meeting', JSON.stringify({ matches: enriched }), settings.model, new Date().toISOString());
+
+  return { artifact_id: artifactId, content: { matches: enriched }, cost_cents };
+}
+
+function loadCrossMeeting(db, userId, meetingId) {
+  const row = db.prepare(
+    `SELECT * FROM ai_artifacts WHERE user_id=? AND feature='cross_meeting' AND ref_id=?
+      ORDER BY created_at DESC LIMIT 1`
+  ).get(userId, meetingId);
+  if (!row) return null;
+  let content; try { content = JSON.parse(row.content); } catch { content = { matches: [] }; }
+  return { artifact_id: row.id, created_at: row.created_at, content };
+}
+
+function deleteCrossMeeting(db, userId, artifactId) {
+  const r = db.prepare(`DELETE FROM ai_artifacts WHERE id=? AND user_id=? AND feature='cross_meeting'`).run(artifactId, userId);
+  return r.changes > 0;
+}
+
+// ── Feature: Drift-Detection (W-AI08, Phase 3) ───────────────
+// Pure DB-Query, no AI call.
+function driftDetection(db, userId, driftDays = 21) {
+  const now = Date.now();
+  const cutoffIso = new Date(now - driftDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // Topics: open, created before cutoff, not edited since cutoff,
+  // not snoozed beyond cutoff, no recent open stack frame on them.
+  const drifted = db.prepare(`
+    SELECT t.id, t.title, t.created_at, t.updated_at, t.snoozed_until,
+           m.id AS meeting_id, m.title AS meeting_title
+      FROM topics t
+      JOIN meetings m ON m.id=t.meeting_id
+     WHERE m.user_id=?
+       AND t.done=0
+       AND t.created_at < ?
+       AND (t.updated_at = '' OR t.updated_at < ?)
+       AND (t.snoozed_until IS NULL OR t.snoozed_until = '' OR t.snoozed_until < ?)
+       AND NOT EXISTS (
+         SELECT 1 FROM stack_frames sf
+          WHERE sf.user_id=? AND sf.ref_type='topic' AND sf.ref_id=t.id
+            AND sf.pushed_at >= ?
+       )
+  `).all(userId, cutoffIso, cutoffIso, cutoffIso, userId, cutoffIso);
+
+  return drifted.map(r => ({
+    topic_id:      r.id,
+    title:         r.title,
+    meeting_id:    r.meeting_id,
+    meeting_title: r.meeting_title,
+    days_idle:     Math.floor((now - new Date(r.updated_at || r.created_at).getTime()) / 86400000),
+  }));
+}
+
 // ── Apply capture suggestions (after user confirmation) ──────
 function applyCapture(db, userId, meetingId, apply) {
   if (!db.prepare('SELECT 1 FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId)) {
@@ -512,6 +824,9 @@ module.exports = {
   loadSettings, saveSettings, clearApiKey, publicSettings, DEFAULT_FEATURES,
   // features
   briefMeeting, captureMeeting, draftResult, summarizeReentry, applyCapture, testConnection,
+  suggestThemes, weeklyDigest, listDigestArchive,
+  crossMeetingInsight, loadCrossMeeting, deleteCrossMeeting,
+  driftDetection,
   // usage re-exports
   usageSummary: (db, uid, period) => usage.usageSummary(db, uid, period),
   // CLI

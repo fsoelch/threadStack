@@ -1009,6 +1009,67 @@ body.ai-disabled .ai-action { display: none !important; }
 
 /* Hide stack panel + actions when AI globally disabled — stack itself stays
    independent of AI, but the re-entry button is wrapped in .ai-action */
+
+/* ─── Phase 3: Theme-Tag suggestions, drift, CMI, digest ─────── */
+.theme-suggest-row {
+  display:flex; flex-wrap:wrap; gap:.375rem; align-items:center;
+  margin-top:.5rem; padding:.5rem .625rem;
+  background:var(--primary-glow); border-radius:8px;
+  font-size:.75rem;
+}
+.theme-suggest-row .label { font-weight:600; color:var(--primary-dark); margin-right:.25rem; }
+.theme-suggest-pill {
+  display:inline-flex; align-items:center; gap:.25rem;
+  padding:.125rem .5rem; border-radius:999px;
+  background:white; border:1px solid var(--primary);
+  color:var(--primary-dark); cursor:pointer; font-weight:500;
+  transition: background .15s;
+}
+.theme-suggest-pill:hover { background:var(--primary); color:white; }
+.theme-suggest-pill .confidence { opacity:.7; font-size:.6875rem; }
+.theme-suggest-pill .dismiss {
+  background:none; border:0; color:inherit; cursor:pointer; padding:0 .125rem;
+  font-size:1rem; line-height:1; opacity:.5;
+}
+.theme-suggest-pill .dismiss:hover { opacity:1; }
+
+.drift-pill {
+  display:inline-block; padding:.125rem .5rem;
+  background:#fef3c7; color:#92400e; border-radius:999px;
+  font-size:.6875rem; font-weight:600; margin-left:.5rem;
+}
+.topic-card.drifted { border-left:3px solid #f59e0b; }
+
+.cmi-banner {
+  display:flex; align-items:center; gap:.5rem; flex-wrap:wrap;
+  padding:.625rem .75rem; margin-bottom:1rem;
+  background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px;
+  font-size:.8125rem; color:#1e40af;
+}
+.cmi-banner-title { font-weight:600; flex:1; min-width:200px; }
+.cmi-banner-actions { display:flex; gap:.375rem; }
+.cmi-banner .btn { font-size:.75rem; padding:.25rem .5rem; }
+.cmi-details {
+  margin-top:.5rem; max-width:100%;
+  display:flex; flex-direction:column; gap:.375rem;
+}
+.cmi-detail-row {
+  padding:.5rem .625rem; background:white; border:1px solid var(--border);
+  border-radius:6px; font-size:.75rem;
+}
+.cmi-detail-row .titles { font-weight:500; margin-bottom:.125rem; }
+.cmi-detail-row .arrow  { color:var(--text-muted); margin:0 .375rem; }
+.cmi-detail-row .reason { color:var(--text-muted); font-style:italic; }
+.cmi-detail-row .conf   { display:inline-block; margin-left:.5rem;
+                          padding:.0625rem .375rem; background:var(--primary-light);
+                          color:var(--primary-dark); border-radius:4px; font-weight:600; }
+
+.digest-section { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:1rem; }
+.digest-section h3 { font-size:.875rem; font-weight:600; color:var(--primary-dark); margin-bottom:.5rem; }
+.digest-summary { font-size:.9375rem; line-height:1.5; }
+.digest-bullets { display:flex; flex-direction:column; gap:.25rem; margin-top:.25rem; }
+.digest-bullets li { font-size:.8125rem; padding-left:1rem; position:relative; }
+.digest-bullets li::before { content:"•"; position:absolute; left:.25rem; color:var(--primary); }
 </style>
 </head>
 <body>
@@ -1546,6 +1607,38 @@ body.ai-disabled .ai-action { display: none !important; }
       </div>
 
       <div class="ai-section">
+        <h3>Übergreifende Analysen (Phase 3)</h3>
+        <div class="form-group">
+          <label class="form-label">Drift-Schwelle in Tagen (Default 21)</label>
+          <input class="form-control" id="ai-drift-days" type="number" min="1" max="365" value="21">
+          <div class="form-hint">Themen, die seit so vielen Tagen offen und unbearbeitet sind, werden als drift markiert.</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Theme-Tag-Confidence-Schwelle (0.0 – 1.0)</label>
+          <input class="form-control" id="ai-theme-threshold" type="number" min="0" max="1" step="0.05" value="0.7">
+          <div class="form-hint">Vorschläge unter dieser Confidence werden nicht angezeigt.</div>
+        </div>
+        <div class="form-group">
+          <label style="display:flex; align-items:center; gap:.5rem; cursor:pointer">
+            <input type="checkbox" id="ai-digest-enabled">
+            <span>Automatischer Wochen-Digest</span>
+          </label>
+          <div style="display:flex; gap:.5rem; align-items:center; margin-top:.375rem; font-size:.8125rem">
+            <label>Wochentag:
+              <select class="form-control" id="ai-digest-dow" style="display:inline-block; width:auto">
+                <option value="0">So</option><option value="1">Mo</option><option value="2">Di</option>
+                <option value="3">Mi</option><option value="4">Do</option><option value="5">Fr</option>
+                <option value="6">Sa</option>
+              </select>
+            </label>
+            <label>Stunde:
+              <input type="number" class="form-control" id="ai-digest-hour" min="0" max="23" value="18" style="width:5rem">
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="ai-section">
         <h3>Verbrauch</h3>
         <div class="ai-usage-grid" id="ai-usage-grid"></div>
         <div class="ai-usage-features" id="ai-usage-features"></div>
@@ -2021,6 +2114,7 @@ async function doLogin() {
   try {
     currentUser = await api('POST', '/login', { username, password });
     await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadAiSettings(), loadStack()]);
+    await loadDrift();
     showApp(); render();
   } catch(e) { errEl.textContent = e.message; errEl.style.display = ''; }
   finally { setBusy('login-btn', false); }
@@ -2088,6 +2182,10 @@ function renderTodosNav() {
     <div class="todo-nav-item ${selectedId === '__stack_history__' ? 'active' : ''}" onclick="selectView('__stack_history__')">
       <div class="todo-nav-icon" style="background:#e0e7ff; color:#3730a3">📜</div>
       <span class="todo-nav-label">Stack-Historie</span>
+    </div>
+    <div class="todo-nav-item ai-action ${selectedId === '__digest__' ? 'active' : ''}" onclick="selectView('__digest__')">
+      <div class="todo-nav-icon" style="background:#dcfce7; color:#166534">📊</div>
+      <span class="todo-nav-label">Wochen-Digest</span>
     </div>`;
 }
 
@@ -2147,6 +2245,7 @@ function renderMain() {
   if (selectedId === '__todos__')  { renderTodosView(el); return; }
   if (selectedId === '__eod__')    { renderEodView(el); return; }
   if (selectedId === '__stack_history__') { renderStackHistoryView(el); return; }
+  if (selectedId === '__digest__') { renderDigestView(el); return; }
   if (!selectedId) {
     el.innerHTML = `
       <div class="empty-state">
@@ -2202,6 +2301,8 @@ function renderMain() {
           </div>
         </div>
       </div>
+
+      ${renderCmiBanner(m.id)}
 
       <div class="topics-section">
         <div class="topics-header">
@@ -2367,6 +2468,9 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
             ? `<div class="result-text rt-display">${displayHtml(t.result)}</div>`
             : `<p class="result-empty">Kein Ergebnis eingetragen</p>`}
         </div>` : ''}
+      ${!isDone && themeSuggestionsCache[refKey('todo', t.id)] ? `
+        <div id="theme-suggest-todo-${t.id}">${renderThemeSuggestionMarkup(themeSuggestionsCache[refKey('todo', t.id)], 'todo', t.id)}</div>
+      ` : ''}
     </div>`;
 }
 
@@ -2395,8 +2499,10 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
   const grp = t.done ? 'done' : 'open';
   const groupMembers = (t.groupId && groupMap) ? (groupMap[t.groupId] || []).filter(x => x.meeting.id !== mid) : [];
   const themeEntries = themeMap ? (themeMap[t.id] || []) : [];
+  const drifted     = !t.done && driftTopics.has(t.id);
+  const suggestionsHtml = themeSuggestionsCache[refKey('topic', t.id)] || null;
   return `
-    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}" data-tid="${t.id}"
+    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}${drifted ? ' drifted' : ''}" data-tid="${t.id}"
          draggable="true"
          ondragstart="topicDragStart(event,'${mid}','${t.id}','${grp}')"
          ondragend="topicDragEnd(event)"
@@ -2408,6 +2514,7 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
           <span class="drag-handle" title="Reihenfolge ändern">⠿</span>
           <span class="topic-status-icon ${grp}">${t.done ? '✓' : ''}</span>
           <h4 class="topic-title ${t.done ? 'done-text' : ''}">${escHtml(t.title)}</h4>
+          ${drifted ? `<span class="drift-pill ai-action" title="Seit ${aiSettings?.drift_days || 21}+ Tagen ohne Edit, Snooze oder Stack-Aktivität">💤 inaktiv</span>` : ''}
         </div>
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${mid}','${t.id}')" title="Bearbeiten">✏️</button>
@@ -2465,7 +2572,41 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
             ? `<div class="result-text rt-display">${displayHtml(t.result)}</div>`
             : `<p class="result-empty">Kein Ergebnis eingetragen</p>`}
         </div>` : ''}
+      ${!t.done && suggestionsHtml ? `
+        <div id="theme-suggest-topic-${t.id}">${renderThemeSuggestionMarkup(suggestionsHtml, 'topic', t.id)}</div>
+      ` : ''}
     </div>`;
+}
+
+function renderThemeSuggestionMarkup(suggestions, refType, refId) {
+  const key = refKey(refType, refId);
+  const dismissed = dismissedThemeSuggestions[key] || new Set();
+  const filtered  = suggestions.filter(s => !dismissed.has(s.theme_id));
+  if (!filtered.length) return '';
+  return `
+    <div class="theme-suggest-row ai-action">
+      <span class="label">🤖 Vorschläge:</span>
+      ${filtered.map(s => `
+        <span class="theme-suggest-pill" data-theme-id="${s.theme_id}" data-ref-type="${refType}" data-ref-id="${refId}" onclick="acceptThemeSuggestion(event,'${refType}','${refId}','${s.theme_id}')">
+          🏷️ ${escHtml(s.theme_title)}
+          <span class="confidence">${Math.round(s.confidence * 100)}%</span>
+          <button class="dismiss" onclick="dismissThemeSuggestion(event,'${refType}','${refId}','${s.theme_id}')" title="Verwerfen">×</button>
+        </span>`).join('')}
+    </div>`;
+}
+
+async function acceptThemeSuggestion(e, refType, refId, themeId) {
+  if (e.target.classList.contains('dismiss')) return;
+  e.stopPropagation();
+  try {
+    await api('POST', `/themes/${themeId}/links`, { refType, refId });
+    const key = refKey(refType, refId);
+    const set = dismissedThemeSuggestions[key] || new Set();
+    set.add(themeId);
+    dismissedThemeSuggestions[key] = set;
+    await loadThemes(); render();
+    toast('Topic verknüpft');
+  } catch (e) { toast(e.message || 'Fehler', 'error'); }
 }
 
 // ── Wake-up (Snooze aufheben) ────────────────────────────────
@@ -2612,16 +2753,20 @@ async function saveTodoModal() {
       resultDate: isDone ? document.getElementById('todo-result-date').value : '',
     } : {}) };
   setBusy('todo-save-btn', true);
+  let savedTodoId = null;
   try {
     if (editTodoId) {
       await api('PUT', `/todos/${editTodoId}`, data);
       Object.assign(todos.find(t => t.id === editTodoId), data);
+      savedTodoId = editTodoId;
     } else {
       const t = await api('POST', '/todos', data);
       todos.push(t);
+      savedTodoId = t.id;
     }
     closeTodoModal(); render();
     toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
+    if (savedTodoId && !data.done) triggerThemeSuggestions('todo', savedTodoId);
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('todo-save-btn', false); }
 }
@@ -2922,6 +3067,7 @@ async function saveTopicModal() {
     } : {}),
   };
   setBusy('tm-save-btn', true);
+  let savedTopicId = null;
   try {
     if (editTopicId) {
       const t = getTopic(editTopicMid, editTopicId);
@@ -2931,12 +3077,15 @@ async function saveTopicModal() {
       } else {
         Object.assign(t, data);
       }
+      savedTopicId = editTopicId;
     } else {
       const t = await api('POST', `/meetings/${editTopicMid}/topics`, data);
       getMeeting(editTopicMid).topics.push(t);
+      savedTopicId = t.id;
     }
     closeTopicModal(); render();
     toast(editTopicId ? 'Thema aktualisiert' : 'Thema hinzugefügt');
+    if (savedTopicId && !data.done) triggerThemeSuggestions('topic', savedTopicId);
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('tm-save-btn', false); }
 }
@@ -3436,7 +3585,11 @@ function closeMobileSidebar() {
 }
 
 // ── Navigation ───────────────────────────────────────────────
-function selectMeeting(id) { selectedId = id; topicFilter = ''; closeMobileSidebar(); render(); refreshAiUiVisibility(); }
+function selectMeeting(id) {
+  selectedId = id; topicFilter = ''; closeMobileSidebar();
+  render(); refreshAiUiVisibility();
+  if (id && cmiByMeeting[id] === undefined) loadCmiFor(id).then(() => { if (selectedId === id) render(); });
+}
 function onSearch(val) { filterText = val; renderSidebar(); }
 function onTopicSearch(val) {
   topicFilter = val;
@@ -3455,10 +3608,11 @@ const AI_FEATURE_LABELS = {
   brief:         'Pre-Meeting-Briefing',
   capture:       'Notizen-Erfassung',
   result_draft:  'Ergebnis-Vorschlag',
-  theme_tagging: 'Auto-Theme-Tagging (Phase 3)',
-  digest:        'Wochen-Digest (Phase 3)',
-  cross_meeting: 'Cross-Meeting-Insight (Phase 3)',
-  drift:         'Drift-Detection (Phase 3)',
+  reentry:       'Re-Entry-Briefing',
+  theme_tagging: 'Auto-Theme-Tagging',
+  digest:        'Wochen-Digest',
+  cross_meeting: 'Cross-Meeting-Insight',
+  drift:         'Drift-Detection',
 };
 
 const AI_MODEL_DEFAULTS = {
@@ -3500,6 +3654,11 @@ async function openAiSettings() {
   document.getElementById('ai-budget').value            = s.max_monthly_cost_cents   || 0;
   document.getElementById('ai-threshold').value         = s.confirm_threshold_cents || 10;
   document.getElementById('ai-globally-disabled').checked = !!s.globally_disabled;
+  document.getElementById('ai-drift-days').value        = s.drift_days != null ? s.drift_days : 21;
+  document.getElementById('ai-theme-threshold').value   = s.theme_tag_threshold != null ? s.theme_tag_threshold : 0.7;
+  document.getElementById('ai-digest-enabled').checked  = !!s.weekly_digest_enabled;
+  document.getElementById('ai-digest-dow').value        = s.weekly_digest_dow != null ? s.weekly_digest_dow : 0;
+  document.getElementById('ai-digest-hour').value       = s.weekly_digest_hour != null ? s.weekly_digest_hour : 18;
   document.getElementById('ai-key').value = '';
   document.getElementById('ai-test-result').textContent = '';
   document.getElementById('ai-key-status').textContent =
@@ -3547,6 +3706,11 @@ async function saveAiSettingsForm() {
     confirm_threshold_cents: parseInt(document.getElementById('ai-threshold').value, 10) || 0,
     globally_disabled:       document.getElementById('ai-globally-disabled').checked,
     features_enabled:        collectAiFeatures(),
+    drift_days:              parseInt(document.getElementById('ai-drift-days').value, 10)  || 21,
+    theme_tag_threshold:     parseFloat(document.getElementById('ai-theme-threshold').value) || 0.7,
+    weekly_digest_enabled:   document.getElementById('ai-digest-enabled').checked,
+    weekly_digest_dow:       parseInt(document.getElementById('ai-digest-dow').value, 10),
+    weekly_digest_hour:      parseInt(document.getElementById('ai-digest-hour').value, 10),
   };
   const newKey = document.getElementById('ai-key').value;
   if (newKey) body.api_key = newKey;
@@ -4170,6 +4334,217 @@ async function renderStackHistoryView(el) {
   `;
 }
 
+// ── Phase 3: Theme-Tag-Vorschläge, Drift, CMI, Digest ────────
+let driftTopics = new Set();  // topic_id set, befüllt nach loadDrift()
+let cmiByMeeting = {};        // meetingId → {content, artifact_id}
+let dismissedThemeSuggestions = {};  // refKey → set of theme_id
+
+function refKey(refType, refId) { return refType + ':' + refId; }
+
+async function loadDrift() {
+  driftTopics = new Set();
+  if (!aiIsActive() || !aiSettings.features_enabled.drift) return;
+  try {
+    const r = await api('GET', '/ai/insights/drift');
+    driftTopics = new Set(r.drifted.map(d => d.topic_id));
+  } catch (_) { /* still */ }
+}
+
+async function suggestThemesFor(refType, refId) {
+  if (!aiIsActive() || !aiSettings.features_enabled.theme_tagging) return null;
+  try {
+    return await aiCall('POST', `/ai/${refType}/${refId}/suggest-themes`);
+  } catch (e) {
+    if (e.cancelled) return null;
+    return null;
+  }
+}
+
+function renderThemeSuggestionsContainer(refType, refId, suggestions, container) {
+  if (!suggestions || !suggestions.length) { container.innerHTML = ''; return; }
+  const key = refKey(refType, refId);
+  const dismissed = dismissedThemeSuggestions[key] || new Set();
+  const filtered  = suggestions.filter(s => !dismissed.has(s.theme_id));
+  if (!filtered.length) { container.innerHTML = ''; return; }
+  container.innerHTML = `
+    <div class="theme-suggest-row">
+      <span class="label">🤖 Vorschläge:</span>
+      ${filtered.map(s => `
+        <span class="theme-suggest-pill" data-theme-id="${s.theme_id}">
+          🏷️ ${escHtml(s.theme_title)}
+          <span class="confidence">${Math.round(s.confidence * 100)}%</span>
+          <button class="dismiss" onclick="dismissThemeSuggestion(event,'${refType}','${refId}','${s.theme_id}')" title="Verwerfen">×</button>
+        </span>`).join('')}
+    </div>`;
+  container.querySelectorAll('.theme-suggest-pill').forEach(pill => {
+    pill.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('dismiss')) return;
+      const themeId = pill.dataset.themeId;
+      try {
+        await api('POST', `/themes/${themeId}/links`, { refType, refId });
+        toast('Topic verknüpft');
+        const dset = dismissedThemeSuggestions[key] || new Set();
+        dset.add(themeId);
+        dismissedThemeSuggestions[key] = dset;
+        await loadThemes(); render();
+      } catch (e) { toast(e.message || 'Fehler', 'error'); }
+    });
+  });
+}
+
+function dismissThemeSuggestion(e, refType, refId, themeId) {
+  e.stopPropagation();
+  const key = refKey(refType, refId);
+  const set = dismissedThemeSuggestions[key] || new Set();
+  set.add(themeId);
+  dismissedThemeSuggestions[key] = set;
+  // Re-render only the affected container if visible
+  const c = document.getElementById(`theme-suggest-${refType}-${refId}`);
+  if (c) {
+    const pill = c.querySelector(`[data-theme-id="${themeId}"]`);
+    if (pill) pill.remove();
+    if (!c.querySelector('.theme-suggest-pill')) c.innerHTML = '';
+  }
+}
+
+// Wird nach saveTopicModal / saveTodoModal aufgerufen
+async function triggerThemeSuggestions(refType, refId) {
+  if (!aiIsActive() || !aiSettings.features_enabled.theme_tagging) return;
+  const r = await suggestThemesFor(refType, refId);
+  if (!r || !r.suggestions || !r.suggestions.length) return;
+  // Stash in a small registry so the renderer can read them
+  themeSuggestionsCache[refKey(refType, refId)] = r.suggestions;
+  render();
+}
+const themeSuggestionsCache = {};
+
+async function loadCmiFor(meetingId) {
+  if (!aiIsActive() || !aiSettings.features_enabled.cross_meeting) { cmiByMeeting[meetingId] = null; return; }
+  try {
+    const r = await api('GET', `/ai/insights/cross-meeting/${meetingId}`);
+    cmiByMeeting[meetingId] = (r && r.content && r.content.matches.length) ? r : null;
+  } catch { cmiByMeeting[meetingId] = null; }
+}
+
+async function recomputeCmiFor(meetingId) {
+  try {
+    toast('Berechne Ähnlichkeiten …');
+    const r = await aiCall('POST', `/ai/insights/cross-meeting/${meetingId}`);
+    cmiByMeeting[meetingId] = (r && r.content && r.content.matches.length) ? r : null;
+    toast(r.content.matches.length ? `${r.content.matches.length} Treffer` : 'Keine Treffer');
+    render();
+  } catch (e) {
+    if (!e.cancelled) toast(e.message || 'Fehler', 'error');
+  }
+}
+
+async function dismissCmi(meetingId) {
+  const c = cmiByMeeting[meetingId];
+  if (!c || !c.artifact_id) return;
+  try {
+    await api('DELETE', `/ai/insights/cross-meeting/${meetingId}/${c.artifact_id}`);
+    cmiByMeeting[meetingId] = null;
+    render();
+  } catch (e) { toast(e.message || 'Fehler', 'error'); }
+}
+
+function renderCmiBanner(meetingId) {
+  const c = cmiByMeeting[meetingId];
+  if (!c || !c.content || !c.content.matches.length) return '';
+  const matches = c.content.matches;
+  const expanded = cmiExpanded[meetingId] || false;
+  return `
+    <div class="cmi-banner ai-action">
+      <span style="font-size:1rem">🔗</span>
+      <span class="cmi-banner-title">${matches.length} ähnliche Thema(s) in anderen Meetings</span>
+      <div class="cmi-banner-actions">
+        <button class="btn btn-secondary" onclick="toggleCmiExpand('${meetingId}')">${expanded ? 'Einklappen' : 'Details'}</button>
+        <button class="btn btn-secondary" onclick="recomputeCmiFor('${meetingId}')">Neu berechnen</button>
+        <button class="btn btn-ghost" onclick="dismissCmi('${meetingId}')">Verwerfen</button>
+      </div>
+      ${expanded ? `
+        <div class="cmi-details">
+          ${matches.map(m => `
+            <div class="cmi-detail-row">
+              <div class="titles">
+                ${escHtml(m.this_topic_title)}<span class="arrow">↔</span>${escHtml(m.other_topic_title)}
+                <span class="conf">${Math.round(m.confidence*100)}%</span>
+              </div>
+              <div class="reason">${escHtml(m.reason || '')} <em style="color:var(--text-light)">— in Meeting: ${escHtml(m.other_meeting)}</em></div>
+            </div>`).join('')}
+        </div>` : ''}
+    </div>`;
+}
+const cmiExpanded = {};
+function toggleCmiExpand(meetingId) { cmiExpanded[meetingId] = !cmiExpanded[meetingId]; render(); }
+
+// ── Wochen-Digest View ───────────────────────────────────────
+let digestState = { current: null, archive: [], loading: false };
+
+async function loadDigestCurrent() {
+  try { digestState.current = await api('GET', '/ai/digest/weekly'); }
+  catch { digestState.current = null; }
+}
+async function loadDigestArchive() {
+  try { const r = await api('GET', '/ai/digest/archive'); digestState.archive = r.entries || []; }
+  catch { digestState.archive = []; }
+}
+
+async function renderDigestView(el) {
+  el.innerHTML = `<div class="content-empty"><div class="ai-spinner"></div><p style="margin-top:.5rem">lade …</p></div>`;
+  await Promise.all([loadDigestCurrent(), loadDigestArchive()]);
+  const d = digestState.current;
+  const archive = digestState.archive || [];
+  el.innerHTML = `
+    <div class="content-header">
+      <h1>📊 Wochen-Digest</h1>
+      <div style="display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-top:.5rem">
+        <button class="btn btn-ai ai-action" onclick="regenerateDigest()">🤖 Neu erzeugen</button>
+        ${archive.length > 1 ? `
+          <select class="form-control" id="digest-pick" style="display:inline-block; width:auto" onchange="pickDigest(this.value)">
+            ${archive.map(a => `<option value="${a.artifact_id}" ${d && d.artifact_id === a.artifact_id ? 'selected' : ''}>${a.week} — ${fmtDateOnly(a.created_at)}</option>`).join('')}
+          </select>` : ''}
+      </div>
+    </div>
+    <div style="max-width:900px; margin:0 auto">
+      ${!d || !d.content ? `
+        <div class="content-empty">
+          <p>Noch kein Digest für diese Woche.</p>
+          <button class="btn btn-ai ai-action" onclick="regenerateDigest()">🤖 Jetzt erzeugen</button>
+        </div>` : `
+        <div class="digest-section">
+          <h3>Woche ${escHtml(d.week)}</h3>
+          <div class="digest-summary">${escHtml(d.content.summary || '')}</div>
+        </div>
+        ${Array.isArray(d.content.highlights) && d.content.highlights.length ? `
+          <div class="digest-section">
+            <h3>Highlights</h3>
+            <ul class="digest-bullets">${d.content.highlights.map(h => `<li>${escHtml(h)}</li>`).join('')}</ul>
+          </div>` : ''}
+        ${Array.isArray(d.content.focus_next) && d.content.focus_next.length ? `
+          <div class="digest-section">
+            <h3>Fokus für die kommende Woche</h3>
+            <ul class="digest-bullets">${d.content.focus_next.map(h => `<li>${escHtml(h)}</li>`).join('')}</ul>
+          </div>` : ''}
+      `}
+    </div>
+  `;
+}
+
+async function regenerateDigest() {
+  try {
+    toast('Erzeuge Digest …');
+    digestState.current = await aiCall('POST', '/ai/digest/weekly');
+    await loadDigestArchive();
+    if (selectedId === '__digest__') render();
+    toast('Digest fertig');
+  } catch (e) { if (!e.cancelled) toast(e.message || 'Fehler', 'error'); }
+}
+function pickDigest(artifactId) {
+  const a = (digestState.archive || []).find(x => x.artifact_id === artifactId);
+  if (a) { digestState.current = { artifact_id: a.artifact_id, content: a.content, week: a.week, cached: true }; render(); }
+}
+
 // ── Keyboard shortcut matcher ────────────────────────────────
 function eventMatchesShortcut(e, combo) {
   const parts = combo.toLowerCase().split('+').map(s => s.trim());
@@ -4224,6 +4599,7 @@ document.getElementById('login-user').addEventListener('keydown', e => { if (e.k
   try {
     currentUser = await api('GET', '/me');
     await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadAiSettings(), loadStack()]);
+    await loadDrift();
     showApp(); render();
   } catch { showLogin(); }
 })();

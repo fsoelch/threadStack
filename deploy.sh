@@ -64,7 +64,7 @@ ssh_run() {
 
 rsync_upload() {
   # shellcheck disable=SC2086
-  rsync -az --delete \
+  rsync -avz --delete \
     -e "ssh $SSH_OPTS" \
     --exclude='.git/' \
     --exclude='node_modules/' \
@@ -73,6 +73,12 @@ rsync_upload() {
     --exclude='.deploy.env.example' \
     --exclude='deploy.sh' \
     --exclude='*.log' \
+    --exclude='.DS_Store' \
+    --exclude='.claude/' \
+    --exclude='ThreadStackApp/' \
+    --exclude='test/' \
+    --exclude='*.docx' \
+    --exclude='/tmp' \
     "$SCRIPT_DIR/" \
     "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
 }
