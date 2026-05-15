@@ -1,0 +1,22 @@
+{
+  "name": "gespraechstermine",
+  "version": "2.1.0",
+  "description": "Web App zur Organisation von Gesprächsterminen",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test --test-force-exit test/*.test.js",
+    "ai:test": "node -e \"require('./ai').testFromCli()\""
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.1",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^9.4.3",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "openai": "^4.68.0"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  }
+}

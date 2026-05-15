@@ -1,0 +1,11 @@
+node_modules/
+data/
+.deploy.env
+*.log
+.DS_Store
+
+# Xcode build artifacts
+ThreadStackApp/**/xcuserdata/
+ThreadStackApp/**/DerivedData/
+ThreadStackApp/**/*.xcuserdatad/
+ThreadStackApp/ThreadStack/build/

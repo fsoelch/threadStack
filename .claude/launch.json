@@ -1,0 +1,27 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "personly",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 3000,
+      "autoPort": true,
+      "env": {
+        "BASE_PATH": "/personly"
+      }
+    },
+    {
+      "name": "threadstack-dev",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["server.js"],
+      "port": 3099,
+      "env": {
+        "PORT": "3099",
+        "BASE_PATH": "/",
+        "DATA_DIR": "/tmp/threadstack-preview/data",
+        "AI_PROVIDER_OVERRIDE": "mock"
+      }
+    }
+  ]
+}
