@@ -8,6 +8,9 @@ const path     = require('path');
 const fs       = require('fs');
 
 const app      = express();
+// If behind a trusted reverse proxy (e.g. nginx on same host), set TRUST_PROXY=1
+// so req.ip reflects the real client IP for rate-limiting.
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY) || 1);
 const PORT     = process.env.PORT || 3000;
 const BASE     = (process.env.BASE_PATH || '/notes').replace(/\/$/, '');
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
@@ -308,11 +311,15 @@ function uid() {
   return Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
 }
 
+const BCRYPT_ROUNDS = 12;
+// Dummy hash used during login for constant-time comparison when user is not found
+const DUMMY_HASH = bcrypt.hashSync('__dummy_constant_time__', BCRYPT_ROUNDS);
+
 // Create default admin on first run with a random password
 if (db.prepare('SELECT COUNT(*) as c FROM users').get().c === 0) {
   const initPw = crypto.randomBytes(10).toString('base64url').slice(0, 12);
   db.prepare('INSERT INTO users(id,username,password_hash,role,created_at,last_active_at) VALUES (?,?,?,?,?,?)').run(
-    uid(), 'admin', bcrypt.hashSync(initPw, 12), 'admin', new Date().toISOString(), ''
+    uid(), 'admin', bcrypt.hashSync(initPw, BCRYPT_ROUNDS), 'admin', new Date().toISOString(), ''
   );
   console.log('\n┌──────────────────────────────────────────────┐');
   console.log('│  Erster Start — Standard-Admin angelegt:     │');
@@ -342,6 +349,7 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 function isValidHexColor(c) { return /^#[0-9a-fA-F]{6}$/.test(c); }
+function isValidDate(s) { return !s || /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]{1,30})?$/.test(String(s)); }
 
 const MAX_TITLE = 300;
 const MAX_DESC  = 500_000;
@@ -351,8 +359,14 @@ function stripUnsafeHtml(s) {
   return s
     .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
     .replace(/<iframe\b[\s\S]*?(?:<\/iframe\s*>|$)/gi, '')
+    .replace(/<object\b[\s\S]*?(?:<\/object\s*>|$)/gi, '')
+    .replace(/<embed\b[^>]*>/gi, '')
+    .replace(/<base\b[^>]*>/gi, '')
+    .replace(/<meta\b[^>]*>/gi, '')
+    .replace(/<form\b[\s\S]*?(?:<\/form\s*>|$)/gi, '')
     .replace(/\bon\w{1,30}\s*=/gi, 'data-x=')
-    .replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript|data)\s*:/gi, '$1="#"');
+    .replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript|data)\s*:/gi, '$1="#"')
+    .replace(/expression\s*\(/gi, '(');
 }
 
 // ── Middleware ───────────────────────────────────────────────
@@ -442,7 +456,9 @@ app.post(`${A}/login`, (req, res) => {
   const { username, password } = req.body || {};
   if (!username || !password) return res.status(400).json({ error: 'Benutzername und Passwort erforderlich' });
   const u = db.prepare('SELECT * FROM users WHERE username=?').get(username);
-  if (!u || !bcrypt.compareSync(password, u.password_hash)) {
+  // Always run bcrypt to prevent user-enumeration via timing difference
+  const valid = bcrypt.compareSync(password, u ? u.password_hash : DUMMY_HASH);
+  if (!u || !valid) {
     recordFailedLogin(ip);
     return res.status(401).json({ error: 'Falscher Benutzername oder Passwort' });
   }
@@ -462,15 +478,42 @@ app.get(`${A}/me`, requireAuth, (req, res) => {
   res.json(u);
 });
 
+// Simple per-user rate limit for password changes (max 5 per hour)
+const pwChangeLimiter = new Map();
+function isPwChangeBlocked(uid) {
+  const e = pwChangeLimiter.get(uid);
+  if (!e) return false;
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  e.attempts = e.attempts.filter(t => t > cutoff);
+  if (e.attempts.length === 0) { pwChangeLimiter.delete(uid); return false; }
+  return e.attempts.length >= 5;
+}
+function recordPwChange(uid) {
+  const e = pwChangeLimiter.get(uid) || { attempts: [] };
+  e.attempts.push(Date.now());
+  pwChangeLimiter.set(uid, e);
+}
+
 app.put(`${A}/password`, requireAuth, (req, res) => {
+  if (isPwChangeBlocked(req.session.uid))
+    return res.status(429).json({ error: 'Zu viele Versuche — bitte eine Stunde warten.' });
   const { current, next: newPw } = req.body || {};
   if (!current || !newPw) return res.status(400).json({ error: 'Eingaben fehlen' });
   if (newPw.length < 8) return res.status(400).json({ error: 'Passwort mindestens 8 Zeichen' });
   const u = db.prepare('SELECT * FROM users WHERE id=?').get(req.session.uid);
-  if (!bcrypt.compareSync(current, u.password_hash))
+  if (!bcrypt.compareSync(current, u.password_hash)) {
+    recordPwChange(req.session.uid);
     return res.status(400).json({ error: 'Aktuelles Passwort falsch' });
-  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(newPw, 10), req.session.uid);
-  res.json({ ok: true });
+  }
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(newPw, BCRYPT_ROUNDS), req.session.uid);
+  recordPwChange(req.session.uid);
+  // Rotate session so any stolen session cookie is invalidated
+  const savedUid = req.session.uid;
+  req.session.regenerate(err => {
+    if (err) return res.status(500).json({ error: 'Sitzungsfehler' });
+    req.session.uid = savedUid;
+    res.json({ ok: true });
+  });
 });
 
 // ── Meeting routes ───────────────────────────────────────────
@@ -830,7 +873,7 @@ app.post(`${A}/users`, requireAdmin, (req, res) => {
   try {
     const id = uid();
     db.prepare('INSERT INTO users(id,username,password_hash,role,created_at,last_active_at) VALUES (?,?,?,?,?,?)').run(
-      id, username.trim(), bcrypt.hashSync(password,10), role==='admin'?'admin':'user', new Date().toISOString(), ''
+      id, username.trim(), bcrypt.hashSync(password, BCRYPT_ROUNDS), role==='admin'?'admin':'user', new Date().toISOString(), ''
     );
     res.status(201).json({ id, username: username.trim(), role: role==='admin'?'admin':'user' });
   } catch(e) {
@@ -845,7 +888,7 @@ app.put(`${A}/users/:id`, requireAdmin, (req, res) => {
   const { password, role } = req.body || {};
   if (password) {
     if (password.length < 8) return res.status(400).json({ error: 'Passwort mindestens 8 Zeichen' });
-    db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(password,10), req.params.id);
+    db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(password, BCRYPT_ROUNDS), req.params.id);
   }
   if (role) db.prepare('UPDATE users SET role=? WHERE id=?').run(role==='admin'?'admin':'user', req.params.id);
   res.json({ ok: true });
@@ -1422,10 +1465,14 @@ app.get(`${A}/attachments/:refType/:refId`, requireAuth, (req, res) => {
 app.get(`${A}/attachments/download/:id`, requireAuth, (req, res) => {
   const a = db.prepare('SELECT * FROM attachments WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!a) return res.status(404).json({ error: 'Nicht gefunden' });
-  const filePath = path.join(UPLOADS_DIR, a.stored_as);
+  const filePath = path.resolve(UPLOADS_DIR, a.stored_as);
+  // Defense-in-depth: ensure resolved path stays within UPLOADS_DIR
+  if (!filePath.startsWith(path.resolve(UPLOADS_DIR) + path.sep)) return res.status(400).json({ error: 'Ungültiger Pfad' });
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Datei nicht gefunden' });
   res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(a.filename)}`);
-  res.setHeader('Content-Type', a.mime_type || 'application/octet-stream');
+  // Force safe content-type to prevent content-sniffing attacks; 'attachment' disposition already mitigates most risk
+  const safeMime = /^[\w\-]+\/[\w\-+.]+$/.test(a.mime_type) ? a.mime_type : 'application/octet-stream';
+  res.setHeader('Content-Type', safeMime);
   res.sendFile(filePath);
 });
 
@@ -1452,7 +1499,7 @@ app.get(BASE || '/', (req, res) => {
   const fs = require('fs');
   let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
   html = html.replace('</head>',
-    `<script>window.__TS_BASE__ = ${JSON.stringify(BASE)};</script>\n</head>`);
+    `<script>window.__TS_BASE__ = ${JSON.stringify(BASE).replace(/</g, '\\u003c')};</script>\n</head>`);
   res.type('text/html').send(html);
 });
 if (BASE) app.get('/', (req, res) => res.redirect(BASE));
@@ -1506,7 +1553,7 @@ app.get(`${BASE}/addin/`, (req, res) => {
   let html = fs.readFileSync(path.join(__dirname, 'addin.html'), 'utf8');
   // Inject runtime config before </head>
   html = html.replace('</head>',
-    `<script>window.__TS_BASE__ = ${JSON.stringify(BASE)};</script>\n</head>`);
+    `<script>window.__TS_BASE__ = ${JSON.stringify(BASE).replace(/</g, '\\u003c')};</script>\n</head>`);
   res.type('text/html').send(html);
 });
 
