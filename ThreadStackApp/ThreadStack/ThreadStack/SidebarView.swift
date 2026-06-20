@@ -23,20 +23,31 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .padding(.top, 6)
         #endif
-        List(selection: Binding(
-            get: { selectedView == .meetings ? selectedMeetingId : nil },
-            set: { selectedMeetingId = $0 }
-        )) {
+        List(selection: $selectedMeetingId) {
             // ── Topics & Todos nav ─────────────────────────
             Section {
                 navRow(icon: "tag.fill", iconColor: .purple,
                        label: "Meine Topics",
                        badge: state.themes.isEmpty ? nil : "\(state.themes.count)",
                        item: .themes)
+                    .tag(SidebarItem.themes.sentinel)
+                navRow(icon: "person.crop.circle.fill", iconColor: .pink,
+                       label: "Ansprechpartner",
+                       badge: state.contacts.isEmpty ? nil : "\(state.contacts.count)",
+                       item: .contacts)
+                    .tag(SidebarItem.contacts.sentinel)
                 navRow(icon: "checkmark.circle.fill", iconColor: .green,
                        label: "Meine Todos",
                        badge: state.openTodoCount > 0 ? "\(state.openTodoCount)" : nil,
                        item: .todos)
+                    .tag(SidebarItem.todos.sentinel)
+                if state.aiFeatureEnabled(\.digest) {
+                    navRow(icon: "chart.bar.doc.horizontal", iconColor: .blue,
+                           label: "Wochen-Digest",
+                           badge: nil,
+                           item: .digest)
+                        .tag(SidebarItem.digest.sentinel)
+                }
             }
 
             // ── Meetings ───────────────────────────────────
@@ -44,10 +55,6 @@ struct SidebarView: View {
                 ForEach(filteredMeetings) { m in
                     MeetingRowView(meeting: m)
                         .tag(m.id)
-                        .onTapGesture {
-                            selectedMeetingId = m.id
-                            selectedView = .meetings
-                        }
                 }
                 .onDelete { idx in
                     let ids = idx.map { filteredMeetings[$0].id }
@@ -86,35 +93,55 @@ struct SidebarView: View {
         .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(error ?? "") }
+        .onChange(of: selectedMeetingId) { _, newId in
+            selectedView = SidebarItem.fromSelection(newId)
+        }
     }
 
     @ViewBuilder
     private func navRow(icon: String, iconColor: Color, label: String,
                         badge: String?, item: SidebarItem) -> some View {
-        Button {
-            selectedView = item
-            selectedMeetingId = nil
-        } label: {
-            HStack {
-                Image(systemName: icon)
-                    .frame(width: 24, height: 24)
-                    .background(iconColor.opacity(0.15))
-                    .foregroundStyle(iconColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                Text(label).foregroundStyle(.primary)
-                Spacer()
-                if let badge {
-                    Text(badge)
-                        .scaledFont(.caption2).fontWeight(.semibold)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Color(hex: "#6366f1").opacity(0.15))
-                        .foregroundStyle(Color(hex: "#6366f1"))
-                        .clipShape(Capsule())
-                }
+        HStack {
+            Image(systemName: icon)
+                .frame(width: 24, height: 24)
+                .background(iconColor.opacity(0.15))
+                .foregroundStyle(iconColor)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            Text(label).foregroundStyle(.primary)
+            Spacer()
+            if let badge {
+                Text(badge)
+                    .scaledFont(.caption2).fontWeight(.semibold)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color(hex: "#6366f1").opacity(0.15))
+                    .foregroundStyle(Color(hex: "#6366f1"))
+                    .clipShape(Capsule())
             }
         }
-        .buttonStyle(.plain)
-        .listRowBackground(selectedView == item ? Color(hex: "#6366f1").opacity(0.12) : nil)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: - SidebarItem extensions for selection routing
+
+extension SidebarItem {
+    var sentinel: String {
+        switch self {
+        case .meetings: return "__meetings__"
+        case .themes:   return "__themes__"
+        case .contacts: return "__contacts__"
+        case .todos:    return "__todos__"
+        case .digest:   return "__digest__"
+        }
+    }
+    static func fromSelection(_ id: String?) -> SidebarItem {
+        switch id {
+        case "__themes__"?:   return .themes
+        case "__contacts__"?: return .contacts
+        case "__todos__"?:    return .todos
+        case "__digest__"?:   return .digest
+        default:              return .meetings
+        }
     }
 }
 
@@ -126,10 +153,6 @@ struct MeetingRowView: View {
             HStack(spacing: 6) {
                 Circle().fill(Color(hex: meeting.color)).frame(width: 8, height: 8)
                 Text(meeting.title).scaledFont(.subheadline).fontWeight(.medium).lineLimit(1)
-            }
-            if !meeting.participants.isEmpty {
-                Text(meeting.participants.prefix(3).joined(separator: ", "))
-                    .scaledFont(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             HStack(spacing: 6) {
                 if let d = meeting.nextDateFormatted {

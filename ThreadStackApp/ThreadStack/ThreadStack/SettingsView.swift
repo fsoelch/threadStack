@@ -46,6 +46,17 @@ struct SettingsView: View {
                     Button("Passwort ändern") { changePassword() }
                         .disabled(loading || oldPassword.isEmpty || newPassword.isEmpty || confirm.isEmpty)
                 }
+
+                if state.hasStoredCredentials {
+                    Section("App-Sperre (\(Keychain.biometryTypeDescription))") {
+                        Label("Anmeldedaten sind im Schlüsselbund hinterlegt",
+                              systemImage: "lock.shield.fill")
+                            .foregroundStyle(.green).font(.footnote)
+                        Button("Anmeldedaten aus Schlüsselbund entfernen", role: .destructive) {
+                            state.forgetStoredCredentials()
+                        }
+                    }
+                }
                 if success {
                     Section {
                         Label("Passwort geändert.", systemImage: "checkmark.circle")

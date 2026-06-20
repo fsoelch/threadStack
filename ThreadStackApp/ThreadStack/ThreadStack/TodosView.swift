@@ -14,8 +14,15 @@ struct TodosView: View {
         }
     }
 
-    private var openTodos:    [TodoItem] { filtered.filter { !$0.done && !$0.isSnoozed } }
-    private var snoozedTodos: [TodoItem] { filtered.filter { !$0.done &&  $0.isSnoozed } }
+    private func sortByDue(_ list: [TodoItem]) -> [TodoItem] {
+        list.sorted { a, b in
+            if a.dueSortKey != b.dueSortKey { return a.dueSortKey < b.dueSortKey }
+            return (a.sortOrder ?? 0) < (b.sortOrder ?? 0)
+        }
+    }
+
+    private var openTodos:    [TodoItem] { sortByDue(filtered.filter { !$0.done && !$0.isSnoozed }) }
+    private var snoozedTodos: [TodoItem] { sortByDue(filtered.filter { !$0.done &&  $0.isSnoozed }) }
     private var doneTodos:    [TodoItem] { filtered.filter {  $0.done }.sorted { $0.resultDate > $1.resultDate } }
 
     var body: some View {
@@ -107,6 +114,7 @@ struct TodoRowView: View {
     @State private var showMove = false
     @State private var showThemes = false
     @State private var showSnooze = false
+    @State private var showPush   = false
     @State private var error: String?
 
     private var themeLinks: [(theme: Theme, link: ThemeLink)] { state.themeLinks(for: todo.id) }
@@ -126,9 +134,19 @@ struct TodoRowView: View {
                             .scaledFont(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
 
+                    if !todo.done, let due = todo.dueDateFormatted {
+                        dueBadge(text: due, status: todo.dueStatus)
+                    }
                     if todo.isSnoozed, let wake = todo.snoozeWakeFormatted {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
+                    }
+                    if !todo.done && state.driftIds.contains(todo.id) {
+                        Text("💤 inaktiv").font(.caption2).fontWeight(.semibold)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color(hex: "#fef3c7"))
+                            .foregroundStyle(Color(hex: "#92400e"))
+                            .clipShape(Capsule())
                     }
 
                     if !themeLinks.isEmpty {
@@ -173,10 +191,15 @@ struct TodoRowView: View {
                 Label(todo.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz")
             }.tint(.indigo)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { showEdit = true }
         .contextMenu {
             Button { showEdit    = true } label: { Label("Bearbeiten", systemImage: "pencil") }
             Button { showThemes  = true } label: { Label("Topic zuweisen", systemImage: "tag") }
             Button { showMove    = true } label: { Label("In Meeting verschieben", systemImage: "arrow.right") }
+            if !todo.done {
+                Button { showPush = true } label: { Label("Auf Stack legen", systemImage: "square.stack.3d.up") }
+            }
             Divider()
             Button { showSnooze = true } label: {
                 Label(todo.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz")
@@ -211,6 +234,9 @@ struct TodoRowView: View {
                       catch { self.error = error.localizedDescription } }
             } : nil)
         }
+        .sheet(isPresented: $showPush) {
+            StackPushSheet(target: PushTarget(refType: "todo", refId: todo.id, title: todo.title))
+        }
         .alert("Fehler", isPresented: Binding(
             get: { error != nil }, set: { if !$0 { error = nil } }
         )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
@@ -224,6 +250,23 @@ struct TodoRowView: View {
         } else {
             Circle().stroke(Color.green, lineWidth: 1.5).frame(width: 16, height: 16)
         }
+    }
+
+    @ViewBuilder
+    private func dueBadge(text: String, status: DueStatus) -> some View {
+        let (bg, fg, label): (Color, Color, String) = {
+            switch status {
+            case .overdue: return (Color(hex: "#fee2e2"), Color(hex: "#b91c1c"), "📅 Überfällig: \(text)")
+            case .today:   return (Color(hex: "#fef3c7"), Color(hex: "#92400e"), "📅 Heute: \(text)")
+            default:       return (Color(hex: "#eef2ff"), Color(hex: "#4338ca"), "📅 Fällig: \(text)")
+            }
+        }()
+        Text(label)
+            .scaledFont(.caption2).fontWeight(.medium)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(bg)
+            .foregroundStyle(fg)
+            .clipShape(Capsule())
     }
 
     private func themeChip(_ title: String) -> some View {

@@ -7,12 +7,28 @@ struct ContentView: View {
     @State private var error: String?
     @State private var showSettings = false
     @State private var showAdmin = false
+    @State private var showAiSettings = false
 
     var body: some View {
         #if os(macOS)
-        macContent
+        ZStack(alignment: .bottomTrailing) {
+            macContent
+            if state.currentUser != nil {
+                StackPanelView().padding(16)
+            }
+        }
+        .sheet(isPresented: $showAiSettings) { AISettingsView() }
         #else
         iosLayout
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if state.currentUser != nil {
+                    HStack { Spacer(); StackPanelView() }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 4)
+                        .background(.clear)
+                }
+            }
+            .sheet(isPresented: $showAiSettings) { AISettingsView() }
         #endif
     }
 
@@ -25,26 +41,48 @@ struct ContentView: View {
                 SidebarView(selectedMeetingId: $selectedMeetingId,
                             selectedView: $selectedView)
                 Divider()
-                // Bottom action bar
+                // Bottom action bar — alles unter einem User-Menü
                 HStack {
-                    Button { showSettings = true } label: {
-                        Image(systemName: "gear")
-                    }
-                    .buttonStyle(.plain).help("Einstellungen")
-
-                    if state.currentUser?.isAdmin == true {
-                        Button { showAdmin = true } label: {
-                            Image(systemName: "person.2")
-                        }
-                        .buttonStyle(.plain).help("Benutzerverwaltung")
+                    if let u = state.currentUser {
+                        Text(u.username)
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button { Task { try? await state.logout() } } label: {
-                        Image(systemName: "rectangle.portrait.and.arrow.right")
+                    Button { Task { await state.refreshAll() } } label: {
+                        if state.isRefreshing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .buttonStyle(.plain).help("Abmelden")
+                    .buttonStyle(.plain)
+                    .disabled(state.isRefreshing)
+                    .help(refreshTooltip)
+                    Menu {
+                        Button {
+                            showSettings = true
+                        } label: { Label("Einstellungen", systemImage: "gear") }
+                        Button {
+                            showAiSettings = true
+                        } label: { Label("AI-Einstellungen", systemImage: "sparkles") }
+                        if state.currentUser?.isAdmin == true {
+                            Button {
+                                showAdmin = true
+                            } label: { Label("Benutzerverwaltung", systemImage: "person.2") }
+                        }
+                        Divider()
+                        Button(role: .destructive) {
+                            Task { try? await state.logout() }
+                        } label: { Label("Abmelden", systemImage: "rectangle.portrait.and.arrow.right") }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("Menü")
                 }
-                .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
@@ -90,16 +128,36 @@ struct ContentView: View {
     @ViewBuilder private var detailView: some View {
         switch selectedView {
         case .meetings:
-            if let id = selectedMeetingId,
+            if let id = selectedMeetingId, !id.hasPrefix("__"),
                let m = state.meetings.first(where: { $0.id == id }) {
                 MeetingDetailView(meeting: m)
             } else {
                 emptyState
             }
         case .todos:
+            #if os(iOS)
+            NavigationStack { TodosView() }
+            #else
             TodosView()
+            #endif
         case .themes:
+            #if os(iOS)
+            NavigationStack { ThemesView() }
+            #else
             ThemesView()
+            #endif
+        case .contacts:
+            #if os(iOS)
+            NavigationStack { ContactsView() }
+            #else
+            ContactsView()
+            #endif
+        case .digest:
+            #if os(iOS)
+            NavigationStack { DigestView() }
+            #else
+            DigestView()
+            #endif
         }
     }
 
@@ -115,10 +173,23 @@ struct ContentView: View {
         .padding()
     }
 
+    private var refreshTooltip: String {
+        guard let d = state.lastRefreshAt else { return "Aktualisieren" }
+        let f = DateFormatter(); f.timeStyle = .short; f.locale = Locale(identifier: "de_DE")
+        return "Zuletzt aktualisiert: \(f.string(from: d))"
+    }
+
     private var menuButton: some View {
         Menu {
+            Button {
+                Task { await state.refreshAll() }
+            } label: { Label("Aktualisieren", systemImage: "arrow.clockwise") }
+            Divider()
             Button { showSettings = true } label: {
                 Label("Einstellungen", systemImage: "gear")
+            }
+            Button { showAiSettings = true } label: {
+                Label("AI-Einstellungen", systemImage: "sparkles")
             }
             if state.currentUser?.isAdmin == true {
                 Button { showAdmin = true } label: {
@@ -139,7 +210,12 @@ struct ContentView: View {
     private func reload() async {
         do { try await state.loadAll() }
         catch { self.error = error.localizedDescription }
+        await state.loadAiSettings()
+        await state.loadStack()
+        await state.aiLoadDrift()
+        // Auto-Refresh-Timer beim ersten Erscheinen starten (idempotent)
+        state.startAutoRefresh()
     }
 }
 
-enum SidebarItem: Hashable { case meetings, todos, themes }
+enum SidebarItem: Hashable { case meetings, todos, themes, contacts, digest }

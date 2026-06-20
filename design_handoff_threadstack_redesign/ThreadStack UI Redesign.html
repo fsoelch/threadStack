@@ -1,0 +1,1068 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,.14); border-radius: 2px; }
+</style>
+</helmet>
+
+<div style="min-width:100%; width:max-content; min-height:100vh; padding:60px 48px 80px; box-sizing:border-box; background:#E0DED9; font-family:'DM Sans',-apple-system,sans-serif;">
+
+  <!-- ═══ PAGE HEADER ═══════════════════════════════════════════════════ -->
+  <div style="max-width:840px; margin-bottom:64px;">
+    <div style="font-size:10.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:#9A9893; margin-bottom:12px;">Designvorschlag · Juni 2026</div>
+    <h1 style="font-size:44px; font-weight:700; color:#141312; letter-spacing:-.045em; line-height:1.1; margin:0 0 14px;">ThreadStack — UI Redesign</h1>
+    <p style="font-size:16px; color:#5A5750; line-height:1.65; margin:0 0 24px; max-width:600px;">
+      Drei Richtungsvorschläge für ein moderneres Interface, plus ein vollständiges Design System zur direkten Umsetzung in Claude Code.
+    </p>
+    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+      <span style="display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:100px; background:rgba(0,0,0,.08); font-size:12px; font-weight:500; color:#3A3830;">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M5 1L6.1 3.9L9 5L6.1 6.1L5 9L3.9 6.1L1 5L3.9 3.9L5 1Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></svg>
+        SVG-Icons statt Emoji
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:100px; background:rgba(0,0,0,.08); font-size:12px; font-weight:500; color:#3A3830;">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="1" y="1" width="3.5" height="3.5" rx="1" fill="currentColor" opacity=".8"/><rect x="5.5" y="1" width="3.5" height="3.5" rx="1" fill="currentColor" opacity=".5"/><rect x="1" y="5.5" width="3.5" height="3.5" rx="1" fill="currentColor" opacity=".5"/><rect x="5.5" y="5.5" width="3.5" height="3.5" rx="1" fill="currentColor" opacity=".25"/></svg>
+        DM Sans · saubere Hierarchie
+      </span>
+      <span style="display:inline-flex; align-items:center; gap:6px; padding:5px 12px; border-radius:100px; background:rgba(0,0,0,.08); font-size:12px; font-weight:500; color:#3A3830;">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><circle cx="5" cy="5" r="4" stroke="currentColor" stroke-width="1.2"/><path d="M5 3v2.5L7 7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+        Navbar in Sidebar integriert
+      </span>
+    </div>
+  </div>
+
+  <!-- ═══ VARIANTEN ════════════════════════════════════════════════════ -->
+  <div style="font-size:10.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:#9A9893; margin-bottom:28px;">3 Richtungsvorschläge</div>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; margin-bottom:96px;">
+
+    <!-- ─────────────────────────────────────────────────────────────── -->
+    <!-- FRAME A: Refined Dark                                           -->
+    <!-- ─────────────────────────────────────────────────────────────── -->
+    <div style="flex:none; width:1160px;">
+      <div style="margin-bottom:8px; display:flex; align-items:baseline; gap:12px;">
+        <span style="font-size:16px; font-weight:700; color:#141312; letter-spacing:-.02em;">A — Refined Dark</span>
+        <span style="font-size:12px; color:#7A7870; font-weight:500;">Evolutionär · Leicht umsetzbar</span>
+      </div>
+      <p style="font-size:13px; color:#7A7870; line-height:1.6; margin:0 0 18px; max-width:480px;">Verbessert die bestehende Struktur. Klares Blau statt Indigo-Lila. Navbar in Sidebar integriert. Minimaler Code-Umbau.</p>
+
+      <div style="background:#fff; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,.06), 0 12px 40px rgba(0,0,0,.14); overflow:hidden; height:720px; display:flex;">
+
+        <!-- Sidebar A -->
+        <div style="width:244px; flex-shrink:0; background:#0D0F11; display:flex; flex-direction:column; border-right:1px solid #191C1F;">
+
+          <!-- Logo -->
+          <div style="padding:18px 14px 14px; border-bottom:1px solid #191C1F;">
+            <div style="display:flex; align-items:center; gap:9px; margin-bottom:14px;">
+              <div style="width:29px; height:29px; background:#1D6FE8; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="1" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".9"/><rect x="8.5" y="1" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".6"/><rect x="1" y="8.5" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".6"/><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".3"/></svg>
+              </div>
+              <span style="font-size:15px; font-weight:700; color:#F0F2F5; letter-spacing:-.025em;">ThreadStack</span>
+            </div>
+            <button style="width:100%; padding:8px; background:#1D6FE8; color:white; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; font-family:'DM Sans',sans-serif; letter-spacing:-.01em;">
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><line x1="5.5" y1="1" x2="5.5" y2="10" stroke="white" stroke-width="1.75" stroke-linecap="round"/><line x1="1" y1="5.5" x2="10" y2="5.5" stroke="white" stroke-width="1.75" stroke-linecap="round"/></svg>
+              Neues Meeting
+            </button>
+          </div>
+
+          <!-- Search -->
+          <div style="padding:10px 14px 10px;">
+            <div style="background:rgba(255,255,255,.055); border:1px solid rgba(255,255,255,.07); border-radius:7px; padding:7px 10px; display:flex; align-items:center; gap:7px;">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="color:#3E4650; flex-shrink:0;"><circle cx="5.5" cy="5.5" r="3.75" stroke="currentColor" stroke-width="1.25"/><line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+              <span style="font-size:12.5px; color:#3A434E; user-select:none;">Suchen …</span>
+            </div>
+          </div>
+
+          <!-- Nav items -->
+          <div style="padding:2px 10px 8px; border-bottom:1px solid #171A1D;">
+            <div style="padding:7px 10px; border-radius:7px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <div style="width:24px; height:24px; border-radius:6px; background:rgba(20,185,129,.17); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="#14B87E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <span style="font-size:13px; font-weight:500; color:#6E7882;">Meine Todos</span>
+            </div>
+            <div style="padding:7px 10px; border-radius:7px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <div style="width:24px; height:24px; border-radius:6px; background:rgba(124,58,237,.17); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1.5 1.5h4L10 6a1 1 0 0 1 0 1.4L7.5 9.9a1 1 0 0 1-1.4 0L1.5 5.5v-4z" stroke="#9B7FE8" stroke-width="1.2"/><circle cx="4" cy="4" r=".9" fill="#9B7FE8"/></svg>
+              </div>
+              <span style="font-size:13px; font-weight:500; color:#6E7882;">Themen</span>
+            </div>
+          </div>
+
+          <!-- Section label -->
+          <div style="padding:10px 20px 4px; font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#2E3540;">Meetings</div>
+
+          <!-- Meeting list -->
+          <div style="flex:1; overflow-y:auto; padding:2px 10px 10px;">
+            <div style="padding:9px 10px; border-radius:8px; background:rgba(29,111,232,.15); border:1px solid rgba(29,111,232,.25); margin-bottom:2px; cursor:pointer;">
+              <div style="font-size:13px; font-weight:600; color:#E8EDF3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Wöchentliches Sync</div>
+              <div style="font-size:11px; color:#404D5C; font-family:'DM Mono',monospace;">Mi 25.06 · 2 offen</div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer; margin-bottom:1px;">
+              <div style="font-size:13px; font-weight:500; color:#687280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Product Review Q2</div>
+              <div style="font-size:11px; color:#30383F; font-family:'DM Mono',monospace;">Fr 27.06 · 1 offen</div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer; margin-bottom:1px;">
+              <div style="font-size:13px; font-weight:500; color:#687280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">1:1 Thomas</div>
+              <div style="font-size:11px; color:#30383F; font-family:'DM Mono',monospace;">Mo 30.06 · 3 offen</div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer; margin-bottom:1px;">
+              <div style="font-size:13px; font-weight:500; color:#687280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Stakeholder Update</div>
+              <div style="font-size:11px; color:#30383F; font-family:'DM Mono',monospace;">Di 01.07 · 0 offen</div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer;">
+              <div style="font-size:13px; font-weight:500; color:#687280; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Design Sprint</div>
+              <div style="font-size:11px; color:#30383F; font-family:'DM Mono',monospace;">Fr 04.07 · 5 offen</div>
+            </div>
+          </div>
+
+          <!-- User area -->
+          <div style="padding:10px 14px; border-top:1px solid #191C1F; display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <div style="width:26px; height:26px; background:#1D6FE8; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:700; color:white; flex-shrink:0; letter-spacing:-.01em;">FS</div>
+            <span style="font-size:12.5px; font-weight:500; color:#5E6870; flex:1;">F. Soelch</span>
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="color:#2E3540; flex-shrink:0;"><circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.2"/><line x1="6.5" y1="4" x2="6.5" y2="6.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="6.5" cy="9" r=".85" fill="currentColor"/></svg>
+          </div>
+        </div>
+
+        <!-- Main A -->
+        <div style="flex:1; background:#F5F5F2; display:flex; flex-direction:column; overflow:hidden; position:relative;">
+
+          <!-- Topbar -->
+          <div style="height:52px; background:#FFFFFF; border-bottom:1px solid #E8E8E3; display:flex; align-items:center; justify-content:space-between; padding:0 24px; flex-shrink:0;">
+            <div style="display:flex; align-items:center; gap:7px;">
+              <span style="font-size:12.5px; color:#B0B0A8;">Meetings</span>
+              <svg width="6" height="10" viewBox="0 0 6 10" fill="none" style="color:#D0D0C8;"><path d="M1 1.5L4.5 5L1 8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span style="font-size:12.5px; font-weight:600; color:#1A1918;">Wöchentliches Sync</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="padding:4px 10px; border-radius:6px; background:rgba(29,111,232,.07); border:1px solid rgba(29,111,232,.12); display:flex; align-items:center; gap:5px; cursor:pointer;">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M5.5 1L6.6 4.4L10 5.5L6.6 6.6L5.5 10L4.4 6.6L1 5.5L4.4 4.4L5.5 1Z" stroke="#1D6FE8" stroke-width="1.1" stroke-linejoin="round"/></svg>
+                <span style="font-size:11px; font-weight:700; color:#1D6FE8; letter-spacing:.04em;">AI</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Scrollable content -->
+          <div style="flex:1; overflow-y:auto; padding:24px;">
+
+            <!-- Meeting header card -->
+            <div style="background:white; border:1px solid #E8E7E2; border-radius:12px; overflow:hidden; margin-bottom:14px;">
+              <div style="height:3px; background:#1D6FE8; opacity:.7;"></div>
+              <div style="padding:20px 22px; display:flex; align-items:flex-start; justify-content:space-between; gap:14px;">
+                <div style="flex:1; min-width:0;">
+                  <h1 style="font-size:21px; font-weight:700; color:#111210; letter-spacing:-.04em; line-height:1.25; margin:0 0 5px;">Wöchentliches Sync</h1>
+                  <p style="font-size:13px; color:#8A8880; margin:0 0 12px; line-height:1.5;">Team Produkt — wöchentliches Standup</p>
+                  <div style="display:flex; gap:5px; flex-wrap:wrap;">
+                    <span style="display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:100px; background:#F3F2EE; border:1px solid #E5E4DF; font-size:11.5px; color:#686660; font-weight:500;">
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x=".75" y="1.5" width="8.5" height="7.75" rx="1.5" stroke="currentColor" stroke-width="1.1"/><line x1=".75" y1="4" x2="9.25" y2="4" stroke="currentColor" stroke-width="1.1"/><line x1="3" y1=".5" x2="3" y2="2.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><line x1="7" y1=".5" x2="7" y2="2.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+                      Mi, 25.06.2026 · 10:00
+                    </span>
+                    <span style="display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:100px; background:#F3F2EE; border:1px solid #E5E4DF; font-size:11.5px; color:#686660; font-weight:500;">
+                      <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1 5.5C1 3.3 2.8 1.5 5 1.5h3.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><path d="M7.5.5l2 1-2 1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 5.5C10 7.7 8.2 9.5 6 9.5H2.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><path d="M3.5 8.5l-2 1 2 1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      Wöchentlich
+                    </span>
+                  </div>
+                </div>
+                <div style="display:flex; gap:6px; flex-shrink:0;">
+                  <button style="padding:6px 12px; border:1px solid #E5E4DF; background:white; border-radius:7px; font-size:12.5px; cursor:pointer; color:#686660; font-family:'DM Sans',sans-serif;">Bearbeiten</button>
+                  <button style="padding:6px 12px; background:#1D6FE8; border:none; border-radius:7px; font-size:12.5px; cursor:pointer; color:white; font-weight:600; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:5px;">
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><line x1="5" y1="1" x2="5" y2="9" stroke="white" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="5" x2="9" y2="5" stroke="white" stroke-width="1.6" stroke-linecap="round"/></svg>
+                    Thema
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Topics card -->
+            <div style="background:white; border:1px solid #E8E7E2; border-radius:12px; overflow:hidden;">
+              <div style="padding:13px 20px; border-bottom:1px solid #EEEEE9; display:flex; align-items:center; justify-content:space-between;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  <span style="font-size:14px; font-weight:700; color:#111210; letter-spacing:-.02em;">Themen</span>
+                  <span style="padding:1px 8px; border-radius:100px; background:#EEEEE9; font-size:11px; font-weight:600; color:#888880;">3</span>
+                </div>
+                <div style="background:#F4F3EF; border:1px solid #E8E7E2; border-radius:6px; padding:5px 10px; display:flex; align-items:center; gap:6px; width:158px;">
+                  <svg width="11" height="11" viewBox="0 0 11 11" fill="none" style="color:#C0BEB8; flex-shrink:0;"><circle cx="4.75" cy="4.75" r="3.25" stroke="currentColor" stroke-width="1.1"/><line x1="7.25" y1="7.25" x2="9.75" y2="9.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+                  <span style="font-size:11.5px; color:#C0BEB8;">Filtern …</span>
+                </div>
+              </div>
+
+              <!-- Open group -->
+              <div style="padding:9px 20px 4px; display:flex; align-items:center; gap:9px;">
+                <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:#1D6FE8; white-space:nowrap;">Offen</span>
+                <div style="flex:1; height:1px; background:#EEEEE9;"></div>
+              </div>
+
+              <div style="padding:12px 20px; border-bottom:1px solid #F3F3EF; display:flex; align-items:flex-start; gap:10px; background:#F9F9F7;">
+                <div style="width:17px; height:17px; border-radius:50%; border:1.5px solid #BABCD4; flex-shrink:0; margin-top:2px;"></div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:14px; font-weight:600; color:#111210; letter-spacing:-.015em; margin-bottom:3px;">Roadmap Q3 2026 besprechen</div>
+                  <div style="font-size:12px; color:#9A9890; line-height:1.5;">Stand der Planung und offene Entscheidungen reviewen</div>
+                </div>
+                <div style="display:flex; gap:4px; flex-shrink:0;">
+                  <button style="padding:4px 8px; border:1px solid #E8E7E2; background:white; border-radius:5px; font-size:11px; color:#888880; cursor:pointer; font-family:'DM Sans',sans-serif; white-space:nowrap;">Als erledigt</button>
+                  <button style="padding:4px 6px; border:none; background:none; color:#C0BEB8; cursor:pointer; line-height:1; display:flex; align-items:center;">
+                    <svg width="14" height="4" viewBox="0 0 14 4" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="7" cy="2" r="1.4"/><circle cx="12" cy="2" r="1.4"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div style="padding:12px 20px; border-bottom:1px solid #F3F3EF; display:flex; align-items:flex-start; gap:10px;">
+                <div style="width:17px; height:17px; border-radius:50%; border:1.5px solid #BABCD4; flex-shrink:0; margin-top:2px;"></div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:14px; font-weight:600; color:#111210; letter-spacing:-.015em; margin-bottom:3px;">Budget-Freigabe Marketing Q3</div>
+                  <div style="font-size:12px; color:#9A9890; line-height:1.5;">Antrag auf 15.000 € für die Q3-Kampagne</div>
+                </div>
+                <div style="display:flex; gap:4px; flex-shrink:0;">
+                  <button style="padding:4px 8px; border:1px solid #E8E7E2; background:white; border-radius:5px; font-size:11px; color:#888880; cursor:pointer; font-family:'DM Sans',sans-serif; white-space:nowrap;">Als erledigt</button>
+                  <button style="padding:4px 6px; border:none; background:none; color:#C0BEB8; cursor:pointer; display:flex; align-items:center;">
+                    <svg width="14" height="4" viewBox="0 0 14 4" fill="currentColor"><circle cx="2" cy="2" r="1.4"/><circle cx="7" cy="2" r="1.4"/><circle cx="12" cy="2" r="1.4"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Done group -->
+              <div style="padding:9px 20px 4px; display:flex; align-items:center; gap:9px;">
+                <span style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:#14A87C; white-space:nowrap;">Erledigt</span>
+                <div style="flex:1; height:1px; background:#EEEEE9;"></div>
+              </div>
+
+              <div style="padding:12px 20px; background:#FAFDFB; display:flex; align-items:flex-start; gap:10px;">
+                <div style="width:17px; height:17px; border-radius:50%; background:#14A87C; flex-shrink:0; margin-top:2px; display:flex; align-items:center; justify-content:center;">
+                  <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:14px; font-weight:600; color:#ABABAB; text-decoration:line-through; text-decoration-thickness:1.5px; letter-spacing:-.015em; margin-bottom:3px;">Onboarding Max Mustermann</div>
+                  <div style="font-size:12px; color:#C8C6C2; line-height:1.5;">Plan finalisiert und kommuniziert · 20.06.2026</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stack panel floating -->
+          <div style="position:absolute; right:16px; bottom:16px; width:284px; background:white; border:1px solid #E8E7E2; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,.05), 0 10px 32px rgba(0,0,0,.1); overflow:hidden;">
+            <div style="padding:9px 12px; border-bottom:1px solid #F0F0EB; display:flex; align-items:center; gap:7px; cursor:pointer;">
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style="color:#1D6FE8; flex-shrink:0;"><rect x="1" y="1" width="10" height="3" rx="1.5" stroke="currentColor" stroke-width="1.1"/><rect x="1" y="5" width="10" height="3" rx="1.5" stroke="currentColor" stroke-width="1.1" opacity=".5"/><rect x="1" y="9" width="10" height="2" rx="1" stroke="currentColor" stroke-width="1.1" opacity=".25"/></svg>
+              <span style="font-size:12.5px; font-weight:700; color:#1A1918; flex:1; letter-spacing:-.01em;">Stack</span>
+              <span style="padding:1px 7px; border-radius:100px; background:#1D6FE8; color:white; font-size:10.5px; font-weight:700;">1</span>
+            </div>
+            <div style="padding:8px; background:#F9F8F5;">
+              <div style="border:1.5px solid #1D6FE8; border-radius:8px; padding:8px 10px; background:rgba(29,111,232,.04);">
+                <div style="font-size:11.5px; font-weight:600; color:#1A1918; margin-bottom:3px; letter-spacing:-.01em;">Budget-Freigabe Marketing Q3</div>
+                <div style="font-size:11px; color:#9A9890; margin-bottom:8px;">Antrag ausarbeiten vor Montag</div>
+                <div style="display:flex; gap:5px;">
+                  <button style="padding:4px 8px; border:1px solid rgba(29,111,232,.25); background:rgba(29,111,232,.06); border-radius:5px; font-size:11px; color:#1D6FE8; cursor:pointer; font-family:'DM Sans',sans-serif; font-weight:600;">Erledigen</button>
+                  <button style="padding:4px 8px; border:1px solid #E8E7E2; background:white; border-radius:5px; font-size:11px; color:#888880; cursor:pointer; font-family:'DM Sans',sans-serif;">Schlafen</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────────── -->
+    <!-- FRAME B: Warm Light                                             -->
+    <!-- ─────────────────────────────────────────────────────────────── -->
+    <div style="flex:none; width:1160px;">
+      <div style="margin-bottom:8px; display:flex; align-items:baseline; gap:12px;">
+        <span style="font-size:16px; font-weight:700; color:#141312; letter-spacing:-.02em;">B — Warm Light</span>
+        <span style="font-size:12px; color:#7A7870; font-weight:500;">Heller Bruch · Einladend &amp; offen</span>
+      </div>
+      <p style="font-size:13px; color:#7A7870; line-height:1.6; margin:0 0 18px; max-width:480px;">Gibt die dunkle Sidebar vollständig auf. Warme Creme-Töne statt Schwarz. Fühlt sich an wie Bear oder Craft — produktiv ohne klinisch zu wirken.</p>
+
+      <div style="background:#fff; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,.06), 0 12px 40px rgba(0,0,0,.14); overflow:hidden; height:720px; display:flex;">
+
+        <!-- Sidebar B -->
+        <div style="width:248px; flex-shrink:0; background:#EDE9E3; display:flex; flex-direction:column; border-right:1px solid #DDD9D3;">
+
+          <!-- Logo -->
+          <div style="padding:18px 14px 14px; border-bottom:1px solid #DDD9D3;">
+            <div style="display:flex; align-items:center; gap:9px; margin-bottom:14px;">
+              <div style="width:29px; height:29px; background:#14736B; border-radius:8px; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="1" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".9"/><rect x="8.5" y="1" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".6"/><rect x="1" y="8.5" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".6"/><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1.5" fill="white" opacity=".3"/></svg>
+              </div>
+              <span style="font-size:15px; font-weight:700; color:#1E1B17; letter-spacing:-.025em;">ThreadStack</span>
+            </div>
+            <button style="width:100%; padding:8px; background:#14736B; color:white; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; font-family:'DM Sans',sans-serif; letter-spacing:-.01em;">
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><line x1="5.5" y1="1" x2="5.5" y2="10" stroke="white" stroke-width="1.75" stroke-linecap="round"/><line x1="1" y1="5.5" x2="10" y2="5.5" stroke="white" stroke-width="1.75" stroke-linecap="round"/></svg>
+              Neues Meeting
+            </button>
+          </div>
+
+          <!-- Search -->
+          <div style="padding:10px 14px 10px;">
+            <div style="background:rgba(0,0,0,.055); border:1px solid rgba(0,0,0,.07); border-radius:7px; padding:7px 10px; display:flex; align-items:center; gap:7px;">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="color:#8A847C; flex-shrink:0;"><circle cx="5.5" cy="5.5" r="3.75" stroke="currentColor" stroke-width="1.25"/><line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+              <span style="font-size:12.5px; color:#9A948C; user-select:none;">Suchen …</span>
+            </div>
+          </div>
+
+          <!-- Nav items -->
+          <div style="padding:2px 10px 8px; border-bottom:1px solid #DDD9D3;">
+            <div style="padding:7px 10px; border-radius:7px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <div style="width:24px; height:24px; border-radius:6px; background:rgba(20,115,107,.15); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none"><path d="M1 4.5L4 7.5L10 1.5" stroke="#14736B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </div>
+              <span style="font-size:13px; font-weight:500; color:#5A5650;">Meine Todos</span>
+            </div>
+            <div style="padding:7px 10px; border-radius:7px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <div style="width:24px; height:24px; border-radius:6px; background:rgba(20,115,107,.1); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1.5 1.5h4L10 6a1 1 0 0 1 0 1.4L7.5 9.9a1 1 0 0 1-1.4 0L1.5 5.5v-4z" stroke="#14736B" stroke-width="1.2"/><circle cx="4" cy="4" r=".9" fill="#14736B"/></svg>
+              </div>
+              <span style="font-size:13px; font-weight:500; color:#5A5650;">Themen</span>
+            </div>
+          </div>
+
+          <!-- Section label -->
+          <div style="padding:10px 20px 4px; font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#AEA8A0;">Meetings</div>
+
+          <!-- Meeting list -->
+          <div style="flex:1; overflow-y:auto; padding:2px 10px 10px;">
+            <!-- Active item: left border teal -->
+            <div style="padding:9px 10px 9px 8px; border-radius:8px; margin-bottom:2px; cursor:pointer; display:flex; align-items:flex-start; gap:0; border-left:2.5px solid #14736B; background:rgba(20,115,107,.07);">
+              <div style="padding-left:8px; flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:600; color:#1E1B17; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Wöchentliches Sync</div>
+                <div style="font-size:11px; color:#8A847C; font-family:'DM Mono',monospace;">Mi 25.06 · 2 offen</div>
+              </div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer; margin-bottom:1px;">
+              <div style="font-size:13px; font-weight:500; color:#7A7470; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Product Review Q2</div>
+              <div style="font-size:11px; color:#9A9490; font-family:'DM Mono',monospace;">Fr 27.06 · 1 offen</div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer; margin-bottom:1px;">
+              <div style="font-size:13px; font-weight:500; color:#7A7470; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">1:1 Thomas</div>
+              <div style="font-size:11px; color:#9A9490; font-family:'DM Mono',monospace;">Mo 30.06 · 3 offen</div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer; margin-bottom:1px;">
+              <div style="font-size:13px; font-weight:500; color:#7A7470; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Stakeholder Update</div>
+              <div style="font-size:11px; color:#9A9490; font-family:'DM Mono',monospace;">Di 01.07 · 0 offen</div>
+            </div>
+            <div style="padding:8px 10px; border-radius:7px; cursor:pointer;">
+              <div style="font-size:13px; font-weight:500; color:#7A7470; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:3px;">Design Sprint</div>
+              <div style="font-size:11px; color:#9A9490; font-family:'DM Mono',monospace;">Fr 04.07 · 5 offen</div>
+            </div>
+          </div>
+
+          <!-- User area -->
+          <div style="padding:10px 14px; border-top:1px solid #DDD9D3; display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <div style="width:26px; height:26px; background:#14736B; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:700; color:white; flex-shrink:0;">FS</div>
+            <span style="font-size:12.5px; font-weight:500; color:#7A7470; flex:1;">F. Soelch</span>
+          </div>
+        </div>
+
+        <!-- Main B -->
+        <div style="flex:1; background:#FFFFFF; display:flex; flex-direction:column; overflow:hidden;">
+
+          <!-- Topbar B -->
+          <div style="height:52px; background:#FAFAF8; border-bottom:1px solid #EEECE8; display:flex; align-items:center; justify-content:space-between; padding:0 28px; flex-shrink:0;">
+            <div style="display:flex; align-items:center; gap:7px;">
+              <span style="font-size:12.5px; color:#B8B4AE;">Meetings</span>
+              <svg width="6" height="10" viewBox="0 0 6 10" fill="none" style="color:#D8D4CE;"><path d="M1 1.5L4.5 5L1 8.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span style="font-size:12.5px; font-weight:600; color:#1E1B17;">Wöchentliches Sync</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div style="padding:4px 10px; border-radius:6px; background:rgba(20,115,107,.07); border:1px solid rgba(20,115,107,.14); display:flex; align-items:center; gap:5px; cursor:pointer;">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M5.5 1L6.6 4.4L10 5.5L6.6 6.6L5.5 10L4.4 6.6L1 5.5L4.4 4.4L5.5 1Z" stroke="#14736B" stroke-width="1.1" stroke-linejoin="round"/></svg>
+                <span style="font-size:11px; font-weight:700; color:#14736B; letter-spacing:.04em;">AI</span>
+              </div>
+              <div style="width:26px; height:26px; background:#14736B; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:10.5px; font-weight:700; color:white;">FS</div>
+            </div>
+          </div>
+
+          <!-- Content B: flat, not card-in-card -->
+          <div style="flex:1; overflow-y:auto; padding:32px 32px 24px;">
+
+            <!-- Meeting header: flat, no card -->
+            <div style="margin-bottom:28px; padding-bottom:24px; border-bottom:1px solid #EEECEA;">
+              <h1 style="font-size:24px; font-weight:700; color:#1E1B17; letter-spacing:-.045em; line-height:1.2; margin:0 0 8px;">Wöchentliches Sync</h1>
+              <p style="font-size:13.5px; color:#8A8480; margin:0 0 14px; line-height:1.5;">Team Produkt — wöchentliches Standup</p>
+              <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                  <span style="display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:100px; background:#F0EDE8; font-size:11.5px; color:#6A6660; font-weight:500;">
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x=".75" y="1.5" width="8.5" height="7.75" rx="1.5" stroke="currentColor" stroke-width="1.1"/><line x1=".75" y1="4" x2="9.25" y2="4" stroke="currentColor" stroke-width="1.1"/><line x1="3" y1=".5" x2="3" y2="2.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><line x1="7" y1=".5" x2="7" y2="2.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+                    Mi, 25.06.2026 · 10:00
+                  </span>
+                  <span style="display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:100px; background:#F0EDE8; font-size:11.5px; color:#6A6660; font-weight:500;">Wöchentlich</span>
+                </div>
+                <div style="display:flex; gap:6px;">
+                  <button style="padding:6px 12px; border:1px solid #DDD9D3; background:white; border-radius:7px; font-size:12.5px; cursor:pointer; color:#6A6660; font-family:'DM Sans',sans-serif;">Bearbeiten</button>
+                  <button style="padding:6px 12px; background:#14736B; border:none; border-radius:7px; font-size:12.5px; cursor:pointer; color:white; font-weight:600; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:5px;">
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><line x1="5" y1="1" x2="5" y2="9" stroke="white" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="5" x2="9" y2="5" stroke="white" stroke-width="1.6" stroke-linecap="round"/></svg>
+                    Thema
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Topics: flat list, no outer card border -->
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+              <span style="font-size:15px; font-weight:700; color:#1E1B17; letter-spacing:-.025em;">Themen</span>
+              <span style="font-size:12px; color:#AAA49E;">3 Themen · 2 offen</span>
+            </div>
+
+            <!-- Open group label -->
+            <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:#14736B; margin-bottom:8px; padding-left:2px;">Offen</div>
+
+            <div style="border-radius:10px; overflow:hidden; border:1px solid #EEECEA; margin-bottom:16px;">
+              <div style="padding:14px 16px; border-bottom:1px solid #F4F2EF; display:flex; align-items:flex-start; gap:10px; background:white;">
+                <div style="width:17px; height:17px; border-radius:50%; border:1.5px solid #AABAB5; flex-shrink:0; margin-top:2px;"></div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:14px; font-weight:600; color:#1E1B17; letter-spacing:-.015em; margin-bottom:3px;">Roadmap Q3 2026 besprechen</div>
+                  <div style="font-size:12px; color:#9A9490; line-height:1.5;">Stand der Planung und offene Entscheidungen reviewen</div>
+                </div>
+                <button style="padding:4px 9px; border:1px solid #DDD9D3; background:white; border-radius:5px; font-size:11px; color:#6A6660; cursor:pointer; font-family:'DM Sans',sans-serif; flex-shrink:0; white-space:nowrap;">Erledigen</button>
+              </div>
+              <div style="padding:14px 16px; display:flex; align-items:flex-start; gap:10px; background:white;">
+                <div style="width:17px; height:17px; border-radius:50%; border:1.5px solid #AABAB5; flex-shrink:0; margin-top:2px;"></div>
+                <div style="flex:1; min-width:0;">
+                  <div style="font-size:14px; font-weight:600; color:#1E1B17; letter-spacing:-.015em; margin-bottom:3px;">Budget-Freigabe Marketing Q3</div>
+                  <div style="font-size:12px; color:#9A9490; line-height:1.5;">Antrag auf 15.000 € für die Q3-Kampagne</div>
+                </div>
+                <button style="padding:4px 9px; border:1px solid #DDD9D3; background:white; border-radius:5px; font-size:11px; color:#6A6660; cursor:pointer; font-family:'DM Sans',sans-serif; flex-shrink:0; white-space:nowrap;">Erledigen</button>
+              </div>
+            </div>
+
+            <!-- Done group -->
+            <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:#AAA49E; margin-bottom:8px; padding-left:2px;">Erledigt</div>
+            <div style="border-radius:10px; overflow:hidden; border:1px solid #EEECEA; background:#FAFAF8;">
+              <div style="padding:13px 16px; display:flex; align-items:flex-start; gap:10px;">
+                <div style="width:17px; height:17px; border-radius:50%; background:#14A87C; flex-shrink:0; margin-top:2px; display:flex; align-items:center; justify-content:center;">
+                  <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div>
+                  <div style="font-size:14px; font-weight:500; color:#B8B4AE; text-decoration:line-through; text-decoration-thickness:1.5px; letter-spacing:-.015em; margin-bottom:3px;">Onboarding Max Mustermann</div>
+                  <div style="font-size:12px; color:#C8C4BE;">Plan finalisiert und kommuniziert · 20.06.2026</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────────── -->
+    <!-- FRAME C: Pure Minimal                                           -->
+    <!-- ─────────────────────────────────────────────────────────────── -->
+    <div style="flex:none; width:1160px;">
+      <div style="margin-bottom:8px; display:flex; align-items:baseline; gap:12px;">
+        <span style="font-size:16px; font-weight:700; color:#141312; letter-spacing:-.02em;">C — Pure Minimal</span>
+        <span style="font-size:12px; color:#7A7870; font-weight:500;">Strukturell mutig · Content-First</span>
+      </div>
+      <p style="font-size:13px; color:#7A7870; line-height:1.6; margin:0 0 18px; max-width:480px;">Maximale Fokussierung auf den Inhalt. Weiße Sidebar ohne Kontrast-Trennung. Sehr große Typografie. Minimale Chrome. Erinnert an Linear oder Cron.</p>
+
+      <div style="background:#fff; border-radius:12px; box-shadow:0 4px 6px rgba(0,0,0,.06), 0 12px 40px rgba(0,0,0,.14); overflow:hidden; height:720px; display:flex;">
+
+        <!-- Sidebar C -->
+        <div style="width:232px; flex-shrink:0; background:#FFFFFF; display:flex; flex-direction:column; border-right:1.5px solid #F0EEE9;">
+
+          <!-- Logo -->
+          <div style="padding:20px 16px 16px; border-bottom:1px solid #F0EEE9;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:16px;">
+              <div style="width:22px; height:22px; border-radius:5px; background:#111210; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><rect x=".75" y=".75" width="4.25" height="4.25" rx="1" fill="white" opacity=".9"/><rect x="6" y=".75" width="4.25" height="4.25" rx="1" fill="white" opacity=".5"/><rect x=".75" y="6" width="4.25" height="4.25" rx="1" fill="white" opacity=".5"/><rect x="6" y="6" width="4.25" height="4.25" rx="1" fill="white" opacity=".25"/></svg>
+              </div>
+              <span style="font-size:14px; font-weight:700; color:#111210; letter-spacing:-.03em;">ThreadStack</span>
+            </div>
+            <!-- Ghost button -->
+            <button style="width:100%; padding:7px; background:transparent; color:#555450; border:1.5px dashed #D8D6D0; border-radius:8px; font-size:12.5px; font-weight:500; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; font-family:'DM Sans',sans-serif;">
+              <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><line x1="5.5" y1="1" x2="5.5" y2="10" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/><line x1="1" y1="5.5" x2="10" y2="5.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"/></svg>
+              Neues Meeting
+            </button>
+          </div>
+
+          <!-- Search: borderless -->
+          <div style="padding:10px 16px 8px;">
+            <div style="display:flex; align-items:center; gap:7px; padding:6px 0;">
+              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" style="color:#C8C6C0; flex-shrink:0;"><circle cx="5.5" cy="5.5" r="3.75" stroke="currentColor" stroke-width="1.25"/><line x1="8.5" y1="8.5" x2="11.5" y2="11.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/></svg>
+              <span style="font-size:12.5px; color:#C8C6C0; user-select:none;">Suchen …</span>
+            </div>
+          </div>
+
+          <!-- Nav items -->
+          <div style="padding:2px 12px 10px; border-bottom:1px solid #F0EEE9;">
+            <div style="padding:6px 8px; border-radius:6px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:#B0AEA8; flex-shrink:0;"><circle cx="7" cy="7" r="5.5" stroke="currentColor" stroke-width="1.25"/><path d="M4.5 7L6.5 9L9.5 5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span style="font-size:13px; font-weight:500; color:#7A7870;">Meine Todos</span>
+            </div>
+            <div style="padding:6px 8px; border-radius:6px; display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="color:#B0AEA8; flex-shrink:0;"><path d="M1.5 1.5h5.5L12 6a1 1 0 0 1 0 1.5L8.5 11a1 1 0 0 1-1.5 0L1.5 6V1.5z" stroke="currentColor" stroke-width="1.25"/><circle cx="4.5" cy="4.5" r="1" fill="currentColor"/></svg>
+              <span style="font-size:13px; font-weight:500; color:#7A7870;">Themen</span>
+            </div>
+          </div>
+
+          <!-- Section label -->
+          <div style="padding:12px 20px 5px; font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#C8C6BE;">Meetings</div>
+
+          <!-- Meeting list: text-only, ultra clean -->
+          <div style="flex:1; overflow-y:auto; padding:2px 12px 12px;">
+            <!-- Active: bold + blue dot -->
+            <div style="padding:8px 8px; border-radius:7px; cursor:pointer; margin-bottom:1px; display:flex; align-items:center; gap:7px; background:#F7F6F4;">
+              <div style="width:5px; height:5px; border-radius:50%; background:#2563EB; flex-shrink:0;"></div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:700; color:#111210; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; letter-spacing:-.01em;">Wöchentliches Sync</div>
+                <div style="font-size:10.5px; color:#B0AEA8; font-family:'DM Mono',monospace; margin-top:1px;">Mi 25.06 · 2 offen</div>
+              </div>
+            </div>
+            <div style="padding:8px 8px; border-radius:7px; cursor:pointer; margin-bottom:1px; display:flex; align-items:center; gap:7px;">
+              <div style="width:5px; height:5px; border-radius:50%; background:#D8D6D0; flex-shrink:0;"></div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:500; color:#7A7870; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Product Review Q2</div>
+                <div style="font-size:10.5px; color:#C8C6BE; font-family:'DM Mono',monospace; margin-top:1px;">Fr 27.06 · 1 offen</div>
+              </div>
+            </div>
+            <div style="padding:8px 8px; border-radius:7px; cursor:pointer; margin-bottom:1px; display:flex; align-items:center; gap:7px;">
+              <div style="width:5px; height:5px; border-radius:50%; background:#D8D6D0; flex-shrink:0;"></div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:500; color:#7A7870; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">1:1 Thomas</div>
+                <div style="font-size:10.5px; color:#C8C6BE; font-family:'DM Mono',monospace; margin-top:1px;">Mo 30.06 · 3 offen</div>
+              </div>
+            </div>
+            <div style="padding:8px 8px; border-radius:7px; cursor:pointer; margin-bottom:1px; display:flex; align-items:center; gap:7px;">
+              <div style="width:5px; height:5px; border-radius:50%; background:#D8D6D0; flex-shrink:0;"></div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:500; color:#7A7870; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Stakeholder Update</div>
+                <div style="font-size:10.5px; color:#C8C6BE; font-family:'DM Mono',monospace; margin-top:1px;">Di 01.07 · 0 offen</div>
+              </div>
+            </div>
+            <div style="padding:8px 8px; border-radius:7px; cursor:pointer; display:flex; align-items:center; gap:7px;">
+              <div style="width:5px; height:5px; border-radius:50%; background:#D8D6D0; flex-shrink:0;"></div>
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:13px; font-weight:500; color:#7A7870; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Design Sprint</div>
+                <div style="font-size:10.5px; color:#C8C6BE; font-family:'DM Mono',monospace; margin-top:1px;">Fr 04.07 · 5 offen</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- User -->
+          <div style="padding:10px 14px; border-top:1px solid #F0EEE9; display:flex; align-items:center; gap:8px; cursor:pointer;">
+            <div style="width:24px; height:24px; background:#111210; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:9.5px; font-weight:700; color:white; flex-shrink:0;">FS</div>
+            <span style="font-size:12.5px; font-weight:500; color:#9A9890; flex:1;">F. Soelch</span>
+          </div>
+        </div>
+
+        <!-- Main C -->
+        <div style="flex:1; background:#F9F8F5; display:flex; flex-direction:column; overflow:hidden;">
+
+          <!-- Topbar C: minimal, no height waste -->
+          <div style="height:48px; background:#F9F8F5; border-bottom:1.5px solid #ECEAE5; display:flex; align-items:center; justify-content:space-between; padding:0 28px; flex-shrink:0;">
+            <div style="display:flex; align-items:center; gap:7px;">
+              <span style="font-size:11.5px; color:#B8B6B0; font-family:'DM Mono',monospace;">Meetings</span>
+              <span style="color:#D8D6D0; font-size:11px;">/</span>
+              <span style="font-size:11.5px; font-weight:600; color:#555450; font-family:'DM Mono',monospace;">Wöchentliches Sync</span>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <button style="padding:4px 10px; border:1px solid #E4E2DC; background:white; border-radius:6px; font-size:11.5px; color:#7A7870; cursor:pointer; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:5px;">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M5 1L6.1 3.9L9 5L6.1 6.1L5 9L3.9 6.1L1 5L3.9 3.9L5 1Z" stroke="#7A7870" stroke-width="1.1" stroke-linejoin="round"/></svg>
+                AI Brief
+              </button>
+            </div>
+          </div>
+
+          <!-- Content C: very spacious, large type -->
+          <div style="flex:1; overflow-y:auto; padding:36px 36px 28px; max-width:900px;">
+
+            <!-- Large meeting title -->
+            <h1 style="font-size:28px; font-weight:700; color:#111210; letter-spacing:-.05em; line-height:1.15; margin:0 0 10px;">Wöchentliches Sync</h1>
+            <p style="font-size:14px; color:#8A8880; margin:0 0 16px; line-height:1.5;">Team Produkt · wöchentliches Standup</p>
+
+            <!-- Meta row -->
+            <div style="display:flex; align-items:center; gap:16px; margin-bottom:32px; padding-bottom:24px; border-bottom:1.5px solid #ECEAE5; flex-wrap:wrap;">
+              <span style="display:inline-flex; align-items:center; gap:5px; font-size:12px; color:#8A8880; font-family:'DM Mono',monospace;">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none" style="flex-shrink:0;"><rect x=".75" y="1.5" width="9.5" height="8.5" rx="1.5" stroke="currentColor" stroke-width="1.1"/><line x1=".75" y1="4" x2="10.25" y2="4" stroke="currentColor" stroke-width="1.1"/><line x1="3.5" y1=".5" x2="3.5" y2="2.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><line x1="7.5" y1=".5" x2="7.5" y2="2.75" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>
+                Mi, 25.06.2026 · 10:00
+              </span>
+              <span style="display:inline-flex; align-items:center; gap:5px; font-size:12px; color:#8A8880; font-family:'DM Mono',monospace;">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1 5.5C1 3.3 2.8 1.5 5 1.5h3.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><path d="M7.5.5l2 1-2 1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 5.5C10 7.7 8.2 9.5 6 9.5H2.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><path d="M3.5 8.5l-2 1 2 1" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Wöchentlich
+              </span>
+              <div style="margin-left:auto; display:flex; gap:6px;">
+                <button style="padding:6px 12px; border:1px solid #E0DED8; background:white; border-radius:7px; font-size:12.5px; cursor:pointer; color:#6A6860; font-family:'DM Sans',sans-serif;">Bearbeiten</button>
+                <button style="padding:6px 12px; background:#111210; border:none; border-radius:7px; font-size:12.5px; cursor:pointer; color:white; font-weight:600; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:5px;">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><line x1="5" y1="1" x2="5" y2="9" stroke="white" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="5" x2="9" y2="5" stroke="white" stroke-width="1.6" stroke-linecap="round"/></svg>
+                  Thema
+                </button>
+              </div>
+            </div>
+
+            <!-- Topics: absolutely clean list -->
+            <div style="font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:#C8C6BE; margin-bottom:16px;">Themen · 2 offen</div>
+
+            <div style="display:flex; flex-direction:column; gap:0;">
+              <!-- Open 1 -->
+              <div style="padding:16px 0; border-bottom:1px solid #ECEAE5; display:flex; align-items:flex-start; gap:12px;">
+                <div style="width:18px; height:18px; border-radius:50%; border:1.5px solid #C8C6BE; flex-shrink:0; margin-top:1px;"></div>
+                <div style="flex:1;">
+                  <div style="font-size:15px; font-weight:600; color:#111210; letter-spacing:-.02em; margin-bottom:4px; line-height:1.3;">Roadmap Q3 2026 besprechen</div>
+                  <div style="font-size:12.5px; color:#9A9890; line-height:1.5;">Stand der Planung und offene Entscheidungen reviewen</div>
+                </div>
+                <button style="padding:5px 10px; border:1px solid #E0DED8; background:white; border-radius:6px; font-size:11.5px; color:#7A7870; cursor:pointer; font-family:'DM Sans',sans-serif; flex-shrink:0; white-space:nowrap; margin-top:1px;">Erledigen</button>
+              </div>
+
+              <!-- Open 2 -->
+              <div style="padding:16px 0; border-bottom:1px solid #ECEAE5; display:flex; align-items:flex-start; gap:12px;">
+                <div style="width:18px; height:18px; border-radius:50%; border:1.5px solid #C8C6BE; flex-shrink:0; margin-top:1px;"></div>
+                <div style="flex:1;">
+                  <div style="font-size:15px; font-weight:600; color:#111210; letter-spacing:-.02em; margin-bottom:4px; line-height:1.3;">Budget-Freigabe Marketing Q3</div>
+                  <div style="font-size:12.5px; color:#9A9890; line-height:1.5;">Antrag auf 15.000 € für die Q3-Kampagne</div>
+                </div>
+                <button style="padding:5px 10px; border:1px solid #E0DED8; background:white; border-radius:6px; font-size:11.5px; color:#7A7870; cursor:pointer; font-family:'DM Sans',sans-serif; flex-shrink:0; white-space:nowrap; margin-top:1px;">Erledigen</button>
+              </div>
+
+              <!-- Done -->
+              <div style="padding:14px 0; display:flex; align-items:flex-start; gap:12px; opacity:.55;">
+                <div style="width:18px; height:18px; border-radius:50%; background:#14A87C; flex-shrink:0; margin-top:1px; display:flex; align-items:center; justify-content:center;">
+                  <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <div style="flex:1;">
+                  <div style="font-size:15px; font-weight:600; color:#9A9890; letter-spacing:-.02em; text-decoration:line-through; text-decoration-thickness:1.5px; margin-bottom:4px; line-height:1.3;">Onboarding Max Mustermann</div>
+                  <div style="font-size:12px; color:#B8B6B0; font-family:'DM Mono',monospace;">20.06.2026</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end frames row -->
+
+
+  <!-- ═══ DESIGN SYSTEM (Empfehlung: A) ════════════════════════════════ -->
+  <div style="font-size:10.5px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:#9A9893; margin-bottom:10px;">Design System</div>
+  <div style="font-size:28px; font-weight:700; color:#141312; letter-spacing:-.04em; margin-bottom:6px;">Variante A — Vollständige Token-Spec</div>
+  <p style="font-size:14px; color:#7A7870; margin:0 0 48px; line-height:1.6; max-width:560px;">Direkt einsetzbare Werte als Ersatz für die bestehende <code style="font-family:'DM Mono',monospace; font-size:12px; background:rgba(0,0,0,.07); padding:2px 5px; border-radius:4px;">:root {}</code> CSS-Variablen. Schrift: <strong>DM Sans</strong> (400/500/600/700) + <strong>DM Mono</strong> für Datum/Meta.</p>
+
+  <div style="display:flex; gap:48px; align-items:flex-start; margin-bottom:48px; flex-wrap:wrap;">
+
+    <!-- LEFT: Colors -->
+    <div style="flex:none; width:560px; background:white; border-radius:16px; border:1px solid #E6E5E0; overflow:hidden;">
+      <div style="padding:20px 24px; border-bottom:1px solid #F0EFE9;">
+        <div style="font-size:13px; font-weight:700; color:#111210; letter-spacing:-.01em;">Farb-Tokens</div>
+      </div>
+      <div style="padding:20px 24px; display:flex; flex-direction:column; gap:18px;">
+
+        <!-- Sidebar -->
+        <div>
+          <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:8px;">Sidebar</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#0D0F11; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#0D0F11</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">sb-bg</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#191C1F; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#191C1F</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">sb-border</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#E8EDF3; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#E8EDF3</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">sb-title</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#687280; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#687280</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">sb-text</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#30383F; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#30383F</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">sb-muted</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main surfaces -->
+        <div>
+          <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:8px;">Hauptflächen</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#F5F5F2; border:1px solid #E0DED9;"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#F5F5F2</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">bg</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#FFFFFF; border:1px solid #E0DED9;"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#FFFFFF</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">card</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#E8E7E2; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#E8E7E2</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">border</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#EEEEE9; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#EEEEE9</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">border-md</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Text -->
+        <div>
+          <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:8px;">Text</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#111210; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#111210</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">text</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#5A5850; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#5A5850</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">text-muted</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#9A9890; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#9A9890</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">text-light</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Accent -->
+        <div>
+          <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:8px;">Accent (Blau statt Indigo)</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#1D6FE8; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#1D6FE8</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">primary</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#1560CC; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#1560CC</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">primary-dark</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#EBF2FD; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#EBF2FD</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">primary-light</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:rgba(29,111,232,.1); border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">rgba(29,111,232,.1)</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">primary-glow</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Status -->
+        <div>
+          <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:8px;">Status</div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#14A87C; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#14A87C</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">green</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#E74848; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#E74848</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">red</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+              <div style="width:48px; height:32px; border-radius:6px; background:#F0A020; border:1px solid rgba(0,0,0,.08);"></div>
+              <span style="font-size:10px; color:#888; font-family:'DM Mono',monospace;">#F0A020</span>
+              <span style="font-size:9.5px; color:#B0AEA8;">amber</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- RIGHT: Typography + Spacing -->
+    <div style="flex:1; min-width:400px; display:flex; flex-direction:column; gap:20px;">
+
+      <!-- Typography -->
+      <div style="background:white; border-radius:16px; border:1px solid #E6E5E0; overflow:hidden;">
+        <div style="padding:20px 24px; border-bottom:1px solid #F0EFE9;">
+          <div style="font-size:13px; font-weight:700; color:#111210; letter-spacing:-.01em;">Schrift-Scale · DM Sans</div>
+        </div>
+        <div style="padding:20px 24px; display:flex; flex-direction:column; gap:16px; font-family:'DM Sans',sans-serif;">
+          <div style="display:flex; align-items:baseline; gap:16px;">
+            <span style="font-size:24px; font-weight:700; color:#111210; letter-spacing:-.05em; line-height:1.2; flex:1;">Meeting Titel</span>
+            <code style="font-size:11px; color:#9A9890; font-family:'DM Mono',monospace; flex-shrink:0;">24px · 700 · −.05em</code>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:16px; padding-top:12px; border-top:1px solid #F4F3EF;">
+            <span style="font-size:18px; font-weight:700; color:#111210; letter-spacing:-.04em; line-height:1.3; flex:1;">Abschnitt-Heading</span>
+            <code style="font-size:11px; color:#9A9890; font-family:'DM Mono',monospace; flex-shrink:0;">18px · 700 · −.04em</code>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:16px; padding-top:12px; border-top:1px solid #F4F3EF;">
+            <span style="font-size:15px; font-weight:600; color:#111210; letter-spacing:-.025em; line-height:1.4; flex:1;">Karten-Titel</span>
+            <code style="font-size:11px; color:#9A9890; font-family:'DM Mono',monospace; flex-shrink:0;">15px · 600 · −.025em</code>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:16px; padding-top:12px; border-top:1px solid #F4F3EF;">
+            <span style="font-size:14px; font-weight:400; color:#111210; letter-spacing:-.01em; line-height:1.55; flex:1;">Fließtext, Thema-Beschreibung</span>
+            <code style="font-size:11px; color:#9A9890; font-family:'DM Mono',monospace; flex-shrink:0;">14px · 400 · −.01em</code>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:16px; padding-top:12px; border-top:1px solid #F4F3EF;">
+            <span style="font-size:12.5px; font-weight:400; color:#5A5850; letter-spacing:0; line-height:1.5; flex:1;">Sekundärer Text, Beschreibung</span>
+            <code style="font-size:11px; color:#9A9890; font-family:'DM Mono',monospace; flex-shrink:0;">12.5px · 400</code>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:16px; padding-top:12px; border-top:1px solid #F4F3EF;">
+            <span style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.09em; color:#9A9890; flex:1;">LABEL / PILL-TEXT</span>
+            <code style="font-size:11px; color:#9A9890; font-family:'DM Mono',monospace; flex-shrink:0;">11px · 700 · UC</code>
+          </div>
+          <div style="display:flex; align-items:baseline; gap:16px; padding-top:12px; border-top:1px solid #F4F3EF;">
+            <span style="font-size:11.5px; color:#9A9890; font-family:'DM Mono',monospace; flex:1;">Mi 25.06 · 10:00 · Datum/Meta</span>
+            <code style="font-size:11px; color:#9A9890; font-family:'DM Mono',monospace; flex-shrink:0;">DM Mono 11.5px · 400</code>
+          </div>
+        </div>
+      </div>
+
+      <!-- Spacing + Radius -->
+      <div style="background:white; border-radius:16px; border:1px solid #E6E5E0; overflow:hidden;">
+        <div style="padding:20px 24px; border-bottom:1px solid #F0EFE9;">
+          <div style="font-size:13px; font-weight:700; color:#111210; letter-spacing:-.01em;">Spacing · Radius · Shadows</div>
+        </div>
+        <div style="padding:20px 24px; display:flex; gap:32px; flex-wrap:wrap;">
+
+          <!-- Spacing -->
+          <div style="flex:none;">
+            <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:12px;">Spacing</div>
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <div style="display:flex; align-items:center; gap:8px;"><div style="height:8px; background:#1D6FE8; border-radius:2px; opacity:.7; width:4px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">4px</code><span style="font-size:11px; color:#B0AEA8;">xs</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="height:8px; background:#1D6FE8; border-radius:2px; opacity:.7; width:8px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">8px</code><span style="font-size:11px; color:#B0AEA8;">sm</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="height:8px; background:#1D6FE8; border-radius:2px; opacity:.7; width:12px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">12px</code><span style="font-size:11px; color:#B0AEA8;">md</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="height:8px; background:#1D6FE8; border-radius:2px; opacity:.7; width:16px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">16px</code><span style="font-size:11px; color:#B0AEA8;">lg</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="height:8px; background:#1D6FE8; border-radius:2px; opacity:.7; width:24px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">24px</code><span style="font-size:11px; color:#B0AEA8;">xl</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="height:8px; background:#1D6FE8; border-radius:2px; opacity:.7; width:32px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">32px</code><span style="font-size:11px; color:#B0AEA8;">2xl</span></div>
+            </div>
+          </div>
+
+          <!-- Radius -->
+          <div style="flex:none;">
+            <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:12px;">Radius</div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <div style="display:flex; align-items:center; gap:8px;"><div style="width:36px; height:20px; background:#E8E7E2; border-radius:6px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">6px</code><span style="font-size:11px; color:#B0AEA8;">Button/Input</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="width:36px; height:20px; background:#E8E7E2; border-radius:8px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">8px</code><span style="font-size:11px; color:#B0AEA8;">Kleine Karte</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="width:36px; height:20px; background:#E8E7E2; border-radius:12px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">12px</code><span style="font-size:11px; color:#B0AEA8;">Haupt-Karte</span></div>
+              <div style="display:flex; align-items:center; gap:8px;"><div style="width:36px; height:20px; background:#E8E7E2; border-radius:16px;"></div><code style="font-size:11px; font-family:'DM Mono',monospace; color:#5A5850;">16px</code><span style="font-size:11px; color:#B0AEA8;">Modal</span></div>
+            </div>
+          </div>
+
+          <!-- Shadows -->
+          <div style="flex:1; min-width:180px;">
+            <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:12px;">Shadows</div>
+            <div style="display:flex; flex-direction:column; gap:14px;">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div style="width:40px; height:26px; background:white; border-radius:6px; box-shadow:0 1px 2px rgba(16,22,30,.05), 0 0 0 1px rgba(16,22,30,.06); flex-shrink:0;"></div>
+                <code style="font-size:10.5px; font-family:'DM Mono',monospace; color:#5A5850; line-height:1.4;">xs: 0 1px 2px rgba(16,22,30,.05)<br>+ 1px ring .06</code>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div style="width:40px; height:26px; background:white; border-radius:8px; box-shadow:0 2px 6px rgba(16,22,30,.08), 0 1px 2px rgba(16,22,30,.05); flex-shrink:0;"></div>
+                <code style="font-size:10.5px; font-family:'DM Mono',monospace; color:#5A5850; line-height:1.4;">sm: 0 2px 6px .08<br>+ 0 1px 2px .05</code>
+              </div>
+              <div style="display:flex; align-items:center; gap:12px;">
+                <div style="width:40px; height:26px; background:white; border-radius:8px; box-shadow:0 6px 20px rgba(16,22,30,.12), 0 2px 6px rgba(16,22,30,.06); flex-shrink:0;"></div>
+                <code style="font-size:10.5px; font-family:'DM Mono',monospace; color:#5A5850; line-height:1.4;">md: 0 6px 20px .12<br>+ 0 2px 6px .06</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Components -->
+  <div style="background:white; border-radius:16px; border:1px solid #E6E5E0; overflow:hidden; margin-bottom:32px;">
+    <div style="padding:20px 24px; border-bottom:1px solid #F0EFE9;">
+      <div style="font-size:13px; font-weight:700; color:#111210; letter-spacing:-.01em;">Komponenten</div>
+    </div>
+    <div style="padding:24px; display:flex; flex-direction:column; gap:28px; font-family:'DM Sans',sans-serif;">
+
+      <!-- Buttons -->
+      <div>
+        <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:12px;">Buttons</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <button style="padding:8px 16px; background:#1D6FE8; color:white; border:none; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:6px; box-shadow:0 1px 2px rgba(29,111,232,.3);">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><line x1="5" y1="1" x2="5" y2="9" stroke="white" stroke-width="1.6" stroke-linecap="round"/><line x1="1" y1="5" x2="9" y2="5" stroke="white" stroke-width="1.6" stroke-linecap="round"/></svg>
+            Primär
+          </button>
+          <button style="padding:8px 16px; background:white; color:#3A3830; border:1.5px solid #E0DED9; border-radius:7px; font-size:13px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif;">Sekundär</button>
+          <button style="padding:8px 16px; background:transparent; color:#5A5850; border:1.5px solid transparent; border-radius:7px; font-size:13px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif;">Ghost</button>
+          <button style="padding:8px 16px; background:#FEF2F2; color:#B91C1C; border:1px solid #FECACA; border-radius:7px; font-size:13px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif;">Gefährlich</button>
+          <button style="padding:8px 16px; background:linear-gradient(135deg,#1D6FE8,#7C3AED); color:white; border:none; border-radius:7px; font-size:13px; font-weight:600; cursor:pointer; font-family:'DM Sans',sans-serif; display:flex; align-items:center; gap:6px;">
+            <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M5.5 1L6.6 4.4L10 5.5L6.6 6.6L5.5 10L4.4 6.6L1 5.5L4.4 4.4L5.5 1Z" stroke="white" stroke-width="1" stroke-linejoin="round" fill="white" opacity=".7"/></svg>
+            AI-Aktion
+          </button>
+          <button style="padding:7px 14px; background:#EBF2FD; color:#1D6FE8; border:1px solid rgba(29,111,232,.2); border-radius:7px; font-size:12.5px; font-weight:600; cursor:pointer; font-family:'DM Sans',sans-serif;">Erfolg</button>
+          <button style="padding:6px 10px; background:transparent; color:#5A5850; border:1px solid #E0DED9; border-radius:7px; font-size:12.5px; font-weight:500; cursor:pointer; font-family:'DM Sans',sans-serif;">Klein</button>
+        </div>
+      </div>
+
+      <!-- Badges + Pills -->
+      <div>
+        <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:12px;">Badges &amp; Pills</div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+          <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:100px; background:rgba(29,111,232,.12); color:#1D6FE8; font-size:11.5px; font-weight:600;">2 offen</span>
+          <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:100px; background:#F0FDF8; color:#14A87C; border:1px solid #BBF7D0; font-size:11.5px; font-weight:600;">erledigt</span>
+          <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:100px; background:#F0EEF5; color:#7C3AED; border:1px solid #E9D5FF; font-size:11.5px; font-weight:600;">admin</span>
+          <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:100px; background:#F3F2EE; color:#5A5850; border:1px solid #E5E4DF; font-size:11.5px; font-weight:500;">wöchentlich</span>
+          <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:100px; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A; font-size:11.5px; font-weight:600;">überfällig</span>
+          <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:100px; background:#EEF0FE; color:#1D6FE8; border:1px solid rgba(29,111,232,.18); font-size:11.5px; font-weight:600;">
+            <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><path d="M4.5 1L5.4 3.6L8 4.5L5.4 5.4L4.5 8L3.6 5.4L1 4.5L3.6 3.6L4.5 1Z" fill="#1D6FE8" opacity=".7"/></svg>
+            AI
+          </span>
+          <span style="display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:100px; background:#F0F8FD; color:#0B6FA4; border:1px solid #BAE6FD; font-size:11.5px; font-weight:500;">Design</span>
+        </div>
+      </div>
+
+      <!-- Form input -->
+      <div>
+        <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:12px;">Formular-Elemente</div>
+        <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;">
+          <div style="flex:none; width:280px;">
+            <label style="display:block; font-size:12.5px; font-weight:600; color:#2A2826; margin-bottom:5px;">Meeting-Titel</label>
+            <input type="text" value="Wöchentliches Sync" style="width:100%; padding:9px 12px; border:1.5px solid #1D6FE8; border-radius:7px; font-size:14px; font-family:'DM Sans',sans-serif; color:#111210; background:white; box-shadow:0 0 0 3px rgba(29,111,232,.1); outline:none;" readonly>
+            <div style="font-size:11.5px; color:#9A9890; margin-top:4px;">Fokus-Zustand</div>
+          </div>
+          <div style="flex:none; width:280px;">
+            <label style="display:block; font-size:12.5px; font-weight:600; color:#2A2826; margin-bottom:5px;">Datum <span style="font-weight:400; color:#9A9890;">(optional)</span></label>
+            <input type="text" value="25.06.2026" style="width:100%; padding:9px 12px; border:1.5px solid #E0DED9; border-radius:7px; font-size:14px; font-family:'DM Mono',monospace; color:#3A3830; background:white; outline:none;" readonly>
+            <div style="font-size:11.5px; color:#9A9890; margin-top:4px;">Standard-Zustand</div>
+          </div>
+          <div style="flex:none; width:280px;">
+            <label style="display:block; font-size:12.5px; font-weight:600; color:#2A2826; margin-bottom:5px;">Teilnehmer</label>
+            <input type="text" value="Falsches Format!" style="width:100%; padding:9px 12px; border:1.5px solid #E74848; border-radius:7px; font-size:14px; font-family:'DM Sans',sans-serif; color:#111210; background:#FEF2F2; box-shadow:0 0 0 3px rgba(231,72,72,.08); outline:none;" readonly>
+            <div style="font-size:11.5px; color:#E74848; margin-top:4px; font-weight:500;">Fehler-Zustand</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Topic card states -->
+      <div>
+        <div style="font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#B0AEA8; margin-bottom:12px;">Topic-Karten — Zustände</div>
+        <div style="border:1px solid #E8E7E2; border-radius:10px; overflow:hidden; max-width:680px;">
+          <!-- Open -->
+          <div style="padding:13px 18px; border-bottom:1px solid #F0F0EB; display:flex; align-items:flex-start; gap:10px; position:relative;">
+            <div style="position:absolute; left:0; top:12px; bottom:12px; width:3px; background:#BABCD4; border-radius:0 3px 3px 0;"></div>
+            <div style="width:17px; height:17px; border-radius:50%; border:1.5px solid #BABCD4; flex-shrink:0; margin-top:2px;"></div>
+            <div style="flex:1;">
+              <div style="font-size:14px; font-weight:600; color:#111210; letter-spacing:-.015em; margin-bottom:2px;">Offen · Normal</div>
+              <div style="font-size:12px; color:#9A9890;">Beschreibung des Themas</div>
+            </div>
+            <span style="padding:3px 9px; border-radius:100px; background:rgba(29,111,232,.1); color:#1D6FE8; font-size:11px; font-weight:600; flex-shrink:0;">offen</span>
+          </div>
+          <!-- Done -->
+          <div style="padding:13px 18px; border-bottom:1px solid #F0F0EB; display:flex; align-items:flex-start; gap:10px; background:#FCFEFC; position:relative;">
+            <div style="position:absolute; left:0; top:12px; bottom:12px; width:3px; background:#14A87C; border-radius:0 3px 3px 0;"></div>
+            <div style="width:17px; height:17px; border-radius:50%; background:#14A87C; flex-shrink:0; margin-top:2px; display:flex; align-items:center; justify-content:center;">
+              <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:14px; font-weight:600; color:#ABABAB; text-decoration:line-through; text-decoration-thickness:1.5px; letter-spacing:-.015em; margin-bottom:2px;">Erledigt</div>
+              <div style="font-size:12px; color:#C8C6C2;">Ergebnis dokumentiert · 20.06.2026</div>
+            </div>
+            <span style="padding:3px 9px; border-radius:100px; background:#F0FDF8; color:#14A87C; border:1px solid #BBF7D0; font-size:11px; font-weight:600; flex-shrink:0;">erledigt</span>
+          </div>
+          <!-- Snoozed -->
+          <div style="padding:13px 18px; display:flex; align-items:flex-start; gap:10px; background:#F9FAFB; position:relative;">
+            <div style="position:absolute; left:0; top:12px; bottom:12px; width:3px; background:#94A3B8; border-radius:0 3px 3px 0;"></div>
+            <div style="width:17px; height:17px; border-radius:50%; border:1.5px solid #94A3B8; flex-shrink:0; margin-top:2px; display:flex; align-items:center; justify-content:center; background:#F9FAFB;">
+              <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><circle cx="4.5" cy="4.5" r="3.5" stroke="#94A3B8" stroke-width="1.2"/><path d="M4.5 3V4.5L5.5 6" stroke="#94A3B8" stroke-width="1.2" stroke-linecap="round"/></svg>
+            </div>
+            <div style="flex:1;">
+              <div style="font-size:14px; font-weight:600; color:#9A9890; letter-spacing:-.015em; margin-bottom:2px;">Schlafend bis 01.07.2026</div>
+              <div style="font-size:12px; color:#B0AEA8;">Wird dann wieder angezeigt</div>
+            </div>
+            <span style="padding:3px 9px; border-radius:100px; background:#F1F5F9; color:#64748B; border:1px solid #E2E8F0; font-size:11px; font-weight:600; flex-shrink:0; display:flex; align-items:center; gap:3px;">
+              <svg width="9" height="9" viewBox="0 0 9 9" fill="none"><circle cx="4.5" cy="4.5" r="3.5" stroke="currentColor" stroke-width="1.2"/><path d="M4.5 3V4.5L5.5 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+              schläft
+            </span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Implementation Notes -->
+  <div style="background:white; border-radius:16px; border:1px solid #E6E5E0; overflow:hidden;">
+    <div style="padding:20px 24px; border-bottom:1px solid #F0EFE9;">
+      <div style="font-size:13px; font-weight:700; color:#111210; letter-spacing:-.01em;">Umsetzungshinweise für Claude Code</div>
+    </div>
+    <div style="padding:24px; display:flex; gap:24px; flex-wrap:wrap;">
+
+      <div style="flex:1; min-width:280px;">
+        <div style="font-size:12px; font-weight:700; color:#5A5850; margin-bottom:10px; text-transform:uppercase; letter-spacing:.07em;">Schritt 1 — Schrift tauschen</div>
+        <div style="background:#F5F5F2; border-radius:8px; padding:12px 14px; font-size:12px; font-family:'DM Mono',monospace; color:#3A3830; line-height:1.7;">
+          <span style="color:#9A9890;">/* Google Fonts */</span><br>
+          @import url(<span style="color:#1D6FE8;">'https://fonts.googleapis.com/css2?<br>&nbsp;&nbsp;family=DM+Sans:ital,opsz,wght@<br>&nbsp;&nbsp;0,9..40,400;0,9..40,500;0,9..40,600;<br>&nbsp;&nbsp;0,9..40,700&amp;family=DM+Mono:wght@<br>&nbsp;&nbsp;400;500&amp;display=swap'</span>);<br><br>
+          body { font-family: <span style="color:#1D6FE8;">'DM Sans'</span>, ... }
+        </div>
+      </div>
+
+      <div style="flex:1; min-width:280px;">
+        <div style="font-size:12px; font-weight:700; color:#5A5850; margin-bottom:10px; text-transform:uppercase; letter-spacing:.07em;">Schritt 2 — CSS-Variablen ersetzen</div>
+        <div style="background:#F5F5F2; border-radius:8px; padding:12px 14px; font-size:11.5px; font-family:'DM Mono',monospace; color:#3A3830; line-height:1.75;">
+          <span style="color:#9A9890;">/* ALT → NEU */</span><br>
+          --sb-bg: <span style="color:#E74848;">#0e1320</span> → <span style="color:#14A87C;">#0D0F11</span>;<br>
+          --primary: <span style="color:#E74848;">#5b5bd6</span> → <span style="color:#14A87C;">#1D6FE8</span>;<br>
+          --primary-dark: <span style="color:#E74848;">#4a4ac4</span> → <span style="color:#14A87C;">#1560CC</span>;<br>
+          --primary-light: <span style="color:#E74848;">#eeeefc</span> → <span style="color:#14A87C;">#EBF2FD</span>;<br>
+          --bg: <span style="color:#E74848;">#f6f7f9</span> → <span style="color:#14A87C;">#F5F5F2</span>;<br>
+          --text: <span style="color:#E74848;">#16181d</span> → <span style="color:#14A87C;">#111210</span>;<br>
+          --border: <span style="color:#E74848;">#eceef2</span> → <span style="color:#14A87C;">#E8E7E2</span>;
+        </div>
+      </div>
+
+      <div style="flex:1; min-width:280px;">
+        <div style="font-size:12px; font-weight:700; color:#5A5850; margin-bottom:10px; text-transform:uppercase; letter-spacing:.07em;">Schritt 3 — Strukturelle Änderung</div>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <div style="display:flex; gap:8px; align-items:flex-start;">
+            <div style="width:20px; height:20px; background:#1D6FE8; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px;">
+              <span style="font-size:11px; font-weight:700; color:white;">1</span>
+            </div>
+            <div style="font-size:12.5px; color:#3A3830; line-height:1.55;"><strong>Navbar entfernen</strong> — Logo + User in Sidebar-Top integrieren (spart Höhe, wirkt moderner)</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:flex-start;">
+            <div style="width:20px; height:20px; background:#1D6FE8; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px;">
+              <span style="font-size:11px; font-weight:700; color:white;">2</span>
+            </div>
+            <div style="font-size:12.5px; color:#3A3830; line-height:1.55;"><strong>Slim Topbar</strong> — Neue 52px-Leiste für Breadcrumb + AI-Badge in der Main-Area</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:flex-start;">
+            <div style="width:20px; height:20px; background:#1D6FE8; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px;">
+              <span style="font-size:11px; font-weight:700; color:white;">3</span>
+            </div>
+            <div style="font-size:12.5px; color:#3A3830; line-height:1.55;"><strong>Alle Emoji ersetzen</strong> durch inline SVG — Lucide-Icons als Vorlage empfohlen</div>
+          </div>
+          <div style="display:flex; gap:8px; align-items:flex-start;">
+            <div style="width:20px; height:20px; background:#1D6FE8; border-radius:50%; display:flex; align-items:center; justify-content:center; flex-shrink:0; margin-top:1px;">
+              <span style="font-size:11px; font-weight:700; color:white;">4</span>
+            </div>
+            <div style="font-size:12.5px; color:#3A3830; line-height:1.55;"><strong>DM Mono</strong> für alle Datumsanzeigen und numerische Werte (bestehende .meeting-item-sub etc.)</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {};
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

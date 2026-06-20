@@ -6,7 +6,10 @@ struct TodoFormView: View {
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
     @State private var description = ""
-    @State private var snoozeDate = ""
+    @State private var hasSnooze = false
+    @State private var snoozeDate = Date()
+    @State private var hasDueDate = false
+    @State private var dueDate = Date()
     @State private var loading = false
     @State private var error: String?
 
@@ -20,12 +23,21 @@ struct TodoFormView: View {
                     TextField("Optional", text: $description, axis: .vertical)
                         .lineLimit(3...)
                 }
-                Section("Schlafen bis (optional)") {
-                    TextField("JJJJ-MM-TT", text: $snoozeDate)
-                        .numberKeyboard()
-                    if !snoozeDate.isEmpty {
-                        Button("Snooze entfernen", role: .destructive) { snoozeDate = "" }
+                Section {
+                    Toggle("📅 Fälligkeitsdatum", isOn: $hasDueDate)
+                    if hasDueDate {
+                        DatePicker("Fällig am", selection: $dueDate, displayedComponents: .date)
                     }
+                } footer: {
+                    Text("Todos mit Fälligkeit werden zuerst angezeigt — frühestes oben.")
+                }
+                Section {
+                    Toggle("😴 Schlafen bis", isOn: $hasSnooze)
+                    if hasSnooze {
+                        DatePicker("Wacht auf am", selection: $snoozeDate, displayedComponents: .date)
+                    }
+                } footer: {
+                    Text("Bis zu diesem Datum ausblenden.")
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
@@ -48,23 +60,41 @@ struct TodoFormView: View {
         guard let t = todo else { return }
         title = t.title
         description = t.description
-        snoozeDate = t.snoozedUntil ?? ""
+        if let s = t.snoozedUntil, !s.isEmpty, let d = Self.parseDate(s) {
+            hasSnooze = true; snoozeDate = d
+        }
+        if let s = t.dueDate, !s.isEmpty, let d = Self.parseDate(s) {
+            hasDueDate = true; dueDate = d
+        }
+    }
+
+    private static func parseDate(_ s: String) -> Date? {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: String(s.prefix(10)))
+    }
+
+    private static func formatDate(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: d)
     }
 
     private func save() {
         loading = true
-        let snooze: String? = snoozeDate.isEmpty ? nil : snoozeDate
+        let snooze: String? = hasSnooze ? Self.formatDate(snoozeDate) : nil
+        let due:    String? = hasDueDate ? Self.formatDate(dueDate)    : nil
         Task {
             do {
                 if let t = todo {
                     try await state.updateTodo(
                         id: t.id, title: title, description: description,
                         done: t.done, result: t.result, resultDate: t.resultDate,
-                        snoozedUntil: snooze
+                        snoozedUntil: snooze, dueDate: due
                     )
                 } else {
                     try await state.createTodo(title: title, description: description,
-                                               snoozedUntil: snooze)
+                                               snoozedUntil: snooze, dueDate: due)
                 }
                 dismiss()
             } catch {

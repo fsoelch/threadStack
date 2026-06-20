@@ -7,6 +7,7 @@ struct LoginView: View {
     @State private var error: String?
     @State private var loading = false
     @State private var showSettings = false
+    @State private var rememberWithBiometry = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -56,6 +57,14 @@ struct LoginView: View {
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { Task { await doLogin() } }
 
+                    if Keychain.biometryAvailable {
+                        Toggle(isOn: $rememberWithBiometry) {
+                            Label("Mit \(Keychain.biometryTypeDescription) merken",
+                                  systemImage: biometryIconName)
+                                .font(.footnote)
+                        }
+                    }
+
                     if let error {
                         Text(error).font(.footnote).foregroundStyle(.red)
                             .multilineTextAlignment(.center)
@@ -96,10 +105,20 @@ struct LoginView: View {
         error = nil; loading = true
         defer { loading = false }
         do {
-            try await state.login(username: username, password: password)
+            try await state.login(username: username, password: password,
+                                  rememberWithBiometry: rememberWithBiometry && Keychain.biometryAvailable)
             try await state.loadAll()
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private var biometryIconName: String {
+        switch Keychain.biometryTypeDescription {
+        case "Face ID":  return "faceid"
+        case "Touch ID": return "touchid"
+        case "Optic ID": return "opticid"
+        default:         return "lock.shield"
         }
     }
 }

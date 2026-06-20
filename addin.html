@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ThreadStack</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --primary:   #6366f1;
+    --primary-d: #4f46e5;
+    --green:     #16a34a;
+    --pink:      #db2777;
+    --bg:        #f8fafc;
+    --card:      #ffffff;
+    --border:    #e2e8f0;
+    --text:      #1e293b;
+    --muted:     #64748b;
+    --light:     #94a3b8;
+    --r:         8px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    background: var(--bg);
+    color: var(--text);
+    padding: 12px;
+    line-height: 1.45;
+  }
+
+  /* ── Header ── */
+  .header {
+    display: flex; align-items: center; gap: 8px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+  .logo { font-weight: 700; font-size: 14px; color: var(--primary); letter-spacing: -.3px; }
+  .logo span { color: var(--text); }
+  .header-user { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+  /* ── Cards ── */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 10px 12px; margin-bottom: 8px;
+  }
+  .card-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .card-sub   { font-size: 11px; color: var(--muted); }
+
+  /* ── Meeting match ── */
+  .meeting-match {
+    border-left: 3px solid var(--primary);
+  }
+  .meeting-dot {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; margin-right: 5px; vertical-align: middle;
+  }
+  .meeting-title { font-weight: 600; }
+  .open-count {
+    display: inline-block; font-size: 10px; font-weight: 600;
+    padding: 1px 6px; border-radius: 20px;
+    background: rgba(99,102,241,.12); color: var(--primary);
+    margin-left: 6px;
+  }
+
+  /* ── Topic list ── */
+  .topic-list { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .topic-item {
+    font-size: 11px; color: var(--text);
+    padding: 4px 6px; border-radius: 5px;
+    background: #f1f5f9;
+    display: flex; align-items: flex-start; gap: 5px;
+  }
+  .topic-dot { color: var(--primary); flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Forms ── */
+  .form-group { margin-bottom: 8px; }
+  label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); margin-bottom: 3px; }
+  input, textarea, select {
+    width: 100%; padding: 6px 8px; border-radius: var(--r);
+    border: 1px solid var(--border); font-size: 12px;
+    font-family: inherit; outline: none; background: white; color: var(--text);
+    transition: border .15s;
+  }
+  input:focus, textarea:focus, select:focus { border-color: var(--primary); }
+  textarea { resize: vertical; min-height: 54px; }
+
+  /* ── Buttons ── */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 5px; padding: 6px 12px; border-radius: var(--r);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    border: none; font-family: inherit; transition: background .15s;
+  }
+  .btn-primary { background: var(--primary); color: white; }
+  .btn-primary:hover { background: var(--primary-d); }
+  .btn-primary:disabled { background: #a5b4fc; cursor: not-allowed; }
+  .btn-secondary {
+    background: white; color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { background: #f1f5f9; }
+  .btn-sm { padding: 4px 8px; font-size: 11px; }
+  .btn-full { width: 100%; }
+  .btn-row { display: flex; gap: 6px; margin-top: 6px; }
+
+  /* ── Link ── */
+  .link { color: var(--primary); text-decoration: none; font-weight: 500; }
+  .link:hover { text-decoration: underline; }
+
+  /* ── Section divider ── */
+  .section-label {
+    font-size: 10px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; color: var(--light);
+    margin: 12px 0 6px;
+  }
+
+  /* ── States ── */
+  .loading { text-align: center; padding: 24px; color: var(--muted); font-size: 12px; }
+  .empty   { text-align: center; padding: 16px; color: var(--muted); font-size: 12px; }
+  .error   { background: #fee2e2; border: 1px solid #fecaca; border-radius: var(--r);
+             padding: 8px 10px; font-size: 11px; color: #b91c1c; margin-bottom: 8px; }
+  .success { background: #dcfce7; border: 1px solid #86efac; border-radius: var(--r);
+             padding: 8px 10px; font-size: 11px; color: #166534; margin-bottom: 8px; }
+
+  /* ── Login ── */
+  .login-wrap { max-width: 260px; margin: 0 auto; padding-top: 8px; }
+  .login-logo { text-align: center; font-size: 20px; font-weight: 700;
+                color: var(--primary); margin-bottom: 4px; }
+  .login-sub  { text-align: center; font-size: 11px; color: var(--muted);
+                margin-bottom: 16px; }
+
+  /* ── Tab bar ── */
+  .tabs { display: flex; gap: 2px; margin-bottom: 12px;
+          border-bottom: 1px solid var(--border); }
+  .tab {
+    padding: 6px 10px; font-size: 12px; font-weight: 500; cursor: pointer;
+    border: none; background: none; color: var(--muted); border-radius: 5px 5px 0 0;
+    transition: color .15s;
+  }
+  .tab.active { color: var(--primary); border-bottom: 2px solid var(--primary); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  /* ── No match ── */
+  .all-meetings { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .meeting-row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+    border-radius: var(--r); border: 1px solid var(--border);
+    background: white; cursor: pointer; transition: background .12s;
+  }
+  .meeting-row:hover { background: #f1f5f9; }
+  .meeting-row.selected { border-color: var(--primary); background: rgba(99,102,241,.06); }
+</style>
+</head>
+<body>
+
+<div id="app"><div class="loading">⏳ Wird geladen…</div></div>
+
+<script>
+/* ── Config ── */
+// BASE_PATH wird zur Laufzeit vom Server eingebettet
+const API = window.__TS_BASE__ + '/api';
+const APP = window.__TS_BASE__;
+
+/* ── State ── */
+let user     = null;
+let meetings = [];
+let todos    = [];
+let itemType = 'unknown';   // 'appointment' | 'message' | 'unknown'
+let itemData = {};          // subject, body, attendees[]
+let selMtgId = null;
+let activeTab = 'match';    // 'match' | 'todo'
+
+/* ── Boot ── */
+Office.onReady(async info => {
+  if (info.host !== Office.HostType.Outlook) {
+    show(`<div class="empty">Nur in Outlook verfügbar.</div>`);
+    return;
+  }
+  await boot();
+});
+
+async function boot() {
+  try {
+    user = await apiFetch('GET', '/me');
+  } catch (e) {
+    renderLogin();
+    return;
+  }
+  await Promise.all([loadMeetings(), loadTodos(), readItem()]);
+  renderMain();
+}
+
+/* ── Office item reading ── */
+async function readItem() {
+  const item = Office.context.mailbox.item;
+  if (!item) return;
+
+  itemType = item.itemType === Office.MailboxEnums.ItemType.Appointment
+    ? 'appointment' : 'message';
+
+  itemData.subject = item.subject || '';
+
+  // Attendees (appointment)
+  if (itemType === 'appointment') {
+    const req  = item.requiredAttendees || [];
+    const opt  = item.optionalAttendees || [];
+    itemData.attendees = [...req, ...opt].map(a => ({
+      name:  a.displayName || '',
+      email: a.emailAddress || ''
+    }));
+    itemData.organizer = item.organizer
+      ? { name: item.organizer.displayName || '', email: item.organizer.emailAddress || '' }
+      : null;
+    // Start date for display
+    if (item.start) {
+      itemData.start = item.start instanceof Date ? item.start : null;
+    }
+  } else {
+    // Sender info for messages
+    itemData.from = item.from
+      ? { name: item.from.displayName || '', email: item.from.emailAddress || '' }
+      : null;
+  }
+}
+
+/* ── Matching ── */
+function scoreMeeting(m) {
+  let score = 0;
+  const subject = (itemData.subject || '').toLowerCase();
+  const mtgTitle = (m.title || '').toLowerCase();
+
+  // Title overlap: shared words (min 3 chars)
+  const subjectWords = subject.split(/\W+/).filter(w => w.length >= 3);
+  const titleWords   = mtgTitle.split(/\W+/).filter(w => w.length >= 3);
+  for (const w of subjectWords) {
+    if (titleWords.some(t => t.includes(w) || w.includes(t))) score += 2;
+  }
+  if (mtgTitle.includes(subject) || subject.includes(mtgTitle)) score += 5;
+
+  // Participant overlap by name (partial match)
+  if (itemType === 'appointment' && itemData.attendees) {
+    const participants = (m.participants || []).map(p => p.toLowerCase());
+    for (const att of itemData.attendees) {
+      const name = att.name.toLowerCase();
+      if (participants.some(p => p.includes(name.split(' ')[0]) || name.includes(p.split(' ')[0]))) {
+        score += 1;
+      }
+    }
+  }
+  return score;
+}
+
+function findBestMatches() {
+  return meetings
+    .map(m => ({ ...m, _score: scoreMeeting(m) }))
+    .filter(m => m._score > 0)
+    .sort((a, b) => b._score - a._score);
+}
+
+/* ── Render main ── */
+function renderMain() {
+  const matches = findBestMatches();
+  const bestMatch = matches[0] || null;
+  if (!selMtgId && bestMatch) selMtgId = bestMatch.id;
+
+  const selMtg = meetings.find(m => m.id === selMtgId);
+  const openTopics = selMtg
+    ? (selMtg.topics || []).filter(t => !t.done && !t.isTodo)
+    : [];
+
+  show(`
+    <div class="header">
+      <div class="logo">Thread<span>Stack</span></div>
+      <div class="header-user">${escHtml(user.username)}</div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab ${activeTab === 'match' ? 'active' : ''}" onclick="switchTab('match')">
+        ${itemType === 'appointment' ? '📅 Meeting' : '📧 Zuordnen'}
+      </button>
+      <button class="tab ${activeTab === 'todo' ? 'active' : ''}" onclick="switchTab('todo')">✅ Todo</button>
+      <button class="tab ${activeTab === 'topic' ? 'active' : ''}" onclick="switchTab('topic')">💬 Thema</button>
+    </div>
+
+    <div id="tab-content">
+      ${activeTab === 'match' ? renderMatchTab(matches, selMtg, openTopics) : ''}
+      ${activeTab === 'todo'  ? renderTodoTab()  : ''}
+      ${activeTab === 'topic' ? renderTopicTab(selMtg) : ''}
+    </div>
+  `);
+}
+
+function renderMatchTab(matches, selMtg, openTopics) {
+  if (meetings.length === 0) {
+    return `<div class="empty">Noch keine Meetings in ThreadStack.</div>`;
+  }
+
+  let html = '';
+
+  if (itemType === 'appointment') {
+    html += `<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+      📅 <strong>${escHtml(itemData.subject || '(Kein Betreff)')}</strong>
+    </div>`;
+  } else {
+    html += `<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+      📧 <strong>${escHtml(itemData.subject || '(Kein Betreff)')}</strong>
+    </div>`;
+  }
+
+  // Meeting picker
+  html += `<div class="section-label">Meeting zuordnen</div>
+  <select id="mtg-select" onchange="selectMeeting(this.value)"
+          style="margin-bottom:8px">`;
+  for (const m of meetings) {
+    const sel = m.id === selMtgId ? 'selected' : '';
+    html += `<option value="${escHtml(m.id)}" ${sel}>${escHtml(m.title)}</option>`;
+  }
+  html += `</select>`;
+
+  if (matches.length > 0 && matches[0].id !== selMtgId) {
+    html += `<div style="font-size:10px;color:var(--muted);margin-bottom:6px;">
+      💡 Vorschlag: <a class="link" href="#" onclick="selectMeeting('${matches[0].id}');return false;">${escHtml(matches[0].title)}</a>
+    </div>`;
+  }
+
+  if (selMtg) {
+    html += `
+    <div class="card meeting-match">
+      <div class="meeting-title">
+        <span class="meeting-dot" style="background:${escHtml(selMtg.color || '#6366f1')}"></span>
+        ${escHtml(selMtg.title)}
+        ${openTopics.length > 0 ? `<span class="open-count">${openTopics.length} offen</span>` : ''}
+      </div>`;
+
+    if (openTopics.length > 0) {
+      html += `<div class="topic-list">`;
+      for (const t of openTopics.slice(0, 5)) {
+        html += `<div class="topic-item"><span class="topic-dot">›</span>${escHtml(t.title)}</div>`;
+      }
+      if (openTopics.length > 5) {
+        html += `<div class="topic-item" style="color:var(--muted)">+${openTopics.length - 5} weitere…</div>`;
+      }
+      html += `</div>`;
+    } else {
+      html += `<div class="card-sub" style="margin-top:4px">Keine offenen Themen.</div>`;
+    }
+
+    html += `
+      <div class="btn-row">
+        <a href="${APP}/#meeting-${escHtml(selMtg.id)}" target="_blank"
+           class="btn btn-primary btn-sm" style="text-decoration:none">
+          In ThreadStack öffnen ↗
+        </a>
+      </div>
+    </div>`;
+  }
+
+  return html;
+}
+
+function renderTodoTab() {
+  const prefill = itemData.subject || '';
+  return `
+    <div id="todo-feedback"></div>
+    <div class="form-group">
+      <label>Titel</label>
+      <input id="td-title" type="text" value="${escAttr(prefill)}" placeholder="Was muss erledigt werden?">
+    </div>
+    <div class="form-group">
+      <label>📅 Fällig am <span style="font-weight:400">(optional)</span></label>
+      <input id="td-due" type="date">
+    </div>
+    <div class="form-group">
+      <label>Notiz <span style="font-weight:400">(optional)</span></label>
+      <textarea id="td-desc" placeholder="Details…"></textarea>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="saveTodo()">Todo speichern</button>
+  `;
+}
+
+function renderTopicTab(selMtg) {
+  const prefill = itemData.subject || '';
+  return `
+    <div id="topic-feedback"></div>
+    <div class="form-group">
+      <label>Meeting</label>
+      <select id="tp-mtg-select">
+        ${meetings.map(m => `<option value="${escAttr(m.id)}"${m.id === selMtgId ? ' selected' : ''}>${escHtml(m.title)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Titel</label>
+      <input id="tp-title" type="text" value="${escAttr(prefill)}" placeholder="Thema oder Punkt für das Meeting">
+    </div>
+    <div class="form-group">
+      <label>Notiz <span style="font-weight:400">(optional)</span></label>
+      <textarea id="tp-desc" placeholder="Details…"></textarea>
+    </div>
+    <button class="btn btn-primary btn-full" onclick="saveTopic()">Thema anlegen</button>
+  `;
+}
+
+/* ── Login ── */
+function renderLogin() {
+  show(`
+    <div class="login-wrap">
+      <div class="login-logo">ThreadStack</div>
+      <div class="login-sub">Melde dich an um fortzufahren.</div>
+      <div id="login-err"></div>
+      <div class="form-group">
+        <label>Benutzername</label>
+        <input id="l-user" type="text" placeholder="Benutzername" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label>Passwort</label>
+        <input id="l-pass" type="password" placeholder="Passwort" autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')login()">
+      </div>
+      <button class="btn btn-primary btn-full" onclick="login()">Anmelden</button>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('l-user')?.focus(), 100);
+}
+
+async function login() {
+  const username = document.getElementById('l-user').value.trim();
+  const password = document.getElementById('l-pass').value;
+  if (!username || !password) return;
+  const errEl = document.getElementById('login-err');
+  try {
+    errEl.innerHTML = '';
+    user = await apiFetch('POST', '/login', { username, password });
+    await Promise.all([loadMeetings(), loadTodos(), readItem()]);
+    renderMain();
+  } catch (e) {
+    errEl.innerHTML = `<div class="error">${escHtml(e.message || 'Anmeldung fehlgeschlagen')}</div>`;
+  }
+}
+
+/* ── Actions ── */
+function switchTab(tab) {
+  activeTab = tab;
+  renderMain();
+}
+
+function selectMeeting(id) {
+  selMtgId = id;
+  renderMain();
+}
+
+async function saveTodo() {
+  const title = document.getElementById('td-title').value.trim();
+  if (!title) { document.getElementById('td-title').focus(); return; }
+  const due  = document.getElementById('td-due').value || null;
+  const desc = document.getElementById('td-desc').value.trim();
+  const fb   = document.getElementById('todo-feedback');
+  try {
+    fb.innerHTML = '';
+    await apiFetch('POST', '/todos', { title, description: desc, dueDate: due });
+    fb.innerHTML = `<div class="success">✓ Todo gespeichert!</div>`;
+    document.getElementById('td-title').value = '';
+    document.getElementById('td-desc').value  = '';
+    document.getElementById('td-due').value   = '';
+    await loadTodos();
+    setTimeout(() => { if (fb) fb.innerHTML = ''; }, 3000);
+  } catch (e) {
+    fb.innerHTML = `<div class="error">${escHtml(e.message)}</div>`;
+  }
+}
+
+async function saveTopic() {
+  const mtgId = document.getElementById('tp-mtg-select').value;
+  const title = document.getElementById('tp-title').value.trim();
+  if (!title) { document.getElementById('tp-title').focus(); return; }
+  const desc  = document.getElementById('tp-desc').value.trim();
+  const fb    = document.getElementById('topic-feedback');
+  try {
+    fb.innerHTML = '';
+    await apiFetch('POST', `/meetings/${mtgId}/topics`, { title, description: desc });
+    fb.innerHTML = `<div class="success">✓ Thema angelegt!</div>`;
+    document.getElementById('tp-title').value = '';
+    document.getElementById('tp-desc').value  = '';
+    await loadMeetings();
+    setTimeout(() => { renderMain(); }, 1500);
+  } catch (e) {
+    fb.innerHTML = `<div class="error">${escHtml(e.message)}</div>`;
+  }
+}
+
+/* ── API helpers ── */
+async function apiFetch(method, path, body) {
+  const opts = {
+    method,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' }
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+async function loadMeetings() {
+  const data = await apiFetch('GET', '/meetings');
+  meetings = data || [];
+}
+
+async function loadTodos() {
+  const data = await apiFetch('GET', '/todos');
+  todos = data || [];
+}
+
+/* ── Utils ── */
+function show(html) {
+  document.getElementById('app').innerHTML = html;
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function escAttr(s) {
+  return String(s || '').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+</script>
+</body>
+</html>

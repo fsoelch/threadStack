@@ -7,6 +7,10 @@ struct MeetingDetailView: View {
     @State private var showEdit = false
     @State private var showNewTopic = false
     @State private var error: String?
+    // v1.1
+    @State private var showBrief   = false
+    @State private var showCapture = false
+    @State private var cmiExpanded = false
 
     private var current: Meeting { state.meetings.first(where: { $0.id == meeting.id }) ?? meeting }
 
@@ -86,9 +90,12 @@ struct MeetingDetailView: View {
         #endif
         .sheet(isPresented: $showEdit)     { MeetingFormView(meeting: current) }
         .sheet(isPresented: $showNewTopic) { TopicFormView(meetingId: current.id) }
+        .sheet(isPresented: $showBrief)    { AIBriefSheet(meetingId: current.id) }
+        .sheet(isPresented: $showCapture)  { AICaptureSheet(meetingId: current.id) }
         .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(error ?? "") }
+        .task(id: current.id) { await state.aiCmiLoad(meetingId: current.id) }
     }
 
     // ── Meeting header card ──────────────────────────────────
@@ -138,9 +145,66 @@ struct MeetingDetailView: View {
                         Label("Nächster Termin", systemImage: "arrow.clockwise")
                     }.buttonStyle(.bordered).controlSize(.small)
                 }
+                if state.aiFeatureEnabled(\.brief) {
+                    Button { showBrief = true } label: {
+                        Label("Briefing", systemImage: "sparkles")
+                    }.buttonStyle(.bordered).controlSize(.small).tint(.indigo)
+                }
+                if state.aiFeatureEnabled(\.capture) {
+                    Button { showCapture = true } label: {
+                        Label("Notizen", systemImage: "square.and.pencil")
+                    }.buttonStyle(.bordered).controlSize(.small).tint(.indigo)
+                }
+            }
+            // v1.1: CMI banner
+            if state.aiFeatureEnabled(\.cross_meeting),
+               let cmi = state.cmiByMeeting[current.id], !cmi.matches.isEmpty {
+                cmiBanner(cmi)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder private func cmiBanner(_ cmi: CMIContent) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("🔗 \(cmi.matches.count) ähnliche Thema(s) in anderen Meetings")
+                    .font(.caption).fontWeight(.semibold)
+                    .foregroundStyle(Color(hex: "#1e40af"))
+                Spacer()
+                Button(cmiExpanded ? "Einklappen" : "Details") { cmiExpanded.toggle() }
+                    .font(.caption).buttonStyle(.borderless)
+                Button {
+                    Task {
+                        do { _ = try await state.aiCmiRecompute(meetingId: current.id) }
+                        catch { self.error = error.localizedDescription }
+                    }
+                } label: { Text("Neu").font(.caption) }.buttonStyle(.borderless)
+            }
+            if cmiExpanded {
+                ForEach(cmi.matches) { m in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack {
+                            Text(m.this_topic_title).font(.caption2).fontWeight(.semibold)
+                            Text("↔").foregroundStyle(.secondary).font(.caption2)
+                            Text(m.other_topic_title).font(.caption2).fontWeight(.semibold)
+                            Text("\(Int(m.confidence * 100))%")
+                                .font(.caption2).foregroundStyle(Color(hex: "#4338ca"))
+                        }
+                        Text("\(m.reason) — in \(m.other_meeting)")
+                            .font(.caption2).foregroundStyle(.secondary).italic()
+                    }
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.background)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+        }
+        .padding(10)
+        .background(Color(hex: "#eff6ff"))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#bfdbfe")))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private func sectionHeader(_ label: String, count: Int, color: Color) -> some View {
@@ -193,6 +257,7 @@ struct TopicRowView: View {
     @State private var showMove = false
     @State private var showThemes = false
     @State private var showSnooze = false
+    @State private var showPush   = false
     @State private var error: String?
 
     private var themeLinks: [(theme: Theme, link: ThemeLink)] { state.themeLinks(for: topic.id) }
@@ -217,6 +282,13 @@ struct TopicRowView: View {
                     if topic.isSnoozed, let wake = topic.snoozeWakeFormatted {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
+                    }
+                    if !topic.done && state.driftIds.contains(topic.id) {
+                        Text("💤 inaktiv").font(.caption2).fontWeight(.semibold)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color(hex: "#fef3c7"))
+                            .foregroundStyle(Color(hex: "#92400e"))
+                            .clipShape(Capsule())
                     }
 
                     // Theme chips
@@ -281,6 +353,8 @@ struct TopicRowView: View {
                 Label(topic.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz")
             }.tint(.indigo)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { showEdit = true }
         .contextMenu { contextMenuItems }
         .sheet(isPresented: $showEdit)     { TopicFormView(meetingId: meetingId, topic: topic) }
         .sheet(isPresented: $showComplete) { CompleteSheet(meetingId: meetingId, topicId: topic.id) }
@@ -294,6 +368,9 @@ struct TopicRowView: View {
             Task { do { try await state.snoozeTopic(meetingId: meetingId, id: topic.id, until: nil) }
                   catch { self.error = error.localizedDescription } }
         } : nil) }
+        .sheet(isPresented: $showPush) {
+            StackPushSheet(target: PushTarget(refType: "topic", refId: topic.id, title: topic.title))
+        }
         .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(error ?? "") }
@@ -315,6 +392,9 @@ struct TopicRowView: View {
         Button { showThemes = true } label: { Label("Topic zuweisen", systemImage: "tag") }
         Button { showShare = true } label: { Label("Teilen", systemImage: "link") }
         Button { showMove = true } label: { Label("Verschieben", systemImage: "arrow.right") }
+        if !topic.done {
+            Button { showPush = true } label: { Label("Auf Stack legen", systemImage: "square.stack.3d.up") }
+        }
         Divider()
         Button { showSnooze = true } label: { Label(topic.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz") }
         Button {

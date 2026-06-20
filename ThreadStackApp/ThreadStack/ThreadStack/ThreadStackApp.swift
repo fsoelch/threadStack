@@ -33,13 +33,9 @@ struct RootView: View {
         Group {
             if !checked {
                 ProgressView("Verbinde …")
-                    .task {
-                        if !state.serverURL.isEmpty {
-                            try? await state.checkSession()
-                            if state.currentUser != nil { try? await state.loadAll() }
-                        }
-                        checked = true
-                    }
+                    .task { await initialCheck() }
+            } else if state.isLocked {
+                LockScreenView()
             } else if state.currentUser == nil {
                 LoginView()
             } else {
@@ -49,5 +45,18 @@ struct RootView: View {
         #if os(macOS)
         .environment(\.fontScale, fontScales[fontSizeIndex])
         #endif
+    }
+
+    private func initialCheck() async {
+        // 1. Versuche die alte Session zu reaktivieren (Cookie noch da, weniger als 12h Inaktivität)
+        if !state.serverURL.isEmpty {
+            try? await state.checkSession()
+            if state.currentUser != nil { try? await state.loadAll() }
+        }
+        // 2. Wenn nicht eingeloggt UND Credentials in Keychain → Lock-Screen mit Auto-Biometrie
+        if state.currentUser == nil && state.hasStoredCredentials {
+            state.isLocked = true
+        }
+        checked = true
     }
 }

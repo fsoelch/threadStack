@@ -16,6 +16,9 @@ const SEC_FILE = path.join(DATA_DIR, '.session-secret');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
 // Session secret — generated once, persisted so restarts don't invalidate sessions
 let sessionSecret;
 if (fs.existsSync(SEC_FILE)) {
@@ -145,6 +148,14 @@ db.exec(`
   }
 }
 
+// Migration: add due_date to todos if missing
+{
+  const cols = db.prepare('PRAGMA table_info(todos)').all();
+  if (!cols.find(c => c.name === 'due_date')) {
+    db.exec("ALTER TABLE todos ADD COLUMN due_date TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 // Migration: add sort_order column if missing
 {
   const cols = db.prepare('PRAGMA table_info(topics)').all();
@@ -226,6 +237,30 @@ db.exec(`
   add('weekly_digest_hour',    'weekly_digest_hour INTEGER NOT NULL DEFAULT 18');
 })();
 
+// ── Attachments ───────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS attachments (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ref_type   TEXT NOT NULL,
+    ref_id     TEXT NOT NULL,
+    filename   TEXT NOT NULL,
+    stored_as  TEXT NOT NULL,
+    mime_type  TEXT NOT NULL DEFAULT '',
+    size       INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_attachments_ref ON attachments(ref_type, ref_id);
+`);
+
+// ── Migration: last_active_at für Users ──────────────────────
+{
+  const cols = db.prepare('PRAGMA table_info(users)').all();
+  if (!cols.find(c => c.name === 'last_active_at')) {
+    db.exec("ALTER TABLE users ADD COLUMN last_active_at TEXT NOT NULL DEFAULT ''");
+  }
+}
+
 // ── Migration: Stack-Layer (Erweiterung v1.1, Phase 2) ───────
 db.exec(`
   CREATE TABLE IF NOT EXISTS stack_frames (
@@ -241,6 +276,22 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_stack_user_open ON stack_frames(user_id, popped_at);
   CREATE INDEX IF NOT EXISTS idx_stack_ref       ON stack_frames(ref_type, ref_id);
+`);
+
+// ── Migration: Contacts (Ansprechpartner) ────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS contacts (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT '',
+    email       TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id, sort_order, created_at);
 `);
 
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
@@ -260,8 +311,8 @@ function uid() {
 // Create default admin on first run with a random password
 if (db.prepare('SELECT COUNT(*) as c FROM users').get().c === 0) {
   const initPw = crypto.randomBytes(10).toString('base64url').slice(0, 12);
-  db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(
-    uid(), 'admin', bcrypt.hashSync(initPw, 12), 'admin', new Date().toISOString()
+  db.prepare('INSERT INTO users(id,username,password_hash,role,created_at,last_active_at) VALUES (?,?,?,?,?,?)').run(
+    uid(), 'admin', bcrypt.hashSync(initPw, 12), 'admin', new Date().toISOString(), ''
   );
   console.log('\n┌──────────────────────────────────────────────┐');
   console.log('│  Erster Start — Standard-Admin angelegt:     │');
@@ -293,7 +344,7 @@ setInterval(() => {
 function isValidHexColor(c) { return /^#[0-9a-fA-F]{6}$/.test(c); }
 
 const MAX_TITLE = 300;
-const MAX_DESC  = 100_000;
+const MAX_DESC  = 500_000;
 
 function stripUnsafeHtml(s) {
   if (!s || typeof s !== 'string') return s;
@@ -305,7 +356,7 @@ function stripUnsafeHtml(s) {
 }
 
 // ── Middleware ───────────────────────────────────────────────
-app.use(express.json({ limit: '100kb' }));
+app.use(express.json({ limit: '5mb' }));
 
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -327,16 +378,32 @@ app.use(session({
   secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
+  rolling: true,                                // Sliding-Expiration: jedes Request erneuert den Cookie
   cookie: {
     httpOnly: true,
     sameSite: 'strict',
     secure: process.env.HTTPS === 'true',
-    maxAge: 8 * 60 * 60 * 1000, // 8 hours
+    maxAge: 12 * 60 * 60 * 1000,                // 12 hours of inactivity → auto-logout
   },
 }));
 
+// Schreibt last_active_at maximal alle 5 Minuten (verhindert DB-Write bei jedem Request)
+const updateLastActive = (() => {
+  const INTERVAL = 5 * 60 * 1000; // 5 min
+  const cache    = new Map();       // uid → last write timestamp
+  const stmt     = db.prepare('UPDATE users SET last_active_at=? WHERE id=?');
+  return (uid) => {
+    const now = Date.now();
+    if (!cache.has(uid) || now - cache.get(uid) > INTERVAL) {
+      stmt.run(new Date().toISOString(), uid);
+      cache.set(uid, now);
+    }
+  };
+})();
+
 const requireAuth = (req, res, next) => {
   if (!req.session.uid) return res.status(401).json({ error: 'Nicht angemeldet' });
+  updateLastActive(req.session.uid);
   next();
 };
 const requireAdmin = (req, res, next) => {
@@ -614,21 +681,32 @@ function parseTodo(t) {
   return { id: t.id, title: t.title, description: t.description,
            done: !!t.done, result: t.result, resultDate: t.result_date,
            snoozedUntil: t.snoozed_until || null,
+           dueDate: t.due_date || null,
            sortOrder: t.sort_order, createdAt: t.created_at };
 }
 
+// Sortierung: zuerst nach Fälligkeit (frühestes oben, Todos ohne dueDate ganz unten),
+// dann fallback auf sort_order, dann created_at.
+const TODOS_ORDER_SQL = `
+  ORDER BY
+    CASE WHEN due_date='' THEN 1 ELSE 0 END,
+    due_date,
+    sort_order,
+    created_at
+`;
+
 app.get(`${A}/todos`, requireAuth, (req, res) => {
-  res.json(db.prepare('SELECT * FROM todos WHERE user_id=? ORDER BY sort_order,created_at').all(req.session.uid).map(parseTodo));
+  res.json(db.prepare(`SELECT * FROM todos WHERE user_id=? ${TODOS_ORDER_SQL}`).all(req.session.uid).map(parseTodo));
 });
 
 app.post(`${A}/todos`, requireAuth, (req, res) => {
-  const { title, description='' } = req.body;
+  const { title, description='', dueDate } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   const id = uid();
   const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
-  db.prepare('INSERT INTO todos(id,user_id,title,description,sort_order,created_at) VALUES (?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), description, mx+1, new Date().toISOString());
+  db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,sort_order,created_at) VALUES (?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), description, dueDate || '', mx+1, new Date().toISOString());
   res.status(201).json(parseTodo(db.prepare('SELECT * FROM todos WHERE id=?').get(id)));
 });
 
@@ -643,12 +721,13 @@ app.put(`${A}/todos/reorder`, requireAuth, (req, res) => {
 app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
-  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil } = req.body;
+  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
-  db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,updated_at=? WHERE id=?').run(
+  db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,due_date=?,updated_at=? WHERE id=?').run(
     title, stripUnsafeHtml(description), done !== undefined ? (done?1:0) : t.done,
     stripUnsafeHtml(result ?? t.result), resultDate ?? t.result_date,
     snoozedUntil !== undefined ? (snoozedUntil || '') : t.snoozed_until,
+    dueDate !== undefined ? (dueDate || '') : t.due_date,
     new Date().toISOString(),
     t.id);
   res.json({ ok: true });
@@ -740,7 +819,7 @@ app.delete(`${A}/themes/:id/links/:lid`, requireAuth, (req, res) => {
 
 // ── User routes (admin only) ─────────────────────────────────
 app.get(`${A}/users`, requireAdmin, (req, res) => {
-  res.json(db.prepare('SELECT id,username,role,created_at FROM users ORDER BY created_at').all());
+  res.json(db.prepare('SELECT id,username,role,created_at,last_active_at FROM users ORDER BY created_at').all());
 });
 
 app.post(`${A}/users`, requireAdmin, (req, res) => {
@@ -750,8 +829,8 @@ app.post(`${A}/users`, requireAdmin, (req, res) => {
   if (password.length < 8) return res.status(400).json({ error: 'Passwort mindestens 8 Zeichen' });
   try {
     const id = uid();
-    db.prepare('INSERT INTO users VALUES (?,?,?,?,?)').run(
-      id, username.trim(), bcrypt.hashSync(password,10), role==='admin'?'admin':'user', new Date().toISOString()
+    db.prepare('INSERT INTO users(id,username,password_hash,role,created_at,last_active_at) VALUES (?,?,?,?,?,?)').run(
+      id, username.trim(), bcrypt.hashSync(password,10), role==='admin'?'admin':'user', new Date().toISOString(), ''
     );
     res.status(201).json({ id, username: username.trim(), role: role==='admin'?'admin':'user' });
   } catch(e) {
@@ -1094,15 +1173,26 @@ app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
   const applied = {};
 
   if (resolution === 'resumed') {
-    // Frame stays open; just make it the active top by rewiring parent chain.
-    const openOthers = db.prepare(
-      'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL AND id != ?'
-    ).all(req.session.uid, f.id);
-    const ordered = orderActiveFirst(openOthers);
-    const newParent = ordered[0]?.id || null;
-    if (newParent !== f.parent_frame_id) {
-      db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE id=?').run(newParent, f.id);
+    // Frame stays open; promote it to the top of the open stack.
+    //
+    // Pre-state: someChain → oldTop → ... → f → ... → bottom
+    // Post-state: f → oldTop → ... (f's old slot is closed by re-linking its child).
+
+    // 1) Determine the current top (using the unmodified chain).
+    const allOpen = db.prepare(
+      'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
+    ).all(req.session.uid);
+    const ordered = orderActiveFirst(allOpen);
+    const oldTopId = ordered[0]?.id || null;
+
+    if (oldTopId !== f.id) {
+      // 2) Re-link: whoever had f as parent now takes f's old parent (cut f out).
+      db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE user_id=? AND popped_at IS NULL AND parent_frame_id=?')
+        .run(f.parent_frame_id, req.session.uid, f.id);
+      // 3) f becomes the new top — its parent is the old top.
+      db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE id=?').run(oldTopId, f.id);
     }
+
     const updated = db.prepare('SELECT * FROM stack_frames WHERE id=?').get(f.id);
     return res.json({
       frame: frameToJson(updated),
@@ -1203,9 +1293,231 @@ function defaultSnoozeUntilTomorrow() {
   return d.toISOString();
 }
 
+// ── Contacts (Ansprechpartner) ───────────────────────────────
+const MAX_CONTACT_NAME = 200;
+const MAX_CONTACT_FIELD = 500;
+
+app.get(`${A}/contacts`, requireAuth, (req, res) => {
+  const rows = db.prepare(
+    'SELECT * FROM contacts WHERE user_id=? ORDER BY sort_order, created_at'
+  ).all(req.session.uid);
+  res.json(rows.map(parseContact));
+});
+
+app.post(`${A}/contacts`, requireAuth, (req, res) => {
+  const { name = '', role = '', email = '', description = '' } = req.body || {};
+  const cleanName = String(name).trim();
+  if (!cleanName) return res.status(400).json({ error: 'Name erforderlich' });
+  if (cleanName.length > MAX_CONTACT_NAME) return res.status(400).json({ error: 'Name zu lang' });
+  if (String(role).length  > MAX_CONTACT_FIELD) return res.status(400).json({ error: 'Rolle zu lang' });
+  if (String(email).length > MAX_CONTACT_FIELD) return res.status(400).json({ error: 'E-Mail zu lang' });
+
+  const id = uid();
+  const now = new Date().toISOString();
+  const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) AS m FROM contacts WHERE user_id=?').get(req.session.uid).m;
+  db.prepare(
+    'INSERT INTO contacts(id,user_id,name,role,email,description,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).run(id, req.session.uid, cleanName, String(role).trim(), String(email).trim(),
+        stripUnsafeHtml(description || ''), mx + 1, now, now);
+  res.status(201).json(parseContact(db.prepare('SELECT * FROM contacts WHERE id=?').get(id)));
+});
+
+app.put(`${A}/contacts/reorder`, requireAuth, (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const update = db.prepare('UPDATE contacts SET sort_order=? WHERE id=? AND user_id=?');
+  ids.forEach((id, i) => update.run(i, id, req.session.uid));
+  res.json({ ok: true });
+});
+
+app.put(`${A}/contacts/:id`, requireAuth, (req, res) => {
+  const c = db.prepare('SELECT * FROM contacts WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!c) return res.status(404).json({ error: 'Nicht gefunden' });
+  const { name = c.name, role = c.role, email = c.email, description = c.description } = req.body || {};
+  const cleanName = String(name).trim();
+  if (!cleanName) return res.status(400).json({ error: 'Name erforderlich' });
+  if (cleanName.length > MAX_CONTACT_NAME) return res.status(400).json({ error: 'Name zu lang' });
+  db.prepare(
+    'UPDATE contacts SET name=?, role=?, email=?, description=?, updated_at=? WHERE id=? AND user_id=?'
+  ).run(cleanName, String(role).trim(), String(email).trim(),
+        stripUnsafeHtml(description || ''), new Date().toISOString(),
+        req.params.id, req.session.uid);
+  res.json(parseContact(db.prepare('SELECT * FROM contacts WHERE id=?').get(req.params.id)));
+});
+
+app.delete(`${A}/contacts/:id`, requireAuth, (req, res) => {
+  const r = db.prepare('DELETE FROM contacts WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
+  if (!r.changes) return res.status(404).json({ error: 'Nicht gefunden' });
+  res.json({ ok: true });
+});
+
+function parseContact(r) {
+  return {
+    id: r.id,
+    name: r.name,
+    role: r.role,
+    email: r.email,
+    description: r.description,
+    sortOrder: r.sort_order,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+// ── Attachment routes ─────────────────────────────────────────
+const ALLOWED_REF_TYPES = new Set(['topic', 'todo']);
+const MAX_FILE_SIZE     = 50 * 1024 * 1024; // 50 MB
+
+function checkAttachmentOwnership(refType, refId, uid) {
+  if (refType === 'todo') {
+    return !!db.prepare('SELECT 1 FROM todos WHERE id=? AND user_id=?').get(refId, uid);
+  }
+  if (refType === 'topic') {
+    return !!db.prepare(
+      'SELECT 1 FROM meetings WHERE user_id=? AND id=(SELECT meeting_id FROM topics WHERE id=?)'
+    ).get(uid, refId);
+  }
+  return false;
+}
+
+// Upload — raw binary, filename + mime via query/header
+app.post(`${A}/attachments/:refType/:refId`, requireAuth,
+  express.raw({ type: '*/*', limit: '50mb' }),
+  (req, res) => {
+    const { refType, refId } = req.params;
+    if (!ALLOWED_REF_TYPES.has(refType)) return res.status(400).json({ error: 'Ungültiger Typ' });
+    if (!checkAttachmentOwnership(refType, refId, req.session.uid))
+      return res.status(404).json({ error: 'Nicht gefunden' });
+
+    const origName = req.query.filename
+      ? decodeURIComponent(req.query.filename).replace(/[/\\]/g, '_')
+      : 'datei';
+    const mimeType = (req.headers['content-type'] || 'application/octet-stream').split(';')[0].trim();
+    const ext      = path.extname(origName).toLowerCase().replace(/[^a-z0-9.]/g, '').slice(0, 10);
+    const storedAs = uid() + (ext || '');
+    const filePath = path.join(UPLOADS_DIR, storedAs);
+
+    if (!req.body || !Buffer.isBuffer(req.body) || req.body.length === 0)
+      return res.status(400).json({ error: 'Keine Dateidaten' });
+
+    fs.writeFileSync(filePath, req.body);
+    const id = uid();
+    db.prepare(
+      'INSERT INTO attachments(id,user_id,ref_type,ref_id,filename,stored_as,mime_type,size,created_at) VALUES (?,?,?,?,?,?,?,?,?)'
+    ).run(id, req.session.uid, refType, refId, origName, storedAs, mimeType, req.body.length, new Date().toISOString());
+
+    res.status(201).json(parseAttachment(db.prepare('SELECT * FROM attachments WHERE id=?').get(id)));
+  }
+);
+
+// List
+app.get(`${A}/attachments/:refType/:refId`, requireAuth, (req, res) => {
+  const { refType, refId } = req.params;
+  if (!ALLOWED_REF_TYPES.has(refType)) return res.status(400).json({ error: 'Ungültiger Typ' });
+  if (!checkAttachmentOwnership(refType, refId, req.session.uid))
+    return res.status(404).json({ error: 'Nicht gefunden' });
+  res.json(db.prepare('SELECT * FROM attachments WHERE ref_type=? AND ref_id=? ORDER BY created_at').all(refType, refId).map(parseAttachment));
+});
+
+// Download
+app.get(`${A}/attachments/download/:id`, requireAuth, (req, res) => {
+  const a = db.prepare('SELECT * FROM attachments WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!a) return res.status(404).json({ error: 'Nicht gefunden' });
+  const filePath = path.join(UPLOADS_DIR, a.stored_as);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Datei nicht gefunden' });
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(a.filename)}`);
+  res.setHeader('Content-Type', a.mime_type || 'application/octet-stream');
+  res.sendFile(filePath);
+});
+
+// Delete
+app.delete(`${A}/attachments/:id`, requireAuth, (req, res) => {
+  const a = db.prepare('SELECT * FROM attachments WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!a) return res.status(404).json({ error: 'Nicht gefunden' });
+  const filePath = path.join(UPLOADS_DIR, a.stored_as);
+  try { fs.unlinkSync(filePath); } catch (_) { /* already gone */ }
+  db.prepare('DELETE FROM attachments WHERE id=?').run(a.id);
+  res.json({ ok: true });
+});
+
+function parseAttachment(a) {
+  return {
+    id: a.id, refType: a.ref_type, refId: a.ref_id,
+    filename: a.filename, mimeType: a.mime_type,
+    size: a.size, createdAt: a.created_at,
+  };
+}
+
 // ── Frontend ─────────────────────────────────────────────────
-app.get(BASE || '/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+app.get(BASE || '/', (req, res) => {
+  const fs = require('fs');
+  let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  html = html.replace('</head>',
+    `<script>window.__TS_BASE__ = ${JSON.stringify(BASE)};</script>\n</head>`);
+  res.type('text/html').send(html);
+});
 if (BASE) app.get('/', (req, res) => res.redirect(BASE));
+
+// ── Outlook Add-in ────────────────────────────────────────────
+app.get(`${BASE}/addin/manifest.xml`, (req, res) => {
+  const proto   = req.headers['x-forwarded-proto'] || req.protocol;
+  const host    = req.headers['x-forwarded-host']  || req.get('host');
+  const siteUrl = `${proto}://${host}${BASE}`;
+  res.type('application/xml');
+  res.send(`<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xsi:type="MailApp">
+  <Id>7a3f2e1d-bc84-4c59-9012-ef5678901234</Id>
+  <Version>1.0.0</Version>
+  <ProviderName>ThreadStack</ProviderName>
+  <DefaultLocale>de-DE</DefaultLocale>
+  <DisplayName DefaultValue="ThreadStack"/>
+  <Description DefaultValue="Meetings zuordnen, Todos und Themen direkt aus Outlook erstellen."/>
+  <IconUrl DefaultValue="${siteUrl}/addin/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="${siteUrl}/addin/icon-64.png"/>
+  <SupportUrl DefaultValue="${siteUrl}/"/>
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="${siteUrl}/addin/"/>
+        <RequestedHeight>350</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+  <Permissions>ReadItem</Permissions>
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message"     FormType="Read"/>
+    <Rule xsi:type="ItemIs" ItemType="Appointment" FormType="Read"/>
+  </Rule>
+</OfficeApp>`);
+});
+
+// Taskpane: BASE_PATH ins HTML einbetten damit der API-Pfad stimmt
+app.get(`${BASE}/addin/`, (req, res) => {
+  const fs = require('fs');
+  let html = fs.readFileSync(path.join(__dirname, 'addin.html'), 'utf8');
+  // Inject runtime config before </head>
+  html = html.replace('</head>',
+    `<script>window.__TS_BASE__ = ${JSON.stringify(BASE)};</script>\n</head>`);
+  res.type('text/html').send(html);
+});
+
+// Fallback icon (einfaches SVG als PNG-Ersatz — Outlook benötigt den Pfad, ignoriert es aber oft)
+app.get(`${BASE}/addin/icon-64.png`, (req, res) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+    <rect width="64" height="64" rx="12" fill="#6366f1"/>
+    <text x="32" y="42" text-anchor="middle" font-family="sans-serif" font-size="28" font-weight="bold" fill="white">T</text>
+  </svg>`;
+  res.type('image/svg+xml').send(svg);
+});
 
 module.exports = { app, db };
 
