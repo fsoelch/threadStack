@@ -410,11 +410,11 @@ body {
 
 .drag-handle {
   cursor:grab; color:var(--text-light); padding-right:.375rem;
-  flex-shrink:0; opacity:0; transition:opacity .1s;
+  flex-shrink:0; opacity:.22; transition:opacity .1s;
   font-size:.875rem; display:flex; align-items:center;
   line-height:1; user-select:none;
 }
-.topic-card:hover .drag-handle { opacity:.6; }
+.topic-card:hover .drag-handle { opacity:.55; }
 .topic-card.dragging .drag-handle { cursor:grabbing; }
 
 .topic-card-header {
@@ -3290,7 +3290,7 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
   const drifted     = !t.done && driftTopics.has(t.id);
   const suggestionsHtml = themeSuggestionsCache[refKey('topic', t.id)] || null;
   return `
-    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}${drifted ? ' drifted' : ''}" data-tid="${t.id}"
+    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}" data-tid="${t.id}"
          draggable="true"
          ondragstart="topicDragStart(event,'${mid}','${t.id}','${grp}')"
          ondragend="topicDragEnd(event)"
@@ -3302,7 +3302,6 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
           <span class="drag-handle" title="Reihenfolge ändern">⠿</span>
           <span class="topic-status-icon ${grp}">${t.done ? '✓' : ''}</span>
           <h4 class="topic-title ${t.done ? 'done-text' : ''}">${escHtml(t.title)}</h4>
-          ${drifted ? `<span class="drift-pill ai-action" title="Seit ${aiSettings?.drift_days || 21}+ Tagen ohne Edit, Snooze oder Stack-Aktivität">💤 inaktiv</span>` : ''}
         </div>
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${mid}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
