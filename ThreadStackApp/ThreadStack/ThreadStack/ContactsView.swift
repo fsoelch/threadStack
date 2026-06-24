@@ -107,9 +107,8 @@ struct ContactCardView: View {
                 }.buttonStyle(.plain).foregroundStyle(.secondary)
             }
             if !contact.description.isEmpty {
-                Text(stripHTML(contact.description))
+                Text(htmlAttributedString(contact.description))
                     .scaledFont(.caption)
-                    .foregroundStyle(.secondary)
                     .lineLimit(4)
             }
         }

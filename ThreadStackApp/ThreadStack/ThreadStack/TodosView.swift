@@ -130,8 +130,8 @@ struct TodoRowView: View {
                         .foregroundStyle(todo.done ? .secondary : .primary)
 
                     if !todo.description.isEmpty {
-                        Text(stripHTML(todo.description))
-                            .scaledFont(.caption).foregroundStyle(.secondary).lineLimit(2)
+                        Text(htmlAttributedString(todo.description))
+                            .scaledFont(.caption).lineLimit(2)
                     }
 
                     if !todo.done, let due = todo.dueDateFormatted {
@@ -141,14 +141,6 @@ struct TodoRowView: View {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
-                    if !todo.done && state.driftIds.contains(todo.id) {
-                        Text("💤 inaktiv").font(.caption2).fontWeight(.semibold)
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(Color(hex: "#fef3c7"))
-                            .foregroundStyle(Color(hex: "#92400e"))
-                            .clipShape(Capsule())
-                    }
-
                     if !themeLinks.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 4) {
@@ -161,8 +153,8 @@ struct TodoRowView: View {
             }
 
             if todo.done && !todo.result.isEmpty {
-                Text(stripHTML(todo.result))
-                    .scaledFont(.caption).foregroundStyle(.green).padding(8)
+                Text(htmlAttributedString(todo.result))
+                    .scaledFont(.caption).padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.green.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 8))

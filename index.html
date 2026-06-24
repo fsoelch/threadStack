@@ -780,6 +780,19 @@ textarea.form-control { resize:vertical; min-height:80px; line-height:1.55; }
 .rt-btn:hover { background:var(--card); border-color:var(--border); color:var(--text); }
 .rt-btn.rt-active { background:var(--primary-light); color:var(--primary); border-color:rgba(99,102,241,.3); }
 .rt-sep { width:1px; height:16px; background:var(--border); margin:0 .125rem; flex-shrink:0; }
+.rt-color-popup {
+  display:flex; gap:.3125rem; padding:.375rem .5rem; align-items:center;
+  background:#fff; border:1px solid var(--border-md);
+  border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.14);
+}
+.rt-color-swatch {
+  width:18px; height:18px; border-radius:50%;
+  border:2px solid transparent; cursor:pointer; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  transition:transform .1s; padding:0; background:none;
+  font-size:10px; font-weight:700;
+}
+.rt-color-swatch:hover { transform:scale(1.25); }
 .rt-content {
   min-height:80px; padding:.5rem .75rem;
   font-size:.875rem; font-family:inherit; line-height:1.55;
@@ -2610,6 +2623,47 @@ function rtTable() {
   document.execCommand('insertHTML', false, html);
 }
 
+let _rtColorPickerEl = null;
+function _rtShowColorPicker(anchor) {
+  if (_rtColorPickerEl) { _rtColorPickerEl.remove(); _rtColorPickerEl = null; return; }
+  const SWATCHES = [
+    { color: null,      bg:'#fff',     border:'1.5px solid #ccc', text:'✕', label:'Farbe entfernen' },
+    { color: '#dc2626', bg:'#dc2626',  label:'Rot' },
+    { color: '#ea580c', bg:'#ea580c',  label:'Orange' },
+    { color: '#ca8a04', bg:'#ca8a04',  label:'Gelb' },
+    { color: '#16a34a', bg:'#16a34a',  label:'Grün' },
+    { color: '#2563eb', bg:'#2563eb',  label:'Blau' },
+    { color: '#7c3aed', bg:'#7c3aed',  label:'Violett' },
+    { color: '#6b7280', bg:'#6b7280',  label:'Grau' },
+  ];
+  const pop = document.createElement('div');
+  pop.className = 'rt-color-popup';
+  SWATCHES.forEach(({ color, bg, border, text, label }) => {
+    const sw = document.createElement('button');
+    sw.type = 'button'; sw.className = 'rt-color-swatch'; sw.title = label;
+    sw.style.background = bg;
+    if (border) sw.style.border = border;
+    if (text) { sw.textContent = text; sw.style.color = '#666'; }
+    sw.onmousedown = e => e.preventDefault();
+    sw.onclick = () => {
+      _restoreSelection();
+      document.execCommand('foreColor', false, color || '#1A1918');
+      pop.remove(); _rtColorPickerEl = null;
+    };
+    pop.appendChild(sw);
+  });
+  const rect = anchor.getBoundingClientRect();
+  pop.style.cssText = `position:fixed;top:${rect.bottom + 4}px;left:${rect.left}px;z-index:9999`;
+  document.body.appendChild(pop);
+  _rtColorPickerEl = pop;
+  setTimeout(() => {
+    document.addEventListener('click', function close() {
+      pop.remove(); _rtColorPickerEl = null;
+      document.removeEventListener('click', close);
+    }, { once: true });
+  }, 0);
+}
+
 function initRtToolbar(tbId, editorId) {
   const tb = document.getElementById(tbId);
   const ed = document.getElementById(editorId);
@@ -2632,6 +2686,12 @@ function initRtToolbar(tbId, editorId) {
   tableBtn.onmousedown = e => { e.preventDefault(); _saveSelection(); };
   tableBtn.onclick = rtTable;
 
+  const colorBtn = document.createElement('button');
+  colorBtn.type = 'button'; colorBtn.className = 'rt-btn'; colorBtn.title = 'Textfarbe';
+  colorBtn.innerHTML = '<span style="border-bottom:2.5px solid #dc2626;padding-bottom:1px;font-weight:bold">A</span>';
+  colorBtn.onmousedown = e => { e.preventDefault(); _saveSelection(); };
+  colorBtn.onclick = e => { e.stopPropagation(); _rtShowColorPicker(colorBtn); };
+
   tb.append(
     btn('<b>B</b>', 'Fett (Strg+B)', 'bold'),
     btn('<i>I</i>', 'Kursiv (Strg+I)', 'italic'),
@@ -2641,6 +2701,8 @@ function initRtToolbar(tbId, editorId) {
     sep(),
     linkBtn,
     tableBtn,
+    sep(),
+    colorBtn,
   );
 
   ed.addEventListener('keydown', e => {

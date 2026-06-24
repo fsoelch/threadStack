@@ -88,7 +88,7 @@ extension Color {
     }
 }
 
-// MARK: - HTML strip
+// MARK: - HTML strip (plain text, e.g. for search)
 
 func stripHTML(_ s: String) -> String {
     guard s.contains("<") else { return s }
@@ -100,6 +100,27 @@ func stripHTML(_ s: String) -> String {
         else if !inTag    { result.append(ch) }
     }
     return result.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+// MARK: - HTML → AttributedString (preserves bold, italic, color, links)
+
+func htmlAttributedString(_ html: String) -> AttributedString {
+    guard html.contains("<") else { return AttributedString(html) }
+    let wrapped = "<html><head><meta charset='utf-8'><style>"
+        + "body{font-family:-apple-system,Helvetica,sans-serif;font-size:13px;margin:0;padding:0}"
+        + "</style></head><body>\(html)</body></html>"
+    guard let data = wrapped.data(using: .utf8),
+          let ns = try? NSAttributedString(
+              data: data,
+              options: [.documentType: NSAttributedString.DocumentType.html,
+                        .characterEncoding: String.Encoding.utf8.rawValue],
+              documentAttributes: nil)
+    else { return AttributedString(stripHTML(html)) }
+    #if os(iOS)
+    return (try? AttributedString(ns, including: \.uiKit)) ?? AttributedString(stripHTML(html))
+    #else
+    return (try? AttributedString(ns, including: \.appKit)) ?? AttributedString(stripHTML(html))
+    #endif
 }
 
 // MARK: - Cross-platform modifiers
