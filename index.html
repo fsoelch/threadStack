@@ -1364,6 +1364,99 @@ body.ai-disabled .ai-action { display: none !important; }
 .digest-bullets { display:flex; flex-direction:column; gap:.25rem; margin-top:.25rem; }
 .digest-bullets li { font-size:.8125rem; padding-left:1rem; position:relative; }
 .digest-bullets li::before { content:"•"; position:absolute; left:.25rem; color:var(--primary); }
+
+/* ─── Online-Hilfe ───────────────────────────────────────────── */
+.help-modal-overlay {
+  display:none; position:fixed; inset:0; background:rgba(15,23,42,.5);
+  z-index:900; align-items:center; justify-content:center;
+}
+.help-modal-overlay.open { display:flex; }
+.help-dialog {
+  background:#fff; border-radius:16px; width:min(940px,94vw);
+  height:min(700px,90vh); display:flex; flex-direction:column;
+  box-shadow:0 24px 64px rgba(0,0,0,.2); overflow:hidden;
+}
+.help-header {
+  padding:.875rem 1.25rem; border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:.75rem; flex-shrink:0;
+}
+.help-header-icon {
+  width:28px; height:28px; border-radius:7px;
+  background:var(--primary); display:flex; align-items:center;
+  justify-content:center; flex-shrink:0;
+}
+.help-header-title { font-weight:700; font-size:.9375rem; flex:1; }
+.help-search {
+  border:1px solid var(--border-md); border-radius:7px;
+  padding:.3125rem .625rem; font-size:.8125rem; font-family:inherit;
+  width:170px; outline:none; color:var(--text); background:var(--bg);
+  transition:border-color .15s;
+}
+.help-search:focus { border-color:var(--primary); }
+.help-body { display:flex; flex:1; overflow:hidden; }
+.help-toc {
+  width:185px; flex-shrink:0; border-right:1px solid var(--border);
+  overflow-y:auto; padding:.5rem 0;
+}
+.help-toc-item {
+  display:flex; align-items:center; gap:.5rem;
+  padding:.4rem .875rem; cursor:pointer; font-size:.8rem;
+  color:var(--text-muted); border-left:2px solid transparent;
+  transition:all .1s; user-select:none; white-space:nowrap;
+}
+.help-toc-item:hover { color:var(--text); background:var(--bg); }
+.help-toc-item.active {
+  color:var(--primary); border-left-color:var(--primary);
+  background:var(--primary-light); font-weight:600;
+}
+.help-toc-item.hidden { display:none; }
+.help-content {
+  flex:1; overflow-y:auto; padding:1.5rem 2rem;
+  scroll-behavior:smooth;
+}
+.help-section { display:none; }
+.help-section.active { display:block; }
+.help-section > h2 {
+  font-size:1.125rem; font-weight:700; margin:0 0 1rem; color:var(--text);
+}
+.help-section h3 {
+  font-size:.875rem; font-weight:700; margin:1.25rem 0 .375rem; color:var(--text);
+}
+.help-section p {
+  font-size:.875rem; line-height:1.65; color:var(--text-muted); margin:0 0 .75rem;
+}
+.help-section ul, .help-section ol {
+  font-size:.875rem; line-height:1.75; color:var(--text-muted);
+  margin:0 0 .75rem; padding-left:1.25rem;
+}
+.help-section li { margin-bottom:.1rem; }
+.help-kbd {
+  display:inline-block; background:var(--card2);
+  border:1px solid var(--border-md); border-radius:4px;
+  padding:.1rem .375rem; font-size:.75rem; font-family:var(--font-mono);
+  color:var(--text); line-height:1.5; white-space:nowrap;
+}
+.help-tip {
+  background:var(--primary-light); border-left:3px solid var(--primary);
+  border-radius:0 8px 8px 0; padding:.625rem .875rem; margin:.75rem 0;
+  font-size:.8125rem; line-height:1.65; color:var(--text);
+}
+.help-tip strong { color:var(--primary); }
+.help-grid {
+  display:grid; grid-template-columns:1fr 1fr; gap:.625rem; margin:.75rem 0;
+}
+.help-card {
+  background:var(--bg); border:1px solid var(--border); border-radius:8px;
+  padding:.75rem .875rem;
+}
+.help-card-title { font-size:.8125rem; font-weight:700; color:var(--text); margin-bottom:.25rem; }
+.help-card-desc { font-size:.8rem; color:var(--text-muted); line-height:1.5; }
+.help-shortcut-row {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:.5rem 0; border-bottom:1px solid var(--border); font-size:.875rem;
+}
+.help-shortcut-row:last-child { border-bottom:none; }
+.help-shortcut-desc { color:var(--text-muted); }
 </style>
 </head>
 <body>
@@ -1410,6 +1503,9 @@ body.ai-disabled .ai-action { display: none !important; }
     <a class="user-menu-item" id="addin-download-link" href="#" onclick="closeUserMenu();" target="_blank" style="text-decoration:none;color:inherit">
       <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"/></svg></span><span>Outlook Add-in</span>
     </a>
+    <button class="user-menu-item" onclick="closeUserMenu(); openHelp()">
+      <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"/></svg></span><span>Hilfe</span>
+    </button>
     <div class="user-menu-separator"></div>
     <button class="user-menu-item danger" onclick="closeUserMenu(); doLogout()">
       <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75"/></svg></span><span>Abmelden</span>
@@ -1472,6 +1568,9 @@ body.ai-disabled .ai-action { display: none !important; }
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/><path d="M18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z"/></svg>
           AI
         </div>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="openHelp()" title="Hilfe (?)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"/></svg>
+        </button>
         <!-- Mobile hamburger in Topbar -->
         <button class="hamburger-topbar" onclick="openMobileSidebar()" aria-label="Menü öffnen" style="display:none">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"/></svg>
@@ -5843,9 +5942,16 @@ function eventMatchesShortcut(e, combo) {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     closeMobileSidebar();
+    closeHelp();
     ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     closeConfirm();
+    return;
+  }
+  // '?' öffnet Hilfe (nur wenn kein Eingabefeld fokussiert)
+  if (e.key === '?' && !['INPUT','TEXTAREA'].includes(document.activeElement?.tagName) && !document.activeElement?.isContentEditable) {
+    e.preventDefault();
+    openHelp();
     return;
   }
   if (!currentUser) return;
@@ -5877,6 +5983,288 @@ document.getElementById('login-user').addEventListener('keydown', e => { if (e.k
     showApp(); render();
   } catch { showLogin(); }
 })();
+
+// ── Online-Hilfe ─────────────────────────────────────────────
+let _helpCurrentSection = 'overview';
+
+function openHelp(sectionId) {
+  document.getElementById('help-modal-overlay').classList.add('open');
+  showHelpSection(sectionId || _helpCurrentSection || 'overview');
+}
+function closeHelp() {
+  document.getElementById('help-modal-overlay').classList.remove('open');
+}
+function showHelpSection(id) {
+  _helpCurrentSection = id;
+  document.querySelectorAll('.help-section').forEach(s =>
+    s.classList.toggle('active', s.id === 'hs-' + id));
+  document.querySelectorAll('.help-toc-item').forEach(i =>
+    i.classList.toggle('active', i.dataset.section === id));
+  document.getElementById('help-content-area').scrollTop = 0;
+}
+function helpSearch(q) {
+  const lq = q.toLowerCase().trim();
+  document.querySelectorAll('.help-toc-item').forEach(item => {
+    if (!lq) { item.classList.remove('hidden'); return; }
+    const sec = document.getElementById('hs-' + item.dataset.section);
+    item.classList.toggle('hidden', !sec?.textContent.toLowerCase().includes(lq));
+  });
+}
 </script>
+
+<!-- ── Online-Hilfe Modal ─────────────────────────────────────── -->
+<div id="help-modal-overlay" class="help-modal-overlay" onclick="if(event.target===this)closeHelp()">
+  <div class="help-dialog" onclick="event.stopPropagation()">
+    <div class="help-header">
+      <div class="help-header-icon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"/></svg>
+      </div>
+      <span class="help-header-title">Hilfe &amp; Dokumentation</span>
+      <input class="help-search" type="search" placeholder="Suchen …" oninput="helpSearch(this.value)" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeHelp()" style="margin-left:.25rem">×</button>
+    </div>
+    <div class="help-body">
+      <!-- TOC -->
+      <nav class="help-toc">
+        <div class="help-toc-item active" data-section="overview" onclick="showHelpSection('overview')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/></svg>
+          Übersicht
+        </div>
+        <div class="help-toc-item" data-section="meetings" onclick="showHelpSection('meetings')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5"/></svg>
+          Meetings
+        </div>
+        <div class="help-toc-item" data-section="topics" onclick="showHelpSection('topics')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          Themen
+        </div>
+        <div class="help-toc-item" data-section="todos" onclick="showHelpSection('todos')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          Todos
+        </div>
+        <div class="help-toc-item" data-section="stack" onclick="showHelpSection('stack')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3"/></svg>
+          Stack
+        </div>
+        <div class="help-toc-item" data-section="contacts" onclick="showHelpSection('contacts')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/></svg>
+          Kontakte
+        </div>
+        <div class="help-toc-item" data-section="formatting" onclick="showHelpSection('formatting')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"/></svg>
+          Textformatierung
+        </div>
+        <div class="help-toc-item" data-section="shortcuts" onclick="showHelpSection('shortcuts')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h.01M12 9h.01M17 9h.01M7 13h4M15 13h2"/></svg>
+          Tastenkürzel
+        </div>
+      </nav>
+
+      <!-- Content -->
+      <div class="help-content" id="help-content-area">
+
+        <!-- Übersicht -->
+        <div class="help-section active" id="hs-overview">
+          <h2>Willkommen bei ThreadStack</h2>
+          <p>ThreadStack hilft Ihnen, Meeting-Themen strukturiert zu verwalten — vom ersten Gedanken bis zum erledigten Ergebnis. Alles dreht sich um drei Kernkonzepte:</p>
+          <div class="help-grid">
+            <div class="help-card">
+              <div class="help-card-title">📅 Meetings</div>
+              <div class="help-card-desc">Wiederkehrende oder einmalige Termine mit Themen, die Sie von Mal zu Mal weiterführen.</div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title">💬 Themen</div>
+              <div class="help-card-desc">Diskussionspunkte innerhalb eines Meetings — offen, schlafend oder erledigt.</div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title">✅ Todos</div>
+              <div class="help-card-desc">Aufgaben aus Meetings, mit optionalem Fälligkeitsdatum und Meeting-Verknüpfung.</div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title">📚 Stack</div>
+              <div class="help-card-desc">Fokus-Werkzeug: legen Sie ein Thema auf den Stack, um es im aktuellen Kontext zu bearbeiten.</div>
+            </div>
+          </div>
+          <h3>Typischer Arbeitsablauf</h3>
+          <ol>
+            <li>Meeting anlegen (Sidebar → <em>+ Neues Meeting</em>)</li>
+            <li>Themen zum Meeting hinzufügen, sobald sie anfallen</li>
+            <li>Im Meeting selbst Ergebnisse eintragen und Themen erledigen</li>
+            <li>Offene Punkte schlafen legen oder als Todo herauslösen</li>
+            <li>Den Stack nutzen, um sich auf ein Thema zu konzentrieren</li>
+          </ol>
+          <div class="help-tip"><strong>Tipp:</strong> Die Seitenleiste zeigt alle Meetings und Ihre Todo-Liste. Klicken Sie auf ein Meeting, um dessen Themen zu sehen.</div>
+        </div>
+
+        <!-- Meetings -->
+        <div class="help-section" id="hs-meetings">
+          <h2>Meetings</h2>
+          <p>Meetings sind der Rahmen, in dem Themen gelebt werden. Sie können einmalig oder wiederkehrend sein.</p>
+          <h3>Meeting anlegen</h3>
+          <ul>
+            <li>Klicken Sie in der Sidebar auf <strong>+ Neues Meeting</strong> oder den gleichnamigen Button im leeren Hauptbereich.</li>
+            <li>Vergeben Sie einen Titel, optional eine Beschreibung, Teilnehmer und eine Farbe.</li>
+            <li>Für wiederkehrende Termine aktivieren Sie den Schalter und wählen das Muster (täglich, wöchentlich, monatlich).</li>
+          </ul>
+          <h3>Nächsten Termin vorziehen</h3>
+          <p>Bei wiederkehrenden Meetings erscheint oben rechts der Button <strong>Nächster Termin</strong>. Ein Klick setzt das Datum auf den nächsten geplanten Termin und archiviert erledigte Themen sauber.</p>
+          <h3>Meetings sortieren</h3>
+          <p>In der Sidebar können Sie Meetings per <strong>Drag &amp; Drop</strong> in Ihre bevorzugte Reihenfolge bringen — einfach am Meeting-Eintrag ziehen.</p>
+          <div class="help-tip"><strong>Farbe:</strong> Jedes Meeting hat eine Akzentfarbe, die als farbiger Balken links in der Meeting-Ansicht erscheint. So erkennen Sie auf einen Blick, in welchem Meeting Sie sich befinden.</div>
+        </div>
+
+        <!-- Themen -->
+        <div class="help-section" id="hs-topics">
+          <h2>Themen</h2>
+          <p>Themen sind die Diskussionspunkte eines Meetings. Sie durchlaufen drei Zustände: <strong>Offen → Erledigt</strong> oder <strong>Offen → Schlafend → Offen</strong>.</p>
+          <h3>Thema hinzufügen</h3>
+          <ul>
+            <li>Im Meeting-Bereich oben rechts: <strong>+ Thema</strong></li>
+            <li>Geben Sie Titel und optionale Details ein. Details unterstützen Formatierung (fett, kursiv, Farben, Listen).</li>
+          </ul>
+          <h3>Thema erledigen</h3>
+          <p>Klicken Sie auf <strong>Erledigt</strong> bei einem Thema. Es öffnet sich ein Dialog für ein optionales Ergebnis — was wurde besprochen oder entschieden? Das Ergebnis wird dauerhaft beim Thema gespeichert.</p>
+          <h3>Thema schlafen legen</h3>
+          <p>Über das <strong>⋯</strong>-Menü des Themas wählen Sie <em>Schlafen bis …</em> und ein Datum. Das Thema verschwindet aus der offenen Liste und erscheint am gewählten Tag automatisch wieder.</p>
+          <h3>Reihenfolge ändern</h3>
+          <p>Themen lassen sich per <strong>Drag &amp; Drop</strong> innerhalb eines Meetings umsortieren. Der Anfasser (⠿) erscheint links beim Hover über ein Thema. Die Reihenfolge wird sofort gespeichert.</p>
+          <h3>Thema teilen</h3>
+          <p>Ein Thema kann in mehreren Meetings gleichzeitig erscheinen (<em>In weiterem Meeting teilen</em> im ⋯-Menü). Änderungen sind in allen Meetings sichtbar.</p>
+          <div class="help-tip"><strong>Schlafend:</strong> Themen, die noch nicht besprochen werden sollen, schlafen legen — so halten Sie die offene Liste übersichtlich.</div>
+        </div>
+
+        <!-- Todos -->
+        <div class="help-section" id="hs-todos">
+          <h2>Todos</h2>
+          <p>Todos sind persönliche Aufgaben, die optional einem Meeting zugeordnet sein können. Sie finden alle Todos in der Sidebar unter <strong>Todos</strong>.</p>
+          <h3>Todo erstellen</h3>
+          <ul>
+            <li>In der Sidebar: Klick auf <strong>Todos</strong>, dann <strong>+ Todo</strong></li>
+            <li>Aus einem Meeting-Thema heraus: <strong>⋯ → Als Todo hinzufügen</strong></li>
+          </ul>
+          <h3>Fälligkeitsdatum</h3>
+          <p>Jedes Todo kann ein Fälligkeitsdatum haben. In der Todo-Liste werden Aufgaben <strong>zuerst nach Fälligkeit</strong> sortiert (früheste oben), danach manuell sortierbare Aufgaben.</p>
+          <ul>
+            <li><span style="color:#16a34a">Grün</span> — fällig in ≥ 2 Tagen</li>
+            <li><span style="color:#ca8a04">Gelb</span> — fällig morgen oder heute</li>
+            <li><span style="color:#dc2626">Rot</span> — überfällig</li>
+          </ul>
+          <h3>Todo erledigen</h3>
+          <p>Klicken Sie auf den grünen Haken oder <strong>Erledigt</strong> neben dem Todo. Optional können Sie ein Ergebnis eintragen.</p>
+          <h3>Todo schlafen legen</h3>
+          <p>Wie bei Themen: <strong>⋯ → Schlafen bis …</strong> — das Todo verschwindet bis zum gewählten Tag aus der aktiven Liste.</p>
+        </div>
+
+        <!-- Stack -->
+        <div class="help-section" id="hs-stack">
+          <h2>Stack</h2>
+          <p>Der Stack ist ein Fokus-Werkzeug: Sie legen ein Thema oder Todo auf den Stack, arbeiten daran, und poppen es danach wieder ab. So behalten Sie den Überblick, auch wenn Sie zwischen Themen wechseln.</p>
+          <h3>Thema oder Todo pushen</h3>
+          <ul>
+            <li>Bei jedem offenen Thema: <strong>📚</strong>-Button → Stack-Push-Dialog öffnet sich</li>
+            <li>Tragen Sie einen <strong>Nächsten Schritt</strong> ein (Pflichtfeld) — was wollen Sie jetzt konkret tun?</li>
+            <li>Wählen Sie optional Priorität und Notiz</li>
+          </ul>
+          <h3>Stack-Panel</h3>
+          <p>Das Stack-Panel erscheint unten rechts (blauer Layers-Button). Es zeigt den aktuellen Stack-Frame — was gerade oben liegt.</p>
+          <h3>Thema poppen (abschließen)</h3>
+          <p>Im Stack-Panel: <strong>Pop</strong>-Button. Es öffnet sich ein Dialog, in dem Sie wählen:</p>
+          <ul>
+            <li><strong>Erledigt</strong> — Thema wird als erledigt markiert</li>
+            <li><strong>Verschoben</strong> — zurück in die offene Liste</li>
+            <li><strong>Verworfen</strong> — Thema wird verworfen (bleibt aber im Stack-Verlauf)</li>
+            <li><strong>Wiederaufgenommen</strong> — bleibt offen, Stack-Frame wird geschlossen</li>
+          </ul>
+          <h3>Stack-Verlauf</h3>
+          <p>In der Sidebar unter <strong>Stack-Verlauf</strong> sehen Sie alle vergangenen Stack-Frames mit ihren Ergebnissen.</p>
+          <div class="help-tip"><strong>Tipp:</strong> Nutzen Sie den Stack wie einen Zurück-Button im Browser — push bei Unterbrechungen, pop wenn Sie fertig sind.</div>
+        </div>
+
+        <!-- Kontakte -->
+        <div class="help-section" id="hs-contacts">
+          <h2>Kontakte</h2>
+          <p>Kontakte sind Personen, die Sie in ThreadStack verwalten können — z. B. regelmäßige Meeting-Teilnehmer.</p>
+          <h3>Kontakt anlegen</h3>
+          <ul>
+            <li>Sidebar → <strong>Kontakte</strong> → <strong>+ Kontakt</strong></li>
+            <li>Felder: Name (Pflicht), Rolle, E-Mail, Beschreibung (mit Formatierung)</li>
+          </ul>
+          <h3>Kontakte verknüpfen</h3>
+          <p>Über das Theme-System können Kontakte mit Themen verknüpft werden. Die Suche (Lupe oben in der Kontaktliste) filtert nach Name, Rolle und E-Mail.</p>
+          <h3>E-Mail-Verknüpfung</h3>
+          <p>Ein Klick auf eine E-Mail-Adresse öffnet Ihr Standard-E-Mail-Programm mit dem Empfänger vorausgefüllt.</p>
+        </div>
+
+        <!-- Textformatierung -->
+        <div class="help-section" id="hs-formatting">
+          <h2>Textformatierung</h2>
+          <p>Alle Textfelder (Beschreibung, Details, Ergebnis) unterstützen einen Rich-Text-Editor mit folgenden Werkzeugen:</p>
+          <div class="help-grid">
+            <div class="help-card">
+              <div class="help-card-title"><b>B</b> Fett</div>
+              <div class="help-card-desc">Text markieren, dann <b>B</b> klicken oder <span class="help-kbd">Strg+B</span></div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title"><i>I</i> Kursiv</div>
+              <div class="help-card-desc">Text markieren, dann <i>I</i> klicken oder <span class="help-kbd">Strg+I</span></div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title"><u>U</u> Unterstrichen</div>
+              <div class="help-card-desc">Text markieren, dann <u>U</u> klicken oder <span class="help-kbd">Strg+U</span></div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title">• Liste</div>
+              <div class="help-card-desc">Fügt eine Aufzählungsliste an der Cursorposition ein.</div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title">🔗 Link</div>
+              <div class="help-card-desc">Text markieren → Link klicken → URL eingeben. Links öffnen in einem neuen Tab.</div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title">📊 Tabelle</div>
+              <div class="help-card-desc">Fügt eine Tabelle ein. Zeilen- und Spaltenzahl wählen.</div>
+            </div>
+            <div class="help-card">
+              <div class="help-card-title"><span style="border-bottom:2px solid #dc2626;padding-bottom:1px;font-weight:bold">A</span> Textfarbe</div>
+              <div class="help-card-desc">Text markieren → A-Button → Farbe wählen. ✕ entfernt die Farbe wieder.</div>
+            </div>
+          </div>
+          <div class="help-tip"><strong>Hinweis:</strong> Die Formatierung wird in der Web-App und in der iOS/macOS-App vollständig dargestellt, einschließlich Farben, fett und kursiv.</div>
+        </div>
+
+        <!-- Tastenkürzel -->
+        <div class="help-section" id="hs-shortcuts">
+          <h2>Tastenkürzel</h2>
+          <div class="help-shortcut-row">
+            <span class="help-shortcut-desc">Stack-Push für aktuelles Thema</span>
+            <span><span class="help-kbd">⌘</span> <span class="help-kbd">⇧</span> <span class="help-kbd">P</span></span>
+          </div>
+          <div class="help-shortcut-row">
+            <span class="help-shortcut-desc">Fett (im Texteditor)</span>
+            <span><span class="help-kbd">Strg</span> + <span class="help-kbd">B</span></span>
+          </div>
+          <div class="help-shortcut-row">
+            <span class="help-shortcut-desc">Kursiv (im Texteditor)</span>
+            <span><span class="help-kbd">Strg</span> + <span class="help-kbd">I</span></span>
+          </div>
+          <div class="help-shortcut-row">
+            <span class="help-shortcut-desc">Unterstrichen (im Texteditor)</span>
+            <span><span class="help-kbd">Strg</span> + <span class="help-kbd">U</span></span>
+          </div>
+          <div class="help-shortcut-row">
+            <span class="help-shortcut-desc">Dialog schließen</span>
+            <span><span class="help-kbd">Esc</span></span>
+          </div>
+          <div class="help-shortcut-row">
+            <span class="help-shortcut-desc">Hilfe öffnen</span>
+            <span><span class="help-kbd">?</span></span>
+          </div>
+        </div>
+
+      </div><!-- /help-content -->
+    </div><!-- /help-body -->
+  </div><!-- /help-dialog -->
+</div><!-- /help-modal-overlay -->
+
 </body>
 </html>
