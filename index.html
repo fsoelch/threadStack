@@ -4036,13 +4036,22 @@ async function todoDrop(e, id) {
   const el = document.querySelector(`.topic-card[data-todoid="${id}"]`);
   const above = el?.classList.contains('drop-above');
   todoDragEnd();
-  const openTodos = todos.filter(t => !t.done);
+
+  const openTodos = todos.filter(t => !t.done && !isSnoozed(t));
+  const snoozed   = todos.filter(t => !t.done &&  isSnoozed(t));
   const doneTodos = todos.filter(t =>  t.done);
+
   const from = openTodos.findIndex(t => t.id === todoDragId);
+  if (from === -1) return;
   const [dragged] = openTodos.splice(from, 1);
   const to = openTodos.findIndex(t => t.id === id);
+  if (to === -1) return;
   openTodos.splice(above ? to : to + 1, 0, dragged);
-  todos = [...openTodos, ...doneTodos];
+
+  // sortOrder lokal aktualisieren, damit render() nicht zurücksortiert
+  openTodos.forEach((t, i) => { t.sortOrder = i; });
+
+  todos = [...openTodos, ...snoozed, ...doneTodos];
   render();
   try {
     await api('PUT', '/todos/reorder', { ids: openTodos.map(t => t.id) });
