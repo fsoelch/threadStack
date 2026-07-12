@@ -3454,6 +3454,9 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
+              ${!isDone ? `<button onclick="closeAllOverflow(); moveToTopTodo('${t.id}')">
+                <span class="icon">⬆</span><span>Ganz nach oben</span>
+              </button><hr>` : ''}
               <button onclick="closeAllOverflow(); openMoveModalForTodo('${t.id}')">
                 <span class="icon">→</span><span>In Meeting verschieben</span>
               </button>
@@ -3594,6 +3597,9 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
+              ${!t.done ? `<button onclick="closeAllOverflow(); moveToTopTopic('${mid}','${t.id}')">
+                <span class="icon">⬆</span><span>Ganz nach oben</span>
+              </button><hr>` : ''}
               <button onclick="closeAllOverflow(); openShareModal('${mid}','${t.id}')">
                 <span class="icon">🔗</span><span>In weiterem Meeting teilen</span>
               </button>
@@ -4079,6 +4085,32 @@ async function todoDrop(e, id) {
   try {
     await api('PUT', '/todos/reorder', { ids: openTodos.map(t => t.id) });
   } catch(err) { toast(err.message, 'error'); }
+}
+
+async function moveToTopTodo(id) {
+  const openTodos = todos.filter(t => !t.done && !isSnoozed(t));
+  const idx = openTodos.findIndex(t => t.id === id);
+  if (idx <= 0) return;
+  const [item] = openTodos.splice(idx, 1);
+  openTodos.unshift(item);
+  openTodos.forEach((t, i) => { t.sortOrder = i; });
+  todos = [...openTodos, ...todos.filter(t => !t.done && isSnoozed(t)), ...todos.filter(t => t.done)];
+  render();
+  try { await api('PUT', '/todos/reorder', { ids: openTodos.map(t => t.id) }); }
+  catch(err) { toast(err.message, 'error'); }
+}
+
+async function moveToTopTopic(mid, tid) {
+  const m = getMeeting(mid);
+  const open = m.topics.filter(t => !t.done);
+  const idx = open.findIndex(t => t.id === tid);
+  if (idx <= 0) return;
+  const [item] = open.splice(idx, 1);
+  open.unshift(item);
+  m.topics = [...open, ...m.topics.filter(t => t.done)];
+  render();
+  try { await api('PUT', `/meetings/${mid}/topics/reorder`, { ids: m.topics.map(t => t.id) }); }
+  catch(err) { toast(err.message, 'error'); }
 }
 
 // ── Drag & Drop (meeting reorder) ───────────────────────────
