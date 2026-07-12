@@ -231,6 +231,9 @@ db.exec(`
     db.exec(`ALTER TABLE todos ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
     db.exec(`UPDATE todos SET updated_at = created_at WHERE updated_at = ''`);
   }
+  if (!hasCol('todos', 'is_private')) {
+    db.exec(`ALTER TABLE todos ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0`);
+  }
   const aiCols = db.prepare(`PRAGMA table_info(ai_settings)`).all().map(c => c.name);
   const add = (name, sql) => { if (!aiCols.includes(name)) db.exec(`ALTER TABLE ai_settings ADD COLUMN ${sql}`); };
   add('drift_days',            'drift_days INTEGER NOT NULL DEFAULT 21');
@@ -725,6 +728,7 @@ function parseTodo(t) {
            done: !!t.done, result: t.result, resultDate: t.result_date,
            snoozedUntil: t.snoozed_until || null,
            dueDate: t.due_date || null,
+           isPrivate: !!t.is_private,
            sortOrder: t.sort_order, createdAt: t.created_at };
 }
 
@@ -743,13 +747,13 @@ app.get(`${A}/todos`, requireAuth, (req, res) => {
 });
 
 app.post(`${A}/todos`, requireAuth, (req, res) => {
-  const { title, description='', dueDate } = req.body;
+  const { title, description='', dueDate, isPrivate } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   const id = uid();
   const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
-  db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,sort_order,created_at) VALUES (?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), description, dueDate || '', mx+1, new Date().toISOString());
+  db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), description, dueDate || '', isPrivate ? 1 : 0, mx+1, new Date().toISOString());
   res.status(201).json(parseTodo(db.prepare('SELECT * FROM todos WHERE id=?').get(id)));
 });
 
@@ -764,13 +768,14 @@ app.put(`${A}/todos/reorder`, requireAuth, (req, res) => {
 app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
-  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate } = req.body;
+  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate, isPrivate } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
-  db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,due_date=?,updated_at=? WHERE id=?').run(
+  db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,due_date=?,is_private=?,updated_at=? WHERE id=?').run(
     title, stripUnsafeHtml(description), done !== undefined ? (done?1:0) : t.done,
     stripUnsafeHtml(result ?? t.result), resultDate ?? t.result_date,
     snoozedUntil !== undefined ? (snoozedUntil || '') : t.snoozed_until,
     dueDate !== undefined ? (dueDate || '') : t.due_date,
+    isPrivate !== undefined ? (isPrivate ? 1 : 0) : t.is_private,
     new Date().toISOString(),
     t.id);
   res.json({ ok: true });

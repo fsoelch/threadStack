@@ -312,6 +312,12 @@ body {
 .full-width-view { width:100%; }
 .full-width-view .meeting-header { max-width:none; }
 
+/* ─── Private Todos ──────────────────────────────────────────── */
+.private-badge { font-size:.7em; opacity:.5; vertical-align:.05em; }
+.private-toggle { opacity:.35; transition:opacity .15s; }
+.private-toggle:hover { opacity:.7; }
+.private-toggle.private-hidden { opacity:.75; background:var(--border); }
+
 .meeting-header {
   background:var(--card); border-radius:var(--r-lg);
   border:1px solid var(--border); box-shadow:none;
@@ -1950,6 +1956,13 @@ body.ai-disabled .ai-action { display: none !important; }
         <div class="form-hint">Bis zu diesem Datum erledigen — Todos werden nach Fälligkeit sortiert (frühestes oben).</div>
       </div>
       <div class="form-group">
+        <div class="toggle-row" style="margin:0">
+          <span class="toggle-label" style="font-size:.8125rem;color:var(--text-muted)">🔒 Privat</span>
+          <label class="toggle"><input type="checkbox" id="todo-private"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="form-hint" style="margin-top:.25rem">Nur für dich sichtbar — kann oben in der Liste ausgeblendet werden.</div>
+      </div>
+      <div class="form-group">
         <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Schlafen bis <span class="opt">(optional)</span></label>
         <input type="date" class="form-control" id="todo-snooze">
         <div class="form-hint">Bis zu diesem Datum ausblenden — danach automatisch wieder als offen angezeigt.</div>
@@ -2553,6 +2566,7 @@ let currentUser = null;
 let meetings    = [];
 let todos       = [];
 let selectedId  = null;
+let showPrivateTodos = true;
 let filterText  = '';
 let topicFilter = '';
 
@@ -3331,10 +3345,12 @@ function renderTodosView(el) {
     return (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
         || new Date(a.createdAt) - new Date(b.createdAt);
   };
-  const open    = todos.filter(t => !t.done && !isSnoozed(t)).sort(byDueDate);
-  const snoozedTodos = todos.filter(t => !t.done &&  isSnoozed(t)).sort(byDueDate);
-  const done    = todos.filter(t =>  t.done)
+  const visibleTodos = showPrivateTodos ? todos : todos.filter(t => !t.isPrivate);
+  const open    = visibleTodos.filter(t => !t.done && !isSnoozed(t)).sort(byDueDate);
+  const snoozedTodos = visibleTodos.filter(t => !t.done &&  isSnoozed(t)).sort(byDueDate);
+  const done    = visibleTodos.filter(t =>  t.done)
     .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const hasPrivate = todos.some(t => t.isPrivate);
   // Meeting-Topics als Todo: offen + schlafende separat
   const meetingTodosOpen    = meetings.flatMap(m =>
     (m.topics||[]).filter(t => t.isTodo && !t.done && !isSnoozed(t)).map(t => ({ meeting: m, topic: t }))
@@ -3356,6 +3372,7 @@ function renderTodosView(el) {
             </p>
           </div>
           <div class="meeting-header-actions">
+            ${hasPrivate ? `<button class="btn btn-ghost btn-sm btn-icon private-toggle${showPrivateTodos ? '' : ' private-hidden'}" onclick="showPrivateTodos=!showPrivateTodos;renderMain()" title="${showPrivateTodos ? 'Private Todos ausblenden' : 'Private Todos anzeigen'}">🔒</button>` : ''}
             <button class="btn btn-primary btn-sm" onclick="openTodoModal()">+ Todo</button>
           </div>
         </div>
@@ -3426,7 +3443,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
         <div class="topic-info">
           ${!isDone ? `<span class="drag-handle" title="Verschieben">⠿</span>` : ''}
           <span class="topic-status-icon ${grp}">${isDone ? '✓' : ''}</span>
-          <h4 class="topic-title ${isDone ? 'done-text' : ''}">${escHtml(t.title)}</h4>
+          <h4 class="topic-title ${isDone ? 'done-text' : ''}">${escHtml(t.title)}${t.isPrivate ? ' <span class="private-badge" title="Privat">🔒</span>' : ''}</h4>
         </div>
         <div class="topic-actions">
           ${!isDone ? `
@@ -3898,6 +3915,7 @@ function openTodoModal(id) {
   setRT('todo-desc', t?.description || '');
   document.getElementById('todo-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
   document.getElementById('todo-due').value = t?.dueDate?.slice(0, 10) || '';
+  document.getElementById('todo-private').checked = !!t?.isPrivate;
   const dr = document.getElementById('todo-done-row');
   if (t) {
     dr.style.display = '';
@@ -3927,6 +3945,7 @@ async function saveTodoModal() {
   if (!title) { document.getElementById('todo-title').focus(); return; }
   const isDone = editTodoId ? document.getElementById('todo-done').checked : false;
   const data = { title, description: getRT('todo-desc'),
+    isPrivate: document.getElementById('todo-private').checked,
     snoozedUntil: document.getElementById('todo-snooze').value || null,
     dueDate: document.getElementById('todo-due').value || null,
     ...(editTodoId ? {
@@ -3939,7 +3958,7 @@ async function saveTodoModal() {
   try {
     if (editTodoId) {
       await api('PUT', `/todos/${editTodoId}`, data);
-      Object.assign(todos.find(t => t.id === editTodoId), data);
+      Object.assign(todos.find(t => t.id === editTodoId), { ...data, isPrivate: data.isPrivate });
       savedTodoId = editTodoId;
     } else {
       const t = await api('POST', '/todos', data);
