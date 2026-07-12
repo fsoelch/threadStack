@@ -308,6 +308,21 @@ body {
 /* ─── Meeting detail ─────────────────────────────────────────── */
 .meeting-detail { max-width:780px; }
 
+/* ─── Todos / Kontakte: volles Breite-Grid ───────────────────── */
+.full-width-view { width:100%; }
+.full-width-view .meeting-header { max-width:none; }
+.cards-grid {
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap:.5rem;
+  align-items:start;
+}
+/* Gruppenüberschriften und leere Zustände spannen alle Spalten */
+.cards-grid .topic-group-header,
+.cards-grid .empty-topics {
+  grid-column: 1 / -1;
+}
+
 .meeting-header {
   background:var(--card); border-radius:var(--r-lg);
   border:1px solid var(--border); box-shadow:none;
@@ -3341,7 +3356,7 @@ function renderTodosView(el) {
   const themeMap = buildThemeMap();
 
   el.innerHTML = `
-    <div class="meeting-detail">
+    <div class="full-width-view">
       <div class="meeting-header">
         <div class="meeting-header-accent" style="background:var(--green)"></div>
         <div class="meeting-header-body">
@@ -3357,7 +3372,7 @@ function renderTodosView(el) {
         </div>
       </div>
 
-      <div class="topics-section">
+      <div class="topics-section cards-grid">
         ${open.length === 0 && meetingTodosOpen.length === 0 && snoozedTodos.length === 0 && meetingTodosSnoozed.length === 0 ? `
           <div class="empty-topics" style="padding:3rem">
             Keine offenen Todos — alles erledigt! 🎉
@@ -3402,8 +3417,8 @@ function renderTodosView(el) {
             <div class="topic-group-header-line"></div>
           </div>
           ${done.map(t => renderPersonalTodoCard(t, true, themeMap)).join('')}` : ''}
-      </div>
-    </div>`;
+      </div><!-- /cards-grid -->
+    </div><!-- /full-width-view -->`;
 }
 
 function renderPersonalTodoCard(t, isDone, themeMap) {
