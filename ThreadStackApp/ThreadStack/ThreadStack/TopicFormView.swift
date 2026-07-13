@@ -52,7 +52,7 @@ struct TopicFormView: View {
     private func populate() {
         guard let t = topic else { return }
         title = t.title
-        description = t.description
+        description = stripHTML(t.description)
         isTodo = t.isTodo
         snoozeDate = t.snoozedUntil ?? ""
     }

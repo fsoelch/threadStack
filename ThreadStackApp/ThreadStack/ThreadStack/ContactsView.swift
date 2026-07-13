@@ -176,7 +176,8 @@ struct ContactFormView: View {
             }
             .onAppear {
                 if let c = contact {
-                    name = c.name; role = c.role; email = c.email; description = c.description
+                    name = c.name; role = c.role; email = c.email
+                    description = stripHTML(c.description)
                 }
             }
         }

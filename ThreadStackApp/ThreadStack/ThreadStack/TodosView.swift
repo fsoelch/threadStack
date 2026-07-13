@@ -4,13 +4,18 @@ struct TodosView: View {
     @EnvironmentObject var state: AppState
     @State private var search = ""
     @State private var showNew = false
+    @State private var hidePrivate = false
     @State private var error: String?
 
+    private var hasPrivate: Bool { state.todos.contains { $0.isPrivate } }
+
     private var filtered: [TodoItem] {
-        guard !search.isEmpty else { return state.todos }
-        return state.todos.filter {
+        var base = state.todos
+        if hidePrivate { base = base.filter { !$0.isPrivate } }
+        guard !search.isEmpty else { return base }
+        return base.filter {
             $0.title.localizedCaseInsensitiveContains(search) ||
-            $0.description.localizedCaseInsensitiveContains(search)
+            stripHTML($0.description).localizedCaseInsensitiveContains(search)
         }
     }
 
@@ -78,6 +83,17 @@ struct TodosView: View {
                 Button { showNew = true } label: { Image(systemName: "plus") }
             }
             ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
+            if hasPrivate {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button {
+                        hidePrivate.toggle()
+                    } label: {
+                        Image(systemName: hidePrivate ? "lock.fill" : "lock")
+                            .foregroundStyle(hidePrivate ? .primary : .secondary)
+                    }
+                    .help(hidePrivate ? "Private Todos einblenden" : "Private Todos ausblenden")
+                }
+            }
         }
         #endif
         .sheet(isPresented: $showNew) { TodoFormView() }
@@ -124,10 +140,17 @@ struct TodoRowView: View {
             HStack(alignment: .top, spacing: 8) {
                 statusIcon
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(todo.title)
-                        .scaledFont(.subheadline).fontWeight(.medium)
-                        .strikethrough(todo.done)
-                        .foregroundStyle(todo.done ? .secondary : .primary)
+                    HStack(spacing: 4) {
+                        Text(todo.title)
+                            .scaledFont(.subheadline).fontWeight(.medium)
+                            .strikethrough(todo.done)
+                            .foregroundStyle(todo.done ? .secondary : .primary)
+                        if todo.isPrivate {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
 
                     if !todo.description.isEmpty {
                         Text(htmlAttributedString(todo.description))

@@ -132,7 +132,7 @@ struct ThemeFormView: View {
                 }
             }
             .onAppear {
-                if let t = theme { title = t.title; description = t.description }
+                if let t = theme { title = t.title; description = stripHTML(t.description) }
             }
         }
     }

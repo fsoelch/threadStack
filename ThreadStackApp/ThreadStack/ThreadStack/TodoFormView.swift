@@ -10,6 +10,7 @@ struct TodoFormView: View {
     @State private var snoozeDate = Date()
     @State private var hasDueDate = false
     @State private var dueDate = Date()
+    @State private var isPrivate = false
     @State private var loading = false
     @State private var error: String?
 
@@ -39,6 +40,13 @@ struct TodoFormView: View {
                 } footer: {
                     Text("Bis zu diesem Datum ausblenden.")
                 }
+                Section {
+                    Toggle(isOn: $isPrivate) {
+                        Label("Privat", systemImage: "lock")
+                    }
+                } footer: {
+                    Text("Nur für dich — lässt sich in der Todos-Liste schnell ausblenden.")
+                }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
                 }
@@ -59,7 +67,8 @@ struct TodoFormView: View {
     private func populate() {
         guard let t = todo else { return }
         title = t.title
-        description = t.description
+        description = stripHTML(t.description)   // show plain text in editor
+        isPrivate = t.isPrivate
         if let s = t.snoozedUntil, !s.isEmpty, let d = Self.parseDate(s) {
             hasSnooze = true; snoozeDate = d
         }
@@ -90,11 +99,12 @@ struct TodoFormView: View {
                     try await state.updateTodo(
                         id: t.id, title: title, description: description,
                         done: t.done, result: t.result, resultDate: t.resultDate,
-                        snoozedUntil: snooze, dueDate: due
+                        snoozedUntil: snooze, dueDate: due, isPrivate: isPrivate
                     )
                 } else {
                     try await state.createTodo(title: title, description: description,
-                                               snoozedUntil: snooze, dueDate: due)
+                                               snoozedUntil: snooze, dueDate: due,
+                                               isPrivate: isPrivate)
                 }
                 dismiss()
             } catch {

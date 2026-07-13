@@ -347,13 +347,13 @@ final class AppState: ObservableObject {
 
     // MARK: - Todos
 
-    func createTodo(title: String, description: String, snoozedUntil: String? = nil, dueDate: String? = nil) async throws {
-        _ = try await createTodoReturning(title: title, description: description, snoozedUntil: snoozedUntil, dueDate: dueDate)
+    func createTodo(title: String, description: String, snoozedUntil: String? = nil, dueDate: String? = nil, isPrivate: Bool = false) async throws {
+        _ = try await createTodoReturning(title: title, description: description, snoozedUntil: snoozedUntil, dueDate: dueDate, isPrivate: isPrivate)
     }
 
     @discardableResult
-    func createTodoReturning(title: String, description: String, snoozedUntil: String? = nil, dueDate: String? = nil) async throws -> TodoItem {
-        var body: [String: Any] = ["title": title, "description": description]
+    func createTodoReturning(title: String, description: String, snoozedUntil: String? = nil, dueDate: String? = nil, isPrivate: Bool = false) async throws -> TodoItem {
+        var body: [String: Any] = ["title": title, "description": description, "isPrivate": isPrivate]
         if let s = snoozedUntil { body["snoozedUntil"] = s }
         if let d = dueDate     { body["dueDate"]     = d }
         let t: TodoItem = try await request("POST", "/todos", body: body)
@@ -363,18 +363,19 @@ final class AppState: ObservableObject {
 
     func updateTodo(id: String, title: String, description: String,
                     done: Bool, result: String, resultDate: String,
-                    snoozedUntil: String?, dueDate: String?) async throws {
+                    snoozedUntil: String?, dueDate: String?, isPrivate: Bool = false) async throws {
         try await requestOK("PUT", "/todos/\(id)", body: [
             "title": title, "description": description, "done": done,
             "result": result, "resultDate": resultDate,
             "snoozedUntil": Self.nullable(snoozedUntil),
-            "dueDate": Self.nullable(dueDate)
+            "dueDate": Self.nullable(dueDate),
+            "isPrivate": isPrivate
         ])
         if let i = todos.firstIndex(where: { $0.id == id }) {
             todos[i].title = title; todos[i].description = description
             todos[i].done = done; todos[i].result = result
             todos[i].resultDate = resultDate; todos[i].snoozedUntil = snoozedUntil
-            todos[i].dueDate = dueDate
+            todos[i].dueDate = dueDate; todos[i].isPrivate = isPrivate
         }
     }
 
