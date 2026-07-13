@@ -68,6 +68,7 @@ struct TodoItem: Identifiable, Codable, Equatable {
     var resultDate: String
     var snoozedUntil: String?
     var dueDate: String?
+    var isPrivate: Bool = false
     var sortOrder: Int?
     var createdAt: String
 
