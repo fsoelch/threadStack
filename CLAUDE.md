@@ -1,70 +1,137 @@
-# CLAUDE.md — ThreadStack
+# CLAUDE.md
 
-Kompakte Hinweise für Code-Änderungen in diesem Repo. Was Claude ohne Hinweis richtig
-machen würde, steht nicht hier.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Projekt-Setup
+## ThreadStack — Projekt-Überblick
 
-- Single-File-Server: gesamte HTTP/DB-Logik in `server.js` (NF-05).
-- Single-File-Frontend: gesamte Web-UI in `index.html` (HTML + CSS + JS inline).
-- Datenbank: SQLite via better-sqlite3 unter `data/app.db`.
-- Migrationen: additiv, idempotent, beim Server-Start (`PRAGMA table_info` → `ALTER`/`CREATE TABLE IF NOT EXISTS`).
-- IDs: durchgehend TEXT (kein INTEGER), erzeugt via `uid()`.
-- Auth: Session-Cookie via `express-session`; Routes nutzen `requireAuth` / `requireAdmin`.
+Meeting- und Todo-Verwaltung. Zwei getrennte Clients (Web-App + native iOS/macOS-App) sprechen gegen denselben Node.js-Server.
 
-## Erweiterung v1.1 — AI und Stack
+---
 
-### Neue Befehle
+## Web-App (Node.js)
 
-- `npm test` — gesamte Test-Suite (`node --test`)
-- `npm run ai:test` — Verbindungstest des aktuell konfigurierten Providers (CLI)
-- `npm run digest:weekly` — Wochen-Digest manuell auslösen (ab Phase 3)
+### Befehle
 
-### AI-Schicht (`ai/`)
+```bash
+npm start               # Server starten (Port 3000, Pfad /notes)
+npm test                # Gesamte Test-Suite (node --test)
+npm run ai:test         # AI-Provider-Verbindungstest
+npm run digest:weekly   # Wochen-Digest manuell auslösen
+```
 
-- Code in `ai/`. **Strikt: keine AI-Logik in `server.js`.**
-- Routes in `server.js` rufen ausschließlich Funktionen aus `require('./ai')` auf.
-- Provider-Adapter haben einheitliche Signatur:
-  `callModel({ system, user, maxTokens, json, apiKey, model, ...opts })`
-  `testConnection({ apiKey, model, ...opts })`
-- Prompts sind Markdown-Templates in `ai/prompts/` mit `{{platzhalter}}`,
-  interpoliert via `interpolate(template, data)` in `ai/index.js`.
-- Jeder Aufruf protokolliert in `ai_usage`; Budget-Check **vor** jedem Aufruf.
-- API-Keys nie loggen, nie in Responses (außer maskiert: letzte 4 Zeichen).
-- Verschlüsselung: AES-256-GCM, Schlüssel in `data/.encryption-key` (analog Session-Secret).
-- Strukturierte Outputs: JSON-Schema-Validierung, 1× Retry bei ungültigem JSON, dann 422.
-- Mock-Provider via `AI_PROVIDER_OVERRIDE=mock` (nur für Tests).
+Einzelnen Test ausführen:
+```bash
+node --test --test-force-exit test/smoke.test.js
+```
 
-### Stack-Layer (ab Phase 2)
+### Umgebungsvariablen
 
-- Tabelle `stack_frames` referenziert Topics/Todos via `ref_type` + `ref_id`; löscht sie nicht.
-- Push ohne `next_step_note` → HTTP 400.
-- Resolution-Werte: `done`, `snoozed`, `dropped`, `resumed`.
-- Bei Resolution=`done`: referenziertes Topic/Todo wird zusätzlich erledigt (W-S05).
+| Variable | Default | Zweck |
+|---|---|---|
+| `PORT` | `3000` | HTTP-Port |
+| `BASE_PATH` | `/notes` | URL-Präfix (alle API-Pfade: `BASE_PATH/api/v1/...`) |
+| `DATA_DIR` | `./data` | Verzeichnis für SQLite-DB, Session-Secret, Uploads |
+| `TRUST_PROXY` | — | Auf `1` setzen wenn hinter nginx/Reverse-Proxy |
+| `AI_PROVIDER_OVERRIDE` | — | `mock` für Tests ohne echten AI-Provider |
+
+### Architektur
+
+**`server.js`** — einzige Datei für HTTP + DB + Auth (kein Aufbrechen erlaubt außer `ai/`):
+- Startup: SQLite-Verbindung, idempotente Migrationen via `PRAGMA table_info` + `ALTER TABLE`, Seed-Admin, Session-Setup
+- Auth: `requireAuth` / `requireAdmin` Middleware; Cookie-Session; Login-Rate-Limiting via In-Memory-Map; `DUMMY_HASH` für timing-sicheres Bcrypt bei ungültigem Username
+- Schlüsselfunktionen: `uid()` (TEXT-IDs), `stripUnsafeHtml()` (Allowlist-basiert), `parseMeeting/parseTopic/parseTodo/parseContact()` (DB-Row → JSON), `displayHtml()` im Frontend
+
+**`index.html`** — einzige Datei für gesamte Web-UI (HTML + CSS + JS inline):
+- Render-Zyklus: `render()` → `renderSidebar()` + `renderMain()` + `renderTodosNav()`
+- State: globale JS-Variablen (`meetings`, `todos`, `themes`, `contacts`, `selectedId`, `showPrivateTodos`, ...)
+- Modal-Pattern: `<div class="modal-overlay">` mit `display:none/flex`; `overlayClick()` schließt bei Hintergrund-Klick
+- Rich-Text-Editor: eigener `contenteditable`-Editor (`initRtToolbar`, `rtCmd`, `getRT`, `setRT`); kein externes Framework
+- API-Helper: `await api(method, path, body?)`; wirft bei Fehler mit `message`
+- Konfirmations-Dialog: `confirmDelete(...)` / `closeConfirm()` / `executeConfirm()`
+- Drag & Drop für Meetings, Topics und Todos: je eigener `*DragStart/Drop/End`-Block, persistiert via `PUT .../reorder`
+
+**`ai/`** — AI-Schicht (strikt getrennt von `server.js`):
+- `index.js` — Entry-Point; `interpolate(template, data)` für `{{platzhalter}}`-Templates
+- `providers/` — Adapter-Dateien mit einheitlicher Signatur: `callModel({system, user, maxTokens, json, apiKey, model})` / `testConnection(...)`
+- `prompts/` — Markdown-Templates
+- `cost.js` / `usage.js` — Budget-Tracking; Budget-Check **vor** jedem Aufruf; Protokoll in `ai_usage`-Tabelle
+- `crypto.js` — AES-256-GCM für API-Keys; Schlüssel in `data/.encryption-key`
+
+### API-Routen (Übersicht)
+
+Alle Routen unter `BASE_PATH/api/v1/`:
+
+| Präfix | Ressource |
+|---|---|
+| `/meetings`, `/meetings/:id/topics/...` | Meetings + Topics |
+| `/todos`, `/todos/reorder` | Persönliche Todos |
+| `/themes`, `/themes/:id/links` | Themen + Verknüpfungen |
+| `/contacts` | Ansprechpartner |
+| `/stack/push`, `/stack/pop/:frameId`, `/stack/history` | Stack-Layer |
+| `/ai/meeting/:id/brief`, `/ai/meeting/:id/capture` | AI-Features |
+| `/ai/digest/weekly`, `/ai/insights/cross-meeting/:id` | Digest + CMI |
+| `/attachments/:refType/:refId` | Dateianhänge |
+| `/users` (requireAdmin) | Benutzerverwaltung |
+
+### Datenbank-Konventionen
+
+- Alle IDs: `TEXT` (kein INTEGER), erzeugt via `uid()` (6 Zufalls-Bytes hex)
+- Migrationen: nur additiv (`ALTER TABLE ... ADD COLUMN`, `CREATE TABLE IF NOT EXISTS`); bestehende Spalten nie ändern
+- `stripUnsafeHtml()` auf alle gespeicherten HTML-Felder anwenden; API-Keys nie loggen
 
 ### HTTP-Fehlercodes (AI)
 
-- 401 Nicht angemeldet
-- 402 Monatsbudget erschöpft
-- 409 Provider nicht konfiguriert / Feature deaktiviert / `globally_disabled=1`
-- 422 Strukturierter Output ungültig (nach 1× Retry)
-- 428 Kostenbestätigung nötig → Request mit `?confirm=true` wiederholen
-- 503 Provider-Fehler oder Timeout (> 30 s)
+`402` Budget | `409` nicht konfiguriert/deaktiviert | `422` ungültiges JSON (nach 1× Retry) | `428` Kostenbestätigung nötig (→ mit `?confirm=true` wiederholen) | `503` Provider-Fehler
+
+---
+
+## Native App (Swift/SwiftUI)
+
+### Build & Test
+
+```bash
+# Im Verzeichnis ThreadStackApp/ThreadStack/
+xcodebuild -scheme ThreadStack -destination 'platform=macOS' build
+xcodebuild -scheme ThreadStack -destination 'id=<simulator-id>' build
+
+# Verfügbare Destinations anzeigen:
+xcodebuild -scheme ThreadStack -showdestinations
+
+# Tests (aus ThreadStackApp/ThreadStack/):
+xcodebuild -scheme ThreadStack -destination 'platform=macOS' test
+```
+
+### Architektur
+
+**`AppState.swift`** — einziger `@MainActor ObservableObject`; hält allen App-State:
+- `@Published`: `meetings`, `todos`, `themes`, `contacts`, `stackFrames`, `aiSettings`, `driftIds`, `cmiByMeeting`, `isLocked`, `isRefreshing`
+- `serverURL` wird in `UserDefaults` persistiert; Credentials in `Keychain.swift`
+- Auto-Refresh alle 60 Sekunden + manueller Pull-to-Refresh; `loadAll()` lädt alle Ressourcen parallel
+- API-Requests: generische `request<T: Decodable>` / `requestOK`-Methoden; wirft `APIError` oder `APIAIError`
+
+**`Models.swift`** — alle Codable-Structs (`Meeting`, `Topic`, `TodoItem`, `Contact`, `StackFrame`, `AISettings`, ...); keine Logik außer berechneten Properties (Datums-Formatierung, `isSnoozed`, `dueStatus`, `openTopicsCount`)
+
+**`Extensions.swift`** — plattformübergreifende Utilities:
+- `stripHTML()` — plain text für Suche/TextEditor-Vorausfüllung
+- `htmlAttributedString()` — HTML → `AttributedString` für `Text`-Views (preserviert bold/italic/color/links)
+- `scaledFont()` — ViewModifier für konsistente Schriftgrößen
+- `Color(hex:)` — Hex-String-Initializer
+
+**`ContentView.swift`** — Root-Navigation: `NavigationSplitView` (macOS) / `TabView` (iOS); `AppLock`-Overlay wenn `isLocked`
+
+**Wichtige Konventionen:**
+- HTML-Inhalte (description, result) in Read-Only-Views: `Text(htmlAttributedString(field))` 
+- HTML-Inhalte in Edit-Formularen: `stripHTML(field)` beim Laden in `TextEditor`/`TextField` — iOS hat keinen Rich-Text-Editor
+- Neue Felder in `TodoItem`/`Topic` etc. analog als optionale Properties mit Default hinzufügen; `parseTodo/parseTopic` im Server entsprechend anpassen
+- `Theme.swift` (wenn vorhanden) als Farb-Token-Quelle; kein hartes `.indigo` / `"#6366f1"` im Code
+
+---
 
 ## Was nicht zu tun ist
 
-- Bestehende Tabellen-Spalten ändern (nur neue Spalten/Tabellen additiv anlegen).
-- Bestehende API-Endpoints umbenennen oder im Verhalten ändern.
-- Bestehende UI-Komponenten refactoren, „weil es sauberer ginge".
-- Den Single-File-Ansatz für `server.js` aufbrechen (außer `ai/`, explizit erlaubt).
-- ORM einführen.
-- Neue Frontend-Frameworks oder Build-Tools einführen.
-- Neue Dependencies ohne Rückfrage hinzufügen.
-
-## Hilfreiches im Bestand
-
-- Modal-Pattern: `<div class="modal-overlay">` mit `display:none/block`; `overlayClick()` schließt bei Hintergrund-Klick.
-- Rich-Text: eigener `contenteditable`-Editor (`initRtToolbar`, `rtCmd`, `getRT`, `setRT`); kein Quill.
-- Render-Zyklus: zentrale `render()` ruft `renderSidebar()`, `renderMain()`, `renderTodosNav()`.
-- API-Helper im Frontend: `await api(method, path, body?)`.
-- Konfirmations-Dialog im Bestand: `confirmDelete(...)` / `closeConfirm()` / `executeConfirm()`.
+- Bestehende DB-Spalten ändern (nur additiv)
+- Bestehende API-Endpoints umbenennen oder im Verhalten ändern
+- Single-File-Ansatz für `server.js` aufbrechen (außer `ai/`)
+- ORM, Frontend-Frameworks oder Build-Tools einführen
+- Neue Dependencies ohne Rückfrage hinzufügen
+- AI-Logik direkt in `server.js` schreiben (gehört in `ai/`)
