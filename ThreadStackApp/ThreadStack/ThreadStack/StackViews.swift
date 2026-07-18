@@ -33,12 +33,16 @@ struct StackPanelView: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: 12)
+            RoundedRectangle(cornerRadius: collapsed ? 100 : 12)
                 .fill(.background)
-                .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
+                .shadow(color: .black.opacity(0.14), radius: 8, x: 0, y: 4)
         )
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.gray.opacity(0.2)))
+        .overlay(
+            RoundedRectangle(cornerRadius: collapsed ? 100 : 12)
+                .strokeBorder(.gray.opacity(0.15))
+        )
         .frame(width: collapsed ? nil : 320)
+        .animation(.easeInOut(duration: 0.15), value: collapsed)
         .sheet(item: $popFrame)    { f in StackPopSheet(frame: f) }
         .sheet(item: $noteFrame)   { f in StackNoteSheet(frame: f) }
         .sheet(item: $detailFrame) { f in
@@ -51,20 +55,37 @@ struct StackPanelView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text("📚")
+            // Accent icon circle
+            ZStack {
+                Circle()
+                    .fill(DS.accent)
+                    .frame(width: 22, height: 22)
+                Image(systemName: "square.stack.3d.up.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
             Text("Stack").fontWeight(.semibold).font(.subheadline)
-            Text("\(state.stackDepth)")
-                .font(.caption2).bold().foregroundStyle(.white)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(Color(hex: "#6366f1")).clipShape(Capsule())
-            Spacer()
+            // Counter badge
+            if state.stackDepth > 0 {
+                Text("\(state.stackDepth)")
+                    .font(.caption2).bold().foregroundStyle(.white)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(DS.accent).clipShape(Capsule())
+            }
             if !collapsed {
-                Button { showQuickPush = true } label: { Text("＋") }
-                    .buttonStyle(.plain).help("Schnell auf Stack legen")
-                Button { showEod = true } label: { Text("🌙") }
-                    .buttonStyle(.plain).help("Tagesabschluss")
-                Button { showHistory = true } label: { Text("📜") }
-                    .buttonStyle(.plain).help("Historie")
+                Spacer()
+                Button { showQuickPush = true } label: {
+                    Image(systemName: "plus").font(.caption)
+                }
+                .buttonStyle(.plain).help("Schnell auf Stack legen")
+                Button { showEod = true } label: {
+                    Image(systemName: "moon.fill").font(.caption)
+                }
+                .buttonStyle(.plain).help("Tagesabschluss")
+                Button { showHistory = true } label: {
+                    Image(systemName: "clock.arrow.circlepath").font(.caption)
+                }
+                .buttonStyle(.plain).help("Historie")
             }
             Image(systemName: collapsed ? "chevron.up" : "chevron.down")
                 .font(.caption).foregroundStyle(.secondary)
@@ -78,7 +99,7 @@ struct StackPanelView: View {
         if state.stackFrames.isEmpty {
             VStack(spacing: 4) {
                 Text("Kein offenes Frame.").font(.caption).foregroundStyle(.secondary)
-                Text("Tippe 📚 auf einem Topic/Todo.").font(.caption2).foregroundStyle(.tertiary)
+                Text("Tippe Stack auf einem Topic/Todo.").font(.caption2).foregroundStyle(.tertiary)
             }
             .padding().frame(maxWidth: .infinity)
         } else {
@@ -106,11 +127,12 @@ struct StackPanelView: View {
     private func frameCard(frame f: StackFrame, isActive: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text(f.ref_type == "topic" ? "💬" : "✓").font(.caption)
+                Image(systemName: f.ref_type == "topic" ? "bubble.left" : "checkmark.circle")
+                    .font(.caption).foregroundStyle(isActive ? DS.accent : .secondary)
                 Text(f.title).font(.subheadline).fontWeight(.semibold).lineLimit(1)
                 if !isActive {
                     Spacer()
-                    Text("👁 öffnen").font(.caption2).foregroundStyle(.secondary)
+                    Text("öffnen").font(.caption2).foregroundStyle(.secondary)
                 }
             }
             Text(f.next_step_note).font(.caption).lineLimit(3)
@@ -133,14 +155,14 @@ struct StackPanelView: View {
                         Button { Task { await runReentry(f) } } label: {
                             Label("Re-Entry", systemImage: "sparkles").font(.caption)
                         }
-                        .buttonStyle(.bordered).controlSize(.small).tint(.indigo)
+                        .buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
                     }
                 }
                 if let r = reentry[f.id] {
                     Text(r).font(.caption2).padding(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(hex: "#6366f1").opacity(0.10))
-                        .foregroundStyle(Color(hex: "#4338ca"))
+                        .background(DS.accent.opacity(0.10))
+                        .foregroundStyle(DS.accentDark)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
             }
@@ -148,11 +170,11 @@ struct StackPanelView: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isActive ? Color(hex: "#6366f1").opacity(0.10) : Color(hex: "#f8fafc"))
+                .fill(isActive ? DS.accent.opacity(0.10) : Color(hex: "#f8fafc"))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isActive ? Color(hex: "#6366f1") : Color(hex: "#e2e8f0"),
+                .strokeBorder(isActive ? DS.accent : Color(hex: "#e2e8f0"),
                               lineWidth: isActive ? 1.5 : 1)
         )
         .opacity(isActive ? 1 : 0.8)
@@ -190,7 +212,8 @@ struct StackPushSheet: View {
             Form {
                 Section("Ziel") {
                     HStack {
-                        Text(target.refType == "topic" ? "💬" : "✓")
+                        Image(systemName: target.refType == "topic" ? "bubble.left" : "checkmark.circle")
+                            .foregroundStyle(DS.accent)
                         Text(target.title).bold()
                     }
                 }
@@ -248,17 +271,18 @@ struct StackPopSheet: View {
             Form {
                 Section("Frame") {
                     HStack {
-                        Text(frame.ref_type == "topic" ? "💬" : "✓")
+                        Image(systemName: frame.ref_type == "topic" ? "bubble.left" : "checkmark.circle")
+                            .foregroundStyle(DS.accent)
                         Text(frame.title).bold()
                     }
                     Text(frame.next_step_note).font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Wie schließen?") {
                     Picker("Resolution", selection: $resolution) {
-                        Text("✓ Erledigt").tag("done")
-                        Text("😴 Schlafend").tag("snoozed")
-                        Text("✗ Verworfen").tag("dropped")
-                        Text("↻ Wieder aktiv").tag("resumed")
+                        Text("Erledigt").tag("done")
+                        Text("Schlafend").tag("snoozed")
+                        Text("Verworfen").tag("dropped")
+                        Text("Wieder aktiv").tag("resumed")
                     }
                     .pickerStyle(.inline).labelsHidden()
                 }
@@ -394,7 +418,8 @@ struct StackHistoryView: View {
                 ForEach(frames) { f in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text(f.ref_type == "topic" ? "💬" : "✓")
+                            Image(systemName: f.ref_type == "topic" ? "bubble.left" : "checkmark.circle")
+                                .font(.caption).foregroundStyle(.secondary)
                             Text(f.title).font(.subheadline).fontWeight(.medium)
                             Spacer()
                             if let r = f.pop_resolution {
@@ -422,7 +447,7 @@ struct StackHistoryView: View {
     private func badgeColor(_ r: String) -> Color {
         switch r {
         case "done": return .green
-        case "snoozed": return .indigo
+        case "snoozed": return DS.accent
         case "dropped": return .red
         case "resumed": return .orange
         default: return .secondary
@@ -449,7 +474,8 @@ struct EndOfDayView: View {
                 ForEach(state.stackFrames) { f in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(f.ref_type == "topic" ? "💬" : "✓")
+                            Image(systemName: f.ref_type == "topic" ? "bubble.left" : "checkmark.circle")
+                                .font(.caption).foregroundStyle(.secondary)
                             Text(f.title).font(.subheadline).fontWeight(.semibold)
                             Spacer()
                             Text("läuft seit \(f.ageFormatted)").font(.caption2).foregroundStyle(.secondary)
@@ -502,7 +528,8 @@ struct FrameDetailSheet: View {
             Form {
                 Section("Ziel") {
                     HStack {
-                        Text(frame.ref_type == "topic" ? "💬" : "✓")
+                        Image(systemName: frame.ref_type == "topic" ? "bubble.left" : "checkmark.circle")
+                            .foregroundStyle(DS.accent)
                         Text(frame.title).bold()
                     }
                 }
@@ -522,7 +549,7 @@ struct FrameDetailSheet: View {
                 }
                 if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
             }
-            .navigationTitle(isActive ? "📚 Aktives Frame" : "📚 Geparktes Frame")
+            .navigationTitle(isActive ? "Aktives Frame" : "Geparktes Frame")
             .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } }
@@ -602,4 +629,3 @@ struct QuickPushSheet: View {
         }
     }
 }
-

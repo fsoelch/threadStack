@@ -40,18 +40,19 @@ struct TodosView: View {
             #endif
 
             if !openTodos.isEmpty {
-                Section(header: sectionHeader("Offen", count: openTodos.count, color: .indigo)) {
+                Section(header: sectionHeader("Offen", count: openTodos.count, color: DS.accent)) {
                     ForEach(openTodos) { t in TodoRowView(todo: t) }
                         .onDelete { deleteTodo(from: openTodos, at: $0) }
                 }
             }
             if !snoozedTodos.isEmpty {
-                Section(header: sectionHeader("😴 Schlafend", count: snoozedTodos.count, color: .gray)) {
+                Section(header: sectionHeader("Schlafend", count: snoozedTodos.count,
+                                              color: .gray, icon: "moon.zzz.fill")) {
                     ForEach(snoozedTodos) { t in TodoRowView(todo: t) }
                 }
             }
             if !doneTodos.isEmpty {
-                Section(header: sectionHeader("Erledigt", count: doneTodos.count, color: .green)) {
+                Section(header: sectionHeader("Erledigt", count: doneTodos.count, color: .secondary)) {
                     ForEach(doneTodos) { t in TodoRowView(todo: t) }
                         .onDelete { deleteTodo(from: doneTodos, at: $0) }
                 }
@@ -102,10 +103,14 @@ struct TodosView: View {
         )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
     }
 
-    private func sectionHeader(_ label: String, count: Int, color: Color) -> some View {
-        HStack {
+    private func sectionHeader(_ label: String, count: Int, color: Color,
+                                icon: String? = nil) -> some View {
+        HStack(spacing: 4) {
+            if let icon {
+                Image(systemName: icon).scaledFont(.caption2).foregroundStyle(color)
+            }
             Text(label).foregroundStyle(color)
-            Text("(\(count))").foregroundStyle(.secondary)
+            Text("· \(count)").foregroundStyle(.secondary)
         }.scaledFont(.footnote).fontWeight(.semibold)
     }
 
@@ -161,7 +166,7 @@ struct TodoRowView: View {
                         dueBadge(text: due, status: todo.dueStatus)
                     }
                     if todo.isSnoozed, let wake = todo.snoozeWakeFormatted {
-                        Label("Wacht auf am \(wake)", systemImage: "moon.zzz")
+                        Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
                     if !themeLinks.isEmpty {
@@ -203,8 +208,8 @@ struct TodoRowView: View {
         }
         .swipeActions(edge: .leading) {
             Button { showSnooze = true } label: {
-                Label(todo.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz")
-            }.tint(.indigo)
+                Label(todo.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz.fill")
+            }.tint(DS.accent)
         }
         .contentShape(Rectangle())
         .onTapGesture { showEdit = true }
@@ -217,7 +222,7 @@ struct TodoRowView: View {
             }
             Divider()
             Button { showSnooze = true } label: {
-                Label(todo.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz")
+                Label(todo.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz.fill")
             }
             Divider()
             if !todo.done {
@@ -263,7 +268,7 @@ struct TodoRowView: View {
         } else if todo.isSnoozed {
             Image(systemName: "moon.zzz.fill").foregroundStyle(.gray).scaledFont(.subheadline)
         } else {
-            Circle().stroke(Color.green, lineWidth: 1.5).frame(width: 16, height: 16)
+            Circle().stroke(DS.green, lineWidth: 1.5).frame(width: 16, height: 16)
         }
     }
 
@@ -271,26 +276,32 @@ struct TodoRowView: View {
     private func dueBadge(text: String, status: DueStatus) -> some View {
         let (bg, fg, label): (Color, Color, String) = {
             switch status {
-            case .overdue: return (Color(hex: "#fee2e2"), Color(hex: "#b91c1c"), "📅 Überfällig: \(text)")
-            case .today:   return (Color(hex: "#fef3c7"), Color(hex: "#92400e"), "📅 Heute: \(text)")
-            default:       return (Color(hex: "#eef2ff"), Color(hex: "#4338ca"), "📅 Fällig: \(text)")
+            case .overdue: return (Color(hex: "#fee2e2"), Color(hex: "#b91c1c"), "Überfällig: \(text)")
+            case .today:   return (Color(hex: "#fef3c7"), Color(hex: "#92400e"), "Heute: \(text)")
+            default:       return (DS.accentLight, DS.accentDark, "Fällig: \(text)")
             }
         }()
-        Text(label)
-            .scaledFont(.caption2).fontWeight(.medium)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(bg)
-            .foregroundStyle(fg)
-            .clipShape(Capsule())
+        HStack(spacing: 3) {
+            Image(systemName: "calendar").font(.system(size: 9))
+            Text(label)
+        }
+        .scaledFont(.caption2).fontWeight(.medium)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(bg)
+        .foregroundStyle(fg)
+        .clipShape(Capsule())
     }
 
     private func themeChip(_ title: String) -> some View {
-        Text("🏷️ \(title)")
-            .scaledFont(.caption2).fontWeight(.medium)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Color.purple.opacity(0.1))
-            .foregroundStyle(.purple)
-            .clipShape(Capsule())
+        HStack(spacing: 3) {
+            Image(systemName: "tag.fill").font(.system(size: 8))
+            Text(title)
+        }
+        .scaledFont(.caption2).fontWeight(.medium)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(DS.purple.opacity(0.1))
+        .foregroundStyle(DS.purple)
+        .clipShape(Capsule())
     }
 }
 

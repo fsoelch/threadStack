@@ -79,7 +79,7 @@ struct ShareTopicSheet: View {
                                     Text(m.title).foregroundStyle(.primary)
                                     Spacer()
                                     if selectedMeetingId == m.id {
-                                        Image(systemName: "checkmark").foregroundStyle(.indigo)
+                                        Image(systemName: "checkmark").foregroundStyle(DS.accent)
                                     }
                                 }
                             }
@@ -163,7 +163,7 @@ struct MoveItemSheet: View {
                                         Text(m.title).foregroundStyle(.primary)
                                         Spacer()
                                         if selectedMeetingId == m.id {
-                                            Image(systemName: "checkmark").foregroundStyle(.indigo)
+                                            Image(systemName: "checkmark").foregroundStyle(DS.accent)
                                         }
                                     }
                                 }
@@ -239,7 +239,7 @@ struct ThemeLinkSheet: View {
                         ForEach(unlinked) { theme in
                             Button { add(themeId: theme.id) } label: {
                                 HStack {
-                                    Image(systemName: "plus.circle").foregroundStyle(.indigo)
+                                    Image(systemName: "plus.circle").foregroundStyle(DS.accent)
                                     Text(theme.title).foregroundStyle(.primary)
                                 }
                             }

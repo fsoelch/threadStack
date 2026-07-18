@@ -42,7 +42,7 @@ struct MeetingDetailView: View {
 
             // Offen
             if !openTopics.isEmpty {
-                Section(header: sectionHeader("Offen", count: openTopics.count, color: .indigo)) {
+                Section(header: sectionHeader("Offen", count: openTopics.count, color: DS.accent)) {
                     ForEach(openTopics) { t in
                         TopicRowView(topic: t, meetingId: current.id)
                     }
@@ -53,14 +53,15 @@ struct MeetingDetailView: View {
 
             // Schlafend
             if !snoozedTopics.isEmpty {
-                Section(header: sectionHeader("😴 Schlafend", count: snoozedTopics.count, color: .gray)) {
+                Section(header: sectionHeader("Schlafend", count: snoozedTopics.count,
+                                              color: .gray, icon: "moon.zzz.fill")) {
                     ForEach(snoozedTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
                 }
             }
 
             // Erledigt
             if !doneTopics.isEmpty {
-                Section(header: sectionHeader("Erledigt", count: doneTopics.count, color: .green)) {
+                Section(header: sectionHeader("Erledigt", count: doneTopics.count, color: .secondary)) {
                     ForEach(doneTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
                     .onDelete { deleteTopic(from: doneTopics, at: $0) }
                 }
@@ -100,12 +101,15 @@ struct MeetingDetailView: View {
 
     // ── Meeting header card ──────────────────────────────────
     @ViewBuilder private var meetingHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(hex: current.color))
-                    .frame(width: 4, height: 40)
-                VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 10) {
+            // Info-Zeilen mit Accent-Streifen links
+            HStack(alignment: .top, spacing: 0) {
+                Rectangle()
+                    .fill(DS.accent)
+                    .frame(width: 4)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                    .padding(.trailing, 10)
+                VStack(alignment: .leading, spacing: 4) {
                     if !current.description.isEmpty {
                         Text(current.description)
                             .font(.subheadline).foregroundStyle(.secondary)
@@ -117,7 +121,7 @@ struct MeetingDetailView: View {
                     if let d = current.nextDateFormatted {
                         Label(d, systemImage: "calendar")
                             .font(.caption)
-                            .foregroundStyle(current.isPast ? .orange : .secondary)
+                            .foregroundStyle(current.isPast ? DS.orange : .secondary)
                     }
                     if current.isRecurring {
                         Label(recLabel(current.recurrencePattern), systemImage: "repeat")
@@ -126,17 +130,36 @@ struct MeetingDetailView: View {
                 }
                 Spacer()
             }
+            .frame(minHeight: 40)
+
+            // Action-Chips (horizontal scrollend auf iOS)
+            #if os(iOS)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    actionChip("Bearbeiten", icon: "pencil", accent: false) { showEdit = true }
+                    if current.isRecurring && !current.nextDate.isEmpty {
+                        actionChip("Nächster Termin", icon: "arrow.clockwise", accent: false) {
+                            Task { do { try await state.advanceDate(current.id) }
+                                  catch { self.error = error.localizedDescription } }
+                        }
+                    }
+                    if state.aiFeatureEnabled(\.brief) {
+                        actionChip("Briefing", icon: "sparkles", accent: true) { showBrief = true }
+                    }
+                    if state.aiFeatureEnabled(\.capture) {
+                        actionChip("Notizen", icon: "square.and.pencil", accent: true) { showCapture = true }
+                    }
+                }
+                .padding(.horizontal, 1)
+            }
+            #else
             HStack(spacing: 8) {
                 Button { showEdit = true } label: {
                     Label("Bearbeiten", systemImage: "pencil")
                 }.buttonStyle(.bordered).controlSize(.small)
-
-                #if os(macOS)
                 Button { showNewTopic = true } label: {
                     Label("Neues Thema", systemImage: "plus")
                 }.buttonStyle(.bordered).controlSize(.small)
-                #endif
-
                 if current.isRecurring && !current.nextDate.isEmpty {
                     Button {
                         Task { do { try await state.advanceDate(current.id) }
@@ -148,14 +171,16 @@ struct MeetingDetailView: View {
                 if state.aiFeatureEnabled(\.brief) {
                     Button { showBrief = true } label: {
                         Label("Briefing", systemImage: "sparkles")
-                    }.buttonStyle(.bordered).controlSize(.small).tint(.indigo)
+                    }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
                 }
                 if state.aiFeatureEnabled(\.capture) {
                     Button { showCapture = true } label: {
                         Label("Notizen", systemImage: "square.and.pencil")
-                    }.buttonStyle(.bordered).controlSize(.small).tint(.indigo)
+                    }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
                 }
             }
+            #endif
+
             // v1.1: CMI banner
             if state.aiFeatureEnabled(\.cross_meeting),
                let cmi = state.cmiByMeeting[current.id], !cmi.matches.isEmpty {
@@ -165,12 +190,30 @@ struct MeetingDetailView: View {
         .padding(.vertical, 4)
     }
 
+    #if os(iOS)
+    private func actionChip(_ label: String, icon: String, accent: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon).font(.system(size: 12))
+                Text(label).font(.system(size: 13))
+            }
+            .padding(.horizontal, 12).padding(.vertical, 6)
+            .background(accent ? DS.accent.opacity(0.12) : Color(.systemBackground))
+            .foregroundStyle(accent ? DS.accent : .primary)
+            .clipShape(Capsule())
+            .overlay(Capsule().strokeBorder(accent ? DS.accent.opacity(0.3) : Color(.systemGray4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+    #endif
+
     @ViewBuilder private func cmiBanner(_ cmi: CMIContent) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("🔗 \(cmi.matches.count) ähnliche Thema(s) in anderen Meetings")
+                Label("\(cmi.matches.count) ähnliche Thema(s) in anderen Meetings",
+                      systemImage: "link")
                     .font(.caption).fontWeight(.semibold)
-                    .foregroundStyle(Color(hex: "#1e40af"))
+                    .foregroundStyle(DS.accent)
                 Spacer()
                 Button(cmiExpanded ? "Einklappen" : "Details") { cmiExpanded.toggle() }
                     .font(.caption).buttonStyle(.borderless)
@@ -189,7 +232,7 @@ struct MeetingDetailView: View {
                             Text("↔").foregroundStyle(.secondary).font(.caption2)
                             Text(m.other_topic_title).font(.caption2).fontWeight(.semibold)
                             Text("\(Int(m.confidence * 100))%")
-                                .font(.caption2).foregroundStyle(Color(hex: "#4338ca"))
+                                .font(.caption2).foregroundStyle(DS.accent)
                         }
                         Text("\(m.reason) — in \(m.other_meeting)")
                             .font(.caption2).foregroundStyle(.secondary).italic()
@@ -202,15 +245,19 @@ struct MeetingDetailView: View {
             }
         }
         .padding(10)
-        .background(Color(hex: "#eff6ff"))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "#bfdbfe")))
+        .background(DS.accentLight)
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.accent.opacity(0.3)))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private func sectionHeader(_ label: String, count: Int, color: Color) -> some View {
-        HStack {
+    private func sectionHeader(_ label: String, count: Int, color: Color,
+                                icon: String? = nil) -> some View {
+        HStack(spacing: 4) {
+            if let icon {
+                Image(systemName: icon).scaledFont(.caption2).foregroundStyle(color)
+            }
             Text(label).foregroundStyle(color)
-            Text("(\(count))").foregroundStyle(.secondary)
+            Text("· \(count)").foregroundStyle(.secondary)
         }.scaledFont(.footnote).fontWeight(.semibold)
     }
 
@@ -280,7 +327,7 @@ struct TopicRowView: View {
                     }
 
                     if topic.isSnoozed, let wake = topic.snoozeWakeFormatted {
-                        Label("Wacht auf am \(wake)", systemImage: "moon.zzz")
+                        Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
                     // Theme chips
@@ -301,7 +348,7 @@ struct TopicRowView: View {
                     if topic.groupId != nil && !sharedIn.isEmpty {
                         ForEach(sharedIn) { m in
                             Label(m.title, systemImage: "link")
-                                .scaledFont(.caption2).foregroundStyle(.indigo)
+                                .scaledFont(.caption2).foregroundStyle(DS.accent)
                         }
                     }
                 }
@@ -342,8 +389,8 @@ struct TopicRowView: View {
         }
         .swipeActions(edge: .leading) {
             Button { showSnooze = true } label: {
-                Label(topic.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz")
-            }.tint(.indigo)
+                Label(topic.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz.fill")
+            }.tint(DS.accent)
         }
         .contentShape(Rectangle())
         .onTapGesture { showEdit = true }
@@ -374,7 +421,7 @@ struct TopicRowView: View {
         } else if topic.isSnoozed {
             Image(systemName: "moon.zzz.fill").foregroundStyle(.gray).scaledFont(.subheadline)
         } else {
-            Circle().stroke(Color.indigo, lineWidth: 1.5)
+            Circle().stroke(DS.accent, lineWidth: 1.5)
                 .frame(width: 16, height: 16)
         }
     }
@@ -388,7 +435,7 @@ struct TopicRowView: View {
             Button { showPush = true } label: { Label("Auf Stack legen", systemImage: "square.stack.3d.up") }
         }
         Divider()
-        Button { showSnooze = true } label: { Label(topic.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz") }
+        Button { showSnooze = true } label: { Label(topic.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz.fill") }
         Button {
             Task { do { try await state.toggleTopicTodo(meetingId: meetingId, id: topic.id) }
                   catch { self.error = error.localizedDescription } }
@@ -412,11 +459,14 @@ struct TopicRowView: View {
     }
 
     private func themeChip(_ title: String) -> some View {
-        Text("🏷️ \(title)")
-            .scaledFont(.caption2).fontWeight(.medium)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Color.purple.opacity(0.1))
-            .foregroundStyle(.purple)
-            .clipShape(Capsule())
+        HStack(spacing: 3) {
+            Image(systemName: "tag.fill").font(.system(size: 8))
+            Text(title)
+        }
+        .scaledFont(.caption2).fontWeight(.medium)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(DS.purple.opacity(0.1))
+        .foregroundStyle(DS.purple)
+        .clipShape(Capsule())
     }
 }

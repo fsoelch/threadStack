@@ -94,11 +94,11 @@ struct ContactCardView: View {
                         .scaledFont(.subheadline).fontWeight(.semibold)
                     if !contact.role.isEmpty {
                         Text(contact.role)
-                            .scaledFont(.caption).foregroundStyle(Color(hex: "#be185d"))
+                            .scaledFont(.caption).foregroundStyle(DS.pink)
                     }
                     if !contact.email.isEmpty {
                         Link(contact.email, destination: URL(string: "mailto:\(contact.email)") ?? URL(string: "https://example.com")!)
-                            .scaledFont(.caption).foregroundStyle(Color(hex: "#db2777"))
+                            .scaledFont(.caption).foregroundStyle(DS.pink)
                     }
                 }
                 Spacer()
