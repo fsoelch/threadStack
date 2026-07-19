@@ -9,3 +9,6 @@ ThreadStackApp/**/xcuserdata/
 ThreadStackApp/**/DerivedData/
 ThreadStackApp/**/*.xcuserdatad/
 ThreadStackApp/ThreadStack/build/
+
+# Claude Code worktrees (temporary agent workspaces)
+.claude/worktrees/
