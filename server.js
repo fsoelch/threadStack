@@ -300,6 +300,143 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id, sort_order, created_at);
 `);
 
+// ── Migration: Topic-Hierarchie (Wissensmanagement v2) ───────
+{
+  const cols = db.prepare('PRAGMA table_info(themes)').all();
+  if (!cols.find(c => c.name === 'parent_id')) {
+    db.exec('ALTER TABLE themes ADD COLUMN parent_id TEXT REFERENCES themes(id) ON DELETE SET NULL');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_themes_parent ON themes(parent_id)');
+  }
+}
+
+// ── Migration: Wissensseiten (Wissensmanagement v2) ──────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS knowledge_pages (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    content     TEXT NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_knowledge_pages_user ON knowledge_pages(user_id);
+  CREATE TABLE IF NOT EXISTS knowledge_topic_links (
+    id                 TEXT PRIMARY KEY,
+    knowledge_page_id  TEXT NOT NULL REFERENCES knowledge_pages(id) ON DELETE CASCADE,
+    theme_id           TEXT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
+    created_at         TEXT NOT NULL,
+    UNIQUE(knowledge_page_id, theme_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_knowledge_links_page  ON knowledge_topic_links(knowledge_page_id);
+  CREATE INDEX IF NOT EXISTS idx_knowledge_links_theme ON knowledge_topic_links(theme_id);
+`);
+
+// ── Migration: FTS5-Volltextindex (Wissensmanagement v2, Phase 4) ──
+// Ersetzt die frühere client-seitige LIKE-Suche durch einen echten Volltextindex
+// mit Relevanz-Ranking (bm25), der auch Wissensseiten mit abdeckt.
+{
+  const ftsExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='search_index'"
+  ).get();
+  if (!ftsExists) {
+    db.transaction(() => {
+      db.exec(`
+        CREATE VIRTUAL TABLE search_index USING fts5(
+          ref_type UNINDEXED, ref_id UNINDEXED, user_id UNINDEXED, title, body
+        );
+      `);
+      db.exec(`
+        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+          SELECT 'meeting', id, user_id, title, description FROM meetings;
+        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+          SELECT 'theme', id, user_id, title, description FROM themes;
+        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+          SELECT 'topic', t.id, m.user_id, t.title, t.description || ' ' || t.result
+          FROM topics t JOIN meetings m ON m.id = t.meeting_id;
+        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+          SELECT 'todo', id, user_id, title, description || ' ' || result FROM todos;
+        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+          SELECT 'contact', id, user_id, name,
+            COALESCE(role,'') || ' ' || COALESCE(email,'') || ' ' || COALESCE(description,'') FROM contacts;
+        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+          SELECT 'knowledge', id, user_id, title, content FROM knowledge_pages;
+      `);
+      db.exec(`
+        CREATE TRIGGER trg_search_meetings_ai AFTER INSERT ON meetings BEGIN
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('meeting', new.id, new.user_id, new.title, new.description);
+        END;
+        CREATE TRIGGER trg_search_meetings_au AFTER UPDATE ON meetings BEGIN
+          DELETE FROM search_index WHERE ref_type='meeting' AND ref_id=old.id;
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('meeting', new.id, new.user_id, new.title, new.description);
+        END;
+        CREATE TRIGGER trg_search_meetings_ad AFTER DELETE ON meetings BEGIN
+          DELETE FROM search_index WHERE ref_type='meeting' AND ref_id=old.id;
+        END;
+
+        CREATE TRIGGER trg_search_themes_ai AFTER INSERT ON themes BEGIN
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('theme', new.id, new.user_id, new.title, new.description);
+        END;
+        CREATE TRIGGER trg_search_themes_au AFTER UPDATE ON themes BEGIN
+          DELETE FROM search_index WHERE ref_type='theme' AND ref_id=old.id;
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('theme', new.id, new.user_id, new.title, new.description);
+        END;
+        CREATE TRIGGER trg_search_themes_ad AFTER DELETE ON themes BEGIN
+          DELETE FROM search_index WHERE ref_type='theme' AND ref_id=old.id;
+        END;
+
+        CREATE TRIGGER trg_search_topics_ai AFTER INSERT ON topics BEGIN
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+            SELECT 'topic', new.id, m.user_id, new.title, new.description || ' ' || new.result FROM meetings m WHERE m.id = new.meeting_id;
+        END;
+        CREATE TRIGGER trg_search_topics_au AFTER UPDATE ON topics BEGIN
+          DELETE FROM search_index WHERE ref_type='topic' AND ref_id=old.id;
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+            SELECT 'topic', new.id, m.user_id, new.title, new.description || ' ' || new.result FROM meetings m WHERE m.id = new.meeting_id;
+        END;
+        CREATE TRIGGER trg_search_topics_ad AFTER DELETE ON topics BEGIN
+          DELETE FROM search_index WHERE ref_type='topic' AND ref_id=old.id;
+        END;
+
+        CREATE TRIGGER trg_search_todos_ai AFTER INSERT ON todos BEGIN
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('todo', new.id, new.user_id, new.title, new.description || ' ' || new.result);
+        END;
+        CREATE TRIGGER trg_search_todos_au AFTER UPDATE ON todos BEGIN
+          DELETE FROM search_index WHERE ref_type='todo' AND ref_id=old.id;
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('todo', new.id, new.user_id, new.title, new.description || ' ' || new.result);
+        END;
+        CREATE TRIGGER trg_search_todos_ad AFTER DELETE ON todos BEGIN
+          DELETE FROM search_index WHERE ref_type='todo' AND ref_id=old.id;
+        END;
+
+        CREATE TRIGGER trg_search_contacts_ai AFTER INSERT ON contacts BEGIN
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('contact', new.id, new.user_id, new.name,
+            COALESCE(new.role,'') || ' ' || COALESCE(new.email,'') || ' ' || COALESCE(new.description,''));
+        END;
+        CREATE TRIGGER trg_search_contacts_au AFTER UPDATE ON contacts BEGIN
+          DELETE FROM search_index WHERE ref_type='contact' AND ref_id=old.id;
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('contact', new.id, new.user_id, new.name,
+            COALESCE(new.role,'') || ' ' || COALESCE(new.email,'') || ' ' || COALESCE(new.description,''));
+        END;
+        CREATE TRIGGER trg_search_contacts_ad AFTER DELETE ON contacts BEGIN
+          DELETE FROM search_index WHERE ref_type='contact' AND ref_id=old.id;
+        END;
+
+        CREATE TRIGGER trg_search_knowledge_ai AFTER INSERT ON knowledge_pages BEGIN
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content);
+        END;
+        CREATE TRIGGER trg_search_knowledge_au AFTER UPDATE ON knowledge_pages BEGIN
+          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content);
+        END;
+        CREATE TRIGGER trg_search_knowledge_ad AFTER DELETE ON knowledge_pages BEGIN
+          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
+        END;
+      `);
+    })();
+  }
+}
+
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
 let encryptionKey;
@@ -793,11 +930,25 @@ app.delete(`${A}/todos/:id`, requireAuth, (req, res) => {
 function parseTheme(t, links = []) {
   return {
     id: t.id, title: t.title, description: t.description,
+    parentId: t.parent_id || null,
     sortOrder: t.sort_order, createdAt: t.created_at,
     links: links.filter(l => l.theme_id === t.id).map(l => ({
       id: l.id, refType: l.ref_type, refId: l.ref_id,
     })),
   };
+}
+
+// Root + all descendants (inclusive) of a theme, via recursive CTE
+function themeDescendantIds(rootId, userId) {
+  const rows = db.prepare(`
+    WITH RECURSIVE sub(id) AS (
+      SELECT id FROM themes WHERE id = ? AND user_id = ?
+      UNION ALL
+      SELECT t.id FROM themes t JOIN sub ON t.parent_id = sub.id
+    )
+    SELECT id FROM sub
+  `).all(rootId, userId);
+  return rows.map(r => r.id);
 }
 
 app.get(`${A}/themes`, requireAuth, (req, res) => {
@@ -809,14 +960,32 @@ app.get(`${A}/themes`, requireAuth, (req, res) => {
   res.json(ts.map(t => parseTheme(t, links)));
 });
 
+// Nested tree of all topics belonging to the user
+app.get(`${A}/themes/tree`, requireAuth, (req, res) => {
+  const ts = db.prepare('SELECT * FROM themes WHERE user_id=? ORDER BY sort_order,created_at').all(req.session.uid);
+  const byId = new Map(ts.map(t => [t.id, { ...parseTheme(t), children: [] }]));
+  const roots = [];
+  for (const t of ts) {
+    const node = byId.get(t.id);
+    if (t.parent_id && byId.has(t.parent_id)) byId.get(t.parent_id).children.push(node);
+    else roots.push(node);
+  }
+  res.json(roots);
+});
+
 app.post(`${A}/themes`, requireAuth, (req, res) => {
-  const { title, description='' } = req.body || {};
+  const { title, description='', parentId=null } = req.body || {};
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
+  let parent = null;
+  if (parentId) {
+    parent = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(parentId, req.session.uid);
+    if (!parent) return res.status(400).json({ error: 'Übergeordnetes Topic nicht gefunden' });
+  }
   const id = uid();
   const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM themes WHERE user_id=?').get(req.session.uid).m;
-  db.prepare('INSERT INTO themes(id,user_id,title,description,sort_order,created_at) VALUES (?,?,?,?,?,?)')
-    .run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), mx + 1, new Date().toISOString());
+  db.prepare('INSERT INTO themes(id,user_id,title,description,parent_id,sort_order,created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), parent ? parent.id : null, mx + 1, new Date().toISOString());
   res.status(201).json(parseTheme(db.prepare('SELECT * FROM themes WHERE id=?').get(id)));
 });
 
@@ -837,9 +1006,62 @@ app.put(`${A}/themes/:id`, requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// Move a topic under a new parent (or to root if parentId is null)
+app.put(`${A}/themes/:id/move`, requireAuth, (req, res) => {
+  const t = db.prepare('SELECT * FROM themes WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  const { parentId=null } = req.body || {};
+  if (parentId) {
+    const parent = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(parentId, req.session.uid);
+    if (!parent) return res.status(400).json({ error: 'Übergeordnetes Topic nicht gefunden' });
+    if (parentId === t.id) return res.status(400).json({ error: 'Ein Topic kann nicht sein eigenes Elternteil sein' });
+    const descendants = themeDescendantIds(t.id, req.session.uid);
+    if (descendants.includes(parentId)) return res.status(400).json({ error: 'Zyklus: Ziel ist ein Unter-Topic dieses Topics' });
+  }
+  db.prepare('UPDATE themes SET parent_id=? WHERE id=? AND user_id=?').run(parentId, t.id, req.session.uid);
+  res.json({ ok: true });
+});
+
+// Preview of what a delete would affect, to drive the confirmation dialog
+app.get(`${A}/themes/:id/delete-preview`, requireAuth, (req, res) => {
+  const t = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  const descendants = themeDescendantIds(t.id, req.session.uid).filter(id => id !== t.id);
+  const allIds = [t.id, ...descendants];
+  const placeholders = allIds.map(() => '?').join(',');
+  const knowledgeCount = db.prepare(
+    `SELECT COUNT(DISTINCT knowledge_page_id) as c FROM knowledge_topic_links WHERE theme_id IN (${placeholders})`
+  ).get(...allIds).c;
+  res.json({ subTopicCount: descendants.length, knowledgePageCount: knowledgeCount });
+});
+
 app.delete(`${A}/themes/:id`, requireAuth, (req, res) => {
-  const r = db.prepare('DELETE FROM themes WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
-  r.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Nicht gefunden' });
+  const t = db.prepare('SELECT * FROM themes WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  const cascade = req.query.cascade === 'true';
+
+  db.transaction(() => {
+    if (cascade) {
+      const allIds = themeDescendantIds(t.id, req.session.uid);
+      const placeholders = allIds.map(() => '?').join(',');
+      // Knowledge pages linked only within the deleted subtree are removed too;
+      // pages that also link to topics outside the subtree survive.
+      const pageIds = db.prepare(
+        `SELECT DISTINCT knowledge_page_id as id FROM knowledge_topic_links WHERE theme_id IN (${placeholders})`
+      ).all(...allIds).map(r => r.id);
+      db.prepare(`DELETE FROM themes WHERE id IN (${placeholders}) AND user_id=?`).run(...allIds, req.session.uid);
+      for (const pid of pageIds) {
+        const remaining = db.prepare('SELECT COUNT(*) as c FROM knowledge_topic_links WHERE knowledge_page_id=?').get(pid).c;
+        if (remaining === 0) db.prepare('DELETE FROM knowledge_pages WHERE id=?').run(pid);
+      }
+    } else {
+      // Promote direct children to the deleted topic's parent, then delete just this topic
+      db.prepare('UPDATE themes SET parent_id=? WHERE parent_id=? AND user_id=?').run(t.parent_id, t.id, req.session.uid);
+      db.prepare('DELETE FROM themes WHERE id=? AND user_id=?').run(t.id, req.session.uid);
+    }
+  })();
+
+  res.json({ ok: true });
 });
 
 app.post(`${A}/themes/:id/links`, requireAuth, (req, res) => {
@@ -863,6 +1085,219 @@ app.delete(`${A}/themes/:id/links/:lid`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   db.prepare('DELETE FROM theme_links WHERE id=? AND theme_id=?').run(req.params.lid, t.id);
   res.json({ ok: true });
+});
+
+// Todos linked to this topic, optionally including todos linked to sub-topics.
+// Descendant results carry originTheme so the UI can badge where they came from.
+app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
+  const t = db.prepare('SELECT * FROM themes WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  const includeDescendants = req.query.includeDescendants === 'true';
+  const themeIds = includeDescendants ? themeDescendantIds(t.id, req.session.uid) : [t.id];
+  const themesById = new Map(
+    db.prepare(`SELECT id,title FROM themes WHERE id IN (${themeIds.map(()=>'?').join(',')})`).all(...themeIds)
+      .map(r => [r.id, r])
+  );
+  const links = db.prepare(
+    `SELECT * FROM theme_links WHERE ref_type='todo' AND theme_id IN (${themeIds.map(()=>'?').join(',')})`
+  ).all(...themeIds);
+  const seen = new Map(); // todoId -> { todo, originThemeId } — first match wins (direct link preferred)
+  for (const l of links) {
+    if (seen.has(l.ref_id) && l.theme_id === t.id) continue;
+    if (!seen.has(l.ref_id) || l.theme_id === t.id) seen.set(l.ref_id, l.theme_id);
+  }
+  const todoIds = [...seen.keys()];
+  if (!todoIds.length) return res.json([]);
+  const todos = db.prepare(
+    `SELECT * FROM todos WHERE user_id=? AND id IN (${todoIds.map(()=>'?').join(',')}) ${TODOS_ORDER_SQL}`
+  ).all(req.session.uid, ...todoIds);
+  res.json(todos.map(td => {
+    const originThemeId = seen.get(td.id);
+    const origin = themesById.get(originThemeId);
+    return {
+      ...parseTodo(td),
+      originThemeId,
+      originThemeTitle: originThemeId === t.id ? null : (origin ? origin.title : null),
+    };
+  }));
+});
+
+// ── Knowledge (Wissensseiten) ────────────────────────────────
+function parseKnowledgePage(k, themeIds = []) {
+  return {
+    id: k.id, title: k.title, content: k.content,
+    sortOrder: k.sort_order, createdAt: k.created_at, updatedAt: k.updated_at,
+    themeIds,
+  };
+}
+
+function knowledgeThemeIds(pageIds) {
+  if (!pageIds.length) return new Map();
+  const rows = db.prepare(
+    `SELECT * FROM knowledge_topic_links WHERE knowledge_page_id IN (${pageIds.map(()=>'?').join(',')})`
+  ).all(...pageIds);
+  const map = new Map();
+  for (const r of rows) {
+    if (!map.has(r.knowledge_page_id)) map.set(r.knowledge_page_id, []);
+    map.get(r.knowledge_page_id).push(r.theme_id);
+  }
+  return map;
+}
+
+// Global knowledge listing, optionally filtered by themeId (?themeId=...)
+app.get(`${A}/knowledge`, requireAuth, (req, res) => {
+  let pages;
+  if (req.query.themeId) {
+    const t = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(req.query.themeId, req.session.uid);
+    if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+    pages = db.prepare(`
+      SELECT kp.* FROM knowledge_pages kp
+      JOIN knowledge_topic_links kl ON kl.knowledge_page_id = kp.id
+      WHERE kp.user_id=? AND kl.theme_id=?
+      ORDER BY kp.sort_order, kp.created_at
+    `).all(req.session.uid, t.id);
+  } else {
+    pages = db.prepare('SELECT * FROM knowledge_pages WHERE user_id=? ORDER BY sort_order, created_at').all(req.session.uid);
+  }
+  const themeIdsByPage = knowledgeThemeIds(pages.map(p => p.id));
+  res.json(pages.map(p => parseKnowledgePage(p, themeIdsByPage.get(p.id) || [])));
+});
+
+app.post(`${A}/knowledge`, requireAuth, (req, res) => {
+  const { title, content='', themeIds=[] } = req.body || {};
+  if (!title?.trim()) return res.status(400).json({ error: 'Überschrift erforderlich' });
+  if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Überschrift zu lang' });
+  if (String(content).length > MAX_DESC) return res.status(400).json({ error: 'Inhalt zu lang' });
+  if (!Array.isArray(themeIds) || !themeIds.length) return res.status(400).json({ error: 'Mindestens ein Topic erforderlich' });
+  const themes = db.prepare(`SELECT id FROM themes WHERE user_id=? AND id IN (${themeIds.map(()=>'?').join(',')})`)
+    .all(req.session.uid, ...themeIds);
+  if (themes.length !== themeIds.length) return res.status(400).json({ error: 'Ungültiges Topic in themeIds' });
+
+  const id = uid();
+  const now = new Date().toISOString();
+  const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM knowledge_pages WHERE user_id=?').get(req.session.uid).m;
+  db.transaction(() => {
+    db.prepare('INSERT INTO knowledge_pages(id,user_id,title,content,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
+      .run(id, req.session.uid, title.trim(), stripUnsafeHtml(content), mx + 1, now, now);
+    const ins = db.prepare('INSERT INTO knowledge_topic_links(id,knowledge_page_id,theme_id,created_at) VALUES (?,?,?,?)');
+    for (const themeId of themeIds) ins.run(uid(), id, themeId, now);
+  })();
+  res.status(201).json(parseKnowledgePage(db.prepare('SELECT * FROM knowledge_pages WHERE id=?').get(id), themeIds));
+});
+
+app.put(`${A}/knowledge/:id`, requireAuth, (req, res) => {
+  const k = db.prepare('SELECT * FROM knowledge_pages WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!k) return res.status(404).json({ error: 'Nicht gefunden' });
+  const { title=k.title, content=k.content } = req.body || {};
+  if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Überschrift zu lang' });
+  if (String(content).length > MAX_DESC) return res.status(400).json({ error: 'Inhalt zu lang' });
+  if (!String(title).trim()) return res.status(400).json({ error: 'Überschrift erforderlich' });
+  db.prepare('UPDATE knowledge_pages SET title=?,content=?,updated_at=? WHERE id=?')
+    .run(title.trim(), stripUnsafeHtml(content), new Date().toISOString(), k.id);
+  res.json({ ok: true });
+});
+
+app.delete(`${A}/knowledge/:id`, requireAuth, (req, res) => {
+  const r = db.prepare('DELETE FROM knowledge_pages WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
+  r.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Nicht gefunden' });
+});
+
+// Replace the full set of topic links for a knowledge page
+app.put(`${A}/knowledge/:id/themes`, requireAuth, (req, res) => {
+  const k = db.prepare('SELECT * FROM knowledge_pages WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!k) return res.status(404).json({ error: 'Nicht gefunden' });
+  const { themeIds } = req.body || {};
+  if (!Array.isArray(themeIds) || !themeIds.length) return res.status(400).json({ error: 'Mindestens ein Topic erforderlich' });
+  const themes = db.prepare(`SELECT id FROM themes WHERE user_id=? AND id IN (${themeIds.map(()=>'?').join(',')})`)
+    .all(req.session.uid, ...themeIds);
+  if (themes.length !== themeIds.length) return res.status(400).json({ error: 'Ungültiges Topic in themeIds' });
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    db.prepare('DELETE FROM knowledge_topic_links WHERE knowledge_page_id=?').run(k.id);
+    const ins = db.prepare('INSERT INTO knowledge_topic_links(id,knowledge_page_id,theme_id,created_at) VALUES (?,?,?,?)');
+    for (const themeId of themeIds) ins.run(uid(), k.id, themeId, now);
+  })();
+  res.json({ ok: true });
+});
+
+// Knowledge pages linked to this topic, optionally including sub-topics' pages.
+app.get(`${A}/themes/:id/knowledge`, requireAuth, (req, res) => {
+  const t = db.prepare('SELECT * FROM themes WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  const includeDescendants = req.query.includeDescendants === 'true';
+  const themeIds = includeDescendants ? themeDescendantIds(t.id, req.session.uid) : [t.id];
+  const themesById = new Map(
+    db.prepare(`SELECT id,title FROM themes WHERE id IN (${themeIds.map(()=>'?').join(',')})`).all(...themeIds)
+      .map(r => [r.id, r])
+  );
+  const links = db.prepare(
+    `SELECT * FROM knowledge_topic_links WHERE theme_id IN (${themeIds.map(()=>'?').join(',')})`
+  ).all(...themeIds);
+  const seen = new Map(); // pageId -> originThemeId, direct link to t.id preferred
+  for (const l of links) {
+    if (!seen.has(l.knowledge_page_id) || l.theme_id === t.id) seen.set(l.knowledge_page_id, l.theme_id);
+  }
+  const pageIds = [...seen.keys()];
+  if (!pageIds.length) return res.json([]);
+  const pages = db.prepare(
+    `SELECT * FROM knowledge_pages WHERE user_id=? AND id IN (${pageIds.map(()=>'?').join(',')}) ORDER BY sort_order, created_at`
+  ).all(req.session.uid, ...pageIds);
+  const themeIdsByPage = knowledgeThemeIds(pageIds);
+  res.json(pages.map(p => {
+    const originThemeId = seen.get(p.id);
+    const origin = themesById.get(originThemeId);
+    return {
+      ...parseKnowledgePage(p, themeIdsByPage.get(p.id) || []),
+      originThemeId,
+      originThemeTitle: originThemeId === t.id ? null : (origin ? origin.title : null),
+    };
+  }));
+});
+
+// ── Volltextsuche (FTS5) ──────────────────────────────────────
+// Parst dieselbe Mehrwort/Phrasen/Ausschluss-Syntax wie die Web-UI (⌘K) und
+// übersetzt sie in eine FTS5-MATCH-Query. Jeder Term wird literal gequotet,
+// damit FTS5-Sonderzeichen im Suchtext (z. B. Bindestriche) nicht als Operatoren interpretiert werden.
+function buildFts5Query(raw) {
+  const tokens = [];
+  const phraseRe = /"([^"]+)"/g;
+  let m; let cleaned = raw;
+  while ((m = phraseRe.exec(raw)) !== null) {
+    const negate = cleaned[cleaned.indexOf(m[0]) - 1] === '-';
+    tokens.push({ text: m[1], negate });
+    cleaned = cleaned.replace((negate ? '-' : '') + m[0], '');
+  }
+  cleaned.trim().split(/\s+/).filter(Boolean).forEach(w => {
+    const negate = w.startsWith('-');
+    const text = negate ? w.slice(1) : w;
+    if (text) tokens.push({ text, negate });
+  });
+  if (!tokens.length) return null;
+  const esc = s => '"' + s.replace(/"/g, '""') + '"';
+  const positives = tokens.filter(t => !t.negate && t.text).map(t => esc(t.text));
+  const negatives = tokens.filter(t => t.negate && t.text).map(t => esc(t.text));
+  if (!positives.length) return null; // FTS5 braucht mind. einen positiven Term
+  return positives.join(' ') + negatives.map(n => ` NOT ${n}`).join('');
+}
+
+app.get(`${A}/search`, requireAuth, (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json([]);
+  const ftsQuery = buildFts5Query(q);
+  if (!ftsQuery) return res.json([]);
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT ref_type, ref_id
+      FROM search_index
+      WHERE search_index MATCH ? AND user_id = ?
+      ORDER BY bm25(search_index)
+      LIMIT 200
+    `).all(ftsQuery, req.session.uid);
+  } catch (e) {
+    return res.json([]); // ungültige Query-Syntax (z. B. leere Phrase) -> leeres Ergebnis statt 500
+  }
+  res.json(rows.map(r => ({ type: r.ref_type, id: r.ref_id })));
 });
 
 // ── User routes (admin only) ─────────────────────────────────
@@ -1412,7 +1847,7 @@ function parseContact(r) {
 }
 
 // ── Attachment routes ─────────────────────────────────────────
-const ALLOWED_REF_TYPES = new Set(['topic', 'todo']);
+const ALLOWED_REF_TYPES = new Set(['topic', 'todo', 'knowledge_page']);
 const MAX_FILE_SIZE     = 50 * 1024 * 1024; // 50 MB
 
 function checkAttachmentOwnership(refType, refId, uid) {
@@ -1423,6 +1858,9 @@ function checkAttachmentOwnership(refType, refId, uid) {
     return !!db.prepare(
       'SELECT 1 FROM meetings WHERE user_id=? AND id=(SELECT meeting_id FROM topics WHERE id=?)'
     ).get(uid, refId);
+  }
+  if (refType === 'knowledge_page') {
+    return !!db.prepare('SELECT 1 FROM knowledge_pages WHERE id=? AND user_id=?').get(refId, uid);
   }
   return false;
 }

@@ -141,10 +141,14 @@ struct ContentView: View {
             TodosView()
             #endif
         case .themes:
-            #if os(iOS)
-            NavigationStack { ThemesView() }
-            #else
+            // ThemesView verwaltet auf iOS seinen eigenen NavigationStack (programmatischer Push
+            // für "Unter-Topics"-Chips via NavigationPath) — hier nicht zusätzlich wrappen.
             ThemesView()
+        case .knowledge:
+            #if os(iOS)
+            NavigationStack { KnowledgeView() }
+            #else
+            KnowledgeView()
             #endif
         case .contacts:
             #if os(iOS)
@@ -218,4 +222,4 @@ struct ContentView: View {
     }
 }
 
-enum SidebarItem: Hashable { case meetings, todos, themes, contacts, digest }
+enum SidebarItem: Hashable { case meetings, todos, themes, knowledge, contacts, digest }

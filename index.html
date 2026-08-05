@@ -191,6 +191,19 @@ body {
   font-size:15px; font-weight:700; color:var(--sb-title); letter-spacing:-.025em;
 }
 
+.sidebar-mode-switch {
+  display:flex; gap:2px; margin:0 .75rem .625rem; padding:3px;
+  background:rgba(255,255,255,.04); border:1px solid var(--sb-border); border-radius:9px;
+}
+.sidebar-mode-btn {
+  flex:1; display:flex; align-items:center; justify-content:center; gap:.35rem;
+  padding:.4rem .5rem; border:none; background:transparent; border-radius:7px;
+  color:var(--sb-text); font-size:.75rem; font-weight:600; cursor:pointer;
+  font-family:'DM Sans',sans-serif; transition:background .12s,color .12s;
+}
+.sidebar-mode-btn.active { background:var(--sb-active); border:1px solid var(--sb-active-border); color:var(--sb-title); }
+.sidebar-mode-btn:hover:not(.active) { background:var(--sb-hover); }
+
 .sidebar-top { padding:.75rem; }
 .sidebar-new-btn {
   display:flex; align-items:center; justify-content:center; gap:6px;
@@ -221,6 +234,35 @@ body {
   color:#2E3540;
 }
 .meeting-list { flex:1; overflow-y:auto; padding:.25rem .5rem .5rem; }
+
+/* ─── Topic-Baum in der dunklen Sidebar (Wissen-Modus) ───────── */
+.sb-tree-empty { padding:.5rem; font-size:.8125rem; color:var(--sb-text); font-style:italic; }
+.sb-tree-node { user-select:none; }
+.sb-tree-row {
+  display:flex; align-items:center; gap:.3rem; padding:.4rem .4rem;
+  border-radius:7px; cursor:pointer; font-size:.8125rem; color:var(--sb-text); font-weight:500;
+  margin-bottom:1px;
+}
+.sb-tree-row:hover { background:var(--sb-hover); }
+.sb-tree-row.active {
+  background:var(--sb-active); border:1px solid var(--sb-active-border);
+  color:var(--sb-title); font-weight:700;
+}
+.sb-tree-toggle {
+  width:14px; height:14px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+  color:var(--sb-text); font-size:.55rem; transition:transform .12s,color .12s; cursor:pointer;
+  border-radius:4px;
+}
+.sb-tree-toggle:hover { color:var(--sb-title); background:var(--sb-hover); }
+.sb-tree-row.active .sb-tree-toggle { color:var(--sb-title); }
+.sb-tree-toggle.leaf { visibility:hidden; }
+.sb-tree-icon-chip {
+  width:12px; height:12px; border-radius:3px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center; background:rgba(124,58,237,.2);
+}
+.sb-tree-icon-dot { width:5px; height:5px; border-radius:1.5px; background:#9B7FE8; }
+.sb-tree-label { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sb-tree-children { margin-left:1rem; padding-left:.3rem; border-left:1px dashed var(--sb-border); }
 
 /* Sidebar User-Bereich (unten) */
 .sidebar-user-area {
@@ -363,7 +405,10 @@ body {
 /* ─── Topics ─────────────────────────────────────────────────── */
 .topics-section {
   background:var(--card); border-radius:var(--r-lg);
-  border:1px solid var(--border); box-shadow:var(--shadow-xs); overflow:hidden;
+  border:1px solid var(--border); box-shadow:var(--shadow-xs);
+}
+.topics-header {
+  border-radius:var(--r-lg) var(--r-lg) 0 0;
 }
 .topics-header {
   padding:13px 20px; border-bottom:1px solid var(--border);
@@ -1038,6 +1083,73 @@ mark.search-hit {
   font-size:.875rem; color:var(--text-muted); font-style:italic; padding:.5rem 0;
 }
 
+/* ─── Topic-Detailbereich (Wissensmanagement v2) ─────────────── */
+/* Der Baum selbst lebt jetzt in der dunklen Sidebar (siehe .sb-tree-*). */
+.theme-breadcrumb { display:flex; align-items:center; flex-wrap:wrap; gap:.25rem; font-size:.8125rem; margin-bottom:.75rem; }
+.theme-breadcrumb-item { color:var(--text-muted); cursor:pointer; }
+.theme-breadcrumb-item:hover { color:#7c3aed; text-decoration:underline; }
+.theme-breadcrumb-item.current { color:#4c1d95; font-weight:700; cursor:default; }
+.theme-breadcrumb-item.current:hover { text-decoration:none; }
+.theme-breadcrumb-sep { color:var(--text-light); }
+
+.theme-detail-panel { flex:1; min-width:0; }
+
+.theme-section { margin-top:1.25rem; }
+.theme-section-head { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.5rem; }
+.theme-section-title { font-size:.8125rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:#7c3aed; display:flex; align-items:center; gap:.375rem; }
+.theme-descendant-toggle { display:flex; align-items:center; gap:.375rem; font-size:.75rem; color:var(--text-muted); cursor:pointer; }
+
+.knowledge-card {
+  background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg);
+  box-shadow:var(--shadow-sm); padding:.875rem 1.1rem; margin-bottom:.625rem;
+}
+/* Vererbte Einträge (aus Unter-Topic): gedämpfter Hintergrund statt Weiß */
+.knowledge-card--inherited { background:var(--card2); border-color:var(--border-md); box-shadow:none; }
+.knowledge-card--inherited .knowledge-card-title { color:#3a3830; }
+.knowledge-card-head { display:flex; align-items:flex-start; justify-content:space-between; gap:.5rem; flex-wrap:wrap; }
+.knowledge-card-title {
+  font-size:.9375rem; font-weight:700; color:var(--text); cursor:pointer;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0;
+}
+.knowledge-card-title:hover { color:#7c3aed; }
+.knowledge-card-path {
+  font-size:.75rem; color:#7c3aed; opacity:.8; margin-top:.25rem;
+  white-space:normal; word-break:break-word;
+}
+.knowledge-card-body {
+  font-size:.8125rem; color:var(--text-muted); line-height:1.6; margin-top:.375rem;
+  max-height:4.8em; overflow:hidden; position:relative;
+}
+.knowledge-card-body img { max-width:100%; border-radius:6px; }
+.knowledge-card-body table { font-size:.75rem; }
+.origin-badge {
+  font-size:.6875rem; font-weight:600; padding:.1rem .45rem; border-radius:100px;
+  background:#ede9fe; color:#6d28d9; white-space:nowrap; flex-shrink:0;
+}
+
+/* ─── Wissen: Karten-Raster (globale Ansicht) ────────────────── */
+.knowledge-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:.75rem; }
+.knowledge-grid-card {
+  background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg);
+  padding:1rem; cursor:pointer; transition:border-color .12s, box-shadow .12s;
+}
+.knowledge-grid-card:hover { border-color:#c4b5fd; box-shadow:var(--shadow-sm); }
+.knowledge-grid-card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:.5rem; }
+.knowledge-grid-card-icon {
+  width:26px; height:26px; border-radius:7px; background:rgba(124,58,237,.15);
+  display:flex; align-items:center; justify-content:center; font-size:.8rem; flex-shrink:0;
+}
+.knowledge-grid-card-time { font-size:.6875rem; color:var(--text-light); font-family:'DM Mono',monospace; }
+.knowledge-grid-card-title {
+  font-size:.9375rem; font-weight:700; color:var(--text); letter-spacing:-.01em;
+  margin-bottom:.3rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.knowledge-grid-card-preview {
+  font-size:.75rem; color:var(--text-muted); line-height:1.55; margin-bottom:.625rem;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}
+.knowledge-grid-card-path { font-size:.6875rem; color:var(--text-light); }
+
 /* ─── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 700px) {
 
@@ -1634,20 +1746,13 @@ body.ai-disabled .ai-action { display: none !important; }
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
-      <div class="sidebar-top">
-        <button class="sidebar-new-btn" onclick="openMeetingModal()">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5v15m7.5-7.5h-15"/></svg>
-          Neues Meeting
-        </button>
-        <div class="sidebar-search">
-          <span class="sidebar-search-icon">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          </span>
-          <input type="text" placeholder="Suchen …" oninput="onSearch(this.value)">
-        </div>
+      <div class="sidebar-mode-switch" id="sidebar-mode-switch">
+        <button class="sidebar-mode-btn" id="mode-btn-todos" onclick="switchSidebarMode('todos')">✅ Todos</button>
+        <button class="sidebar-mode-btn" id="mode-btn-wissen" onclick="switchSidebarMode('wissen')">🏷️ Wissen</button>
       </div>
+      <div class="sidebar-top" id="sidebar-top"></div>
       <div class="sidebar-todos" id="todos-nav"></div>
-      <div class="sidebar-section-label">Meetings</div>
+      <div class="sidebar-section-label" id="sidebar-section-label">Meetings</div>
       <div class="meeting-list" id="meeting-list"></div>
       <!-- User-Bereich am unteren Rand der Sidebar -->
       <div class="sidebar-user-area" id="sidebar-user-area" onclick="toggleUserMenu(event)">
@@ -2066,6 +2171,93 @@ body.ai-disabled .ai-action { display: none !important; }
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeThemeModal()">Abbrechen</button>
       <button class="btn btn-primary" id="theme-save-btn" onclick="saveThemeModal()"
+        style="background:#7c3aed;border-color:#7c3aed">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Theme Delete Modal (cascade/promote) ─────────────────────── -->
+<div id="theme-delete-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'theme-delete-modal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Topic mit Unter-Topics löschen</h2>
+      <button class="modal-close" onclick="closeThemeDeleteModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <p id="theme-delete-info" style="font-size:.875rem;color:var(--text-muted);margin-bottom:1.125rem;line-height:1.55"></p>
+      <div style="display:flex;flex-direction:column;gap:.625rem">
+        <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+          <input type="radio" name="theme-delete-mode" id="theme-delete-promote" style="margin-top:.2rem">
+          <span>
+            <strong>Unter-Topics eine Ebene hochstufen</strong><br>
+            <span style="font-size:.8125rem;color:var(--text-muted)">Nichts geht verloren — die Unter-Topics werden an das übergeordnete Topic (bzw. zur Wurzel) verschoben.</span>
+          </span>
+        </label>
+        <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+          <input type="radio" name="theme-delete-mode" id="theme-delete-cascade" style="margin-top:.2rem">
+          <span>
+            <strong style="color:var(--red)">Alles löschen</strong><br>
+            <span style="font-size:.8125rem;color:var(--text-muted)">Topic, alle Unter-Topics und deren Wissensseiten werden unwiderruflich gelöscht.</span>
+          </span>
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeThemeDeleteModal()">Abbrechen</button>
+      <button class="btn btn-primary" id="theme-delete-confirm-btn" onclick="confirmThemeDeleteChoice()"
+        style="background:#7c3aed;border-color:#7c3aed">Löschen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Theme Move Modal ─────────────────────────────────────────── -->
+<div id="theme-move-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'theme-move-modal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Topic verschieben</h2>
+      <button class="modal-close" onclick="closeThemeMoveModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <p id="theme-move-info" style="font-size:.875rem;color:var(--text-muted);margin-bottom:.75rem"></p>
+      <select class="form-control" id="theme-move-select"></select>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeThemeMoveModal()">Abbrechen</button>
+      <button class="btn btn-primary" id="theme-move-save-btn" onclick="saveThemeMoveModal()"
+        style="background:#7c3aed;border-color:#7c3aed">Verschieben</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Knowledge Modal (Wissensseite) ──────────────────────────── -->
+<div id="knowledge-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'knowledge-modal')">
+  <div class="modal modal-wide" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2 id="knowledge-modal-title">Neues Wissen</h2>
+      <button class="modal-close" onclick="closeKnowledgeModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Überschrift <span style="color:var(--red)">*</span></label>
+        <input type="text" class="form-control" id="knowledge-title" maxlength="300" placeholder="z. B. Deployment-Prozess">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Inhalt</label>
+        <div class="rt-wrapper">
+          <div class="rt-toolbar" id="knowledge-content-tb"></div>
+          <div class="rt-content" id="knowledge-content" contenteditable="true"
+               data-placeholder="Formatierter Text, Tabellen, Links, Bilder …" style="min-height:220px"></div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Zugehörige Topics <span style="color:var(--red)">*</span></label>
+        <div id="knowledge-theme-checklist" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-md);padding:.5rem .75rem"></div>
+      </div>
+      <div class="form-group" id="knowledge-attach-slot"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeKnowledgeModal()">Abbrechen</button>
+      <button class="btn btn-primary" id="knowledge-save-btn" onclick="saveKnowledgeModal()"
         style="background:#7c3aed;border-color:#7c3aed">Speichern</button>
     </div>
   </div>
@@ -2586,6 +2778,22 @@ let editThemeId     = null;
 let themeLinkCtx    = null;
 let moveSrcCtx      = null;
 
+// ── Wissensmanagement (v2) state ──────────────────────────────
+let selectedThemeId    = null;          // aktuell gewähltes Topic in der Baum-Ansicht
+let expandedThemeIds   = new Set();     // ausgeklappte Baum-Knoten
+let themeShowDescendants = true;        // Wissen/Todos aus Unter-Topics mit anzeigen
+let themeDetailKnowledge = [];          // geladenes Wissen für selectedThemeId
+let themeDetailTodos     = [];          // geladene Todos für selectedThemeId
+let themeDetailLoading   = false;
+let newThemeParentId   = null;          // Parent für "+ Unter-Topic" im Theme-Modal
+let themeMoveId        = null;          // Topic, das gerade verschoben wird
+let themeDeleteCtx     = null;          // { id, title, subTopicCount, knowledgePageCount }
+let knowledgePages     = [];            // globale Wissens-Ansicht Cache
+let knowledgeFilterThemeId = '';
+let knowledgeSearch     = '';
+let editKnowledgeId     = null;
+let knowledgeThemeSelection = new Set(); // im Wissens-Modal ausgewählte Topic-IDs
+
 const COLORS = ['#1D6FE8','#3b82f6','#06b6d4','#10b981','#22c55e','#f59e0b','#ef4444','#ec4899','#a855f7','#64748b'];
 
 // ── Toast ────────────────────────────────────────────────────
@@ -2838,6 +3046,45 @@ function rtTable() {
   document.execCommand('insertHTML', false, html);
 }
 
+// Bilder werden als Anhang hochgeladen (siehe Attachments) und per <img> referenziert.
+// Setzt/entfernt die refType/refId-Zuordnung, an die ein Editor-Feld gerade Bilder hochladen darf.
+let _rtImageRefs = {};
+function setRtImageRef(editorId, refType, refId) { _rtImageRefs[editorId] = { refType, refId }; }
+function clearRtImageRef(editorId) { delete _rtImageRefs[editorId]; }
+
+function rtInsertImage(editorId) {
+  const ref = _rtImageRefs[editorId];
+  if (!ref) { toast('Bitte zuerst speichern, um Bilder einzufügen', 'error'); return; }
+  _saveSelection();
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*';
+  input.onchange = async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      const base = window.__TS_BASE__ || '';
+      const resp = await fetch(`${base}/api/attachments/${ref.refType}/${ref.refId}?filename=${encodeURIComponent(file.name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!resp.ok) { const t = await resp.text(); throw new Error(t || resp.statusText); }
+      const att = await resp.json();
+      _restoreSelection();
+      document.execCommand('insertHTML', false,
+        `<img src="${base}/api/attachments/download/${att.id}" alt="${escHtml(file.name)}" style="max-width:100%">`);
+      const key = `${ref.refType}/${ref.refId}`;
+      if (attachCache[key]) {
+        attachCache[key].push(att);
+        renderAttachSection(ref.refType, ref.refId);
+        updateAttachBadge(ref.refType, ref.refId);
+      }
+      toast('Bild eingefügt');
+    } catch(e) { toast(`Bild-Upload fehlgeschlagen: ${e.message}`, 'error'); }
+  };
+  input.click();
+}
+
 let _rtColorPickerEl = null;
 function _rtShowColorPicker(anchor) {
   if (_rtColorPickerEl) { _rtColorPickerEl.remove(); _rtColorPickerEl = null; return; }
@@ -2879,7 +3126,7 @@ function _rtShowColorPicker(anchor) {
   }, 0);
 }
 
-function initRtToolbar(tbId, editorId) {
+function initRtToolbar(tbId, editorId, opts = {}) {
   const tb = document.getElementById(tbId);
   const ed = document.getElementById(editorId);
   if (!tb || !ed) return;
@@ -2907,7 +3154,7 @@ function initRtToolbar(tbId, editorId) {
   colorBtn.onmousedown = e => { e.preventDefault(); _saveSelection(); };
   colorBtn.onclick = e => { e.stopPropagation(); _rtShowColorPicker(colorBtn); };
 
-  tb.append(
+  const items = [
     btn('<b>B</b>', 'Fett (Strg+B)', 'bold'),
     btn('<i>I</i>', 'Kursiv (Strg+I)', 'italic'),
     btn('<u>U</u>', 'Unterstrichen (Strg+U)', 'underline'),
@@ -2916,9 +3163,16 @@ function initRtToolbar(tbId, editorId) {
     sep(),
     linkBtn,
     tableBtn,
-    sep(),
-    colorBtn,
-  );
+  ];
+  if (opts.imageButton) {
+    const imgBtn = document.createElement('button');
+    imgBtn.type = 'button'; imgBtn.className = 'rt-btn'; imgBtn.title = 'Bild einfügen'; imgBtn.innerHTML = '🖼️ Bild';
+    imgBtn.onmousedown = e => { e.preventDefault(); _saveSelection(); };
+    imgBtn.onclick = () => rtInsertImage(editorId);
+    items.push(imgBtn);
+  }
+  items.push(sep(), colorBtn);
+  tb.append(...items);
 
   ed.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -3097,7 +3351,7 @@ async function doLogin() {
   setBusy('login-btn', true);
   try {
     currentUser = await api('POST', '/login', { username, password });
-    await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadAiSettings(), loadStack()]);
+    await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadKnowledgePages(), loadAiSettings(), loadStack()]);
     await loadDrift();
     showApp(); render();
   } catch(e) { errEl.textContent = e.message; errEl.style.display = ''; }
@@ -3142,24 +3396,65 @@ async function loadThemes()   { try { themes   = await api('GET', '/themes');   
 async function loadContacts() { try { contacts = await api('GET', '/contacts'); } catch { contacts = []; } }
 
 // ── Render ───────────────────────────────────────────────────
-function render() { renderTodosNav(); renderSidebar(); renderMain(); }
+function render() { renderSidebarModeSwitch(); renderSidebarTop(); renderTodosNav(); renderSidebar(); renderMain(); }
+
+// ── Sidebar-Modus (Wissen ↔ Todos) ────────────────────────────
+// Modus wird aus der aktuellen Ansicht abgeleitet statt separat gehalten,
+// damit er nie mit selectedId desynchronisieren kann.
+let lastTodosView = '__todos__';
+let lastWissenView = '__themes__';
+function currentSidebarMode() {
+  return (selectedId === '__themes__' || selectedId === '__contacts__') ? 'wissen' : 'todos';
+}
+function switchSidebarMode(mode) {
+  if (mode === currentSidebarMode()) return;
+  selectView(mode === 'wissen' ? lastWissenView : lastTodosView);
+}
+function renderSidebarModeSwitch() {
+  document.getElementById('mode-btn-todos').classList.toggle('active', currentSidebarMode() === 'todos');
+  document.getElementById('mode-btn-wissen').classList.toggle('active', currentSidebarMode() === 'wissen');
+}
+function renderSidebarTop() {
+  const el = document.getElementById('sidebar-top');
+  if (currentSidebarMode() === 'wissen') {
+    el.innerHTML = `
+      <button class="sidebar-new-btn" onclick="openThemeModal()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5v15m7.5-7.5h-15"/></svg>
+        Neues Topic
+      </button>`;
+  } else {
+    el.innerHTML = `
+      <button class="sidebar-new-btn" onclick="openMeetingModal()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5v15m7.5-7.5h-15"/></svg>
+        Neues Meeting
+      </button>
+      <div class="sidebar-search">
+        <span class="sidebar-search-icon">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+        </span>
+        <input type="text" placeholder="Suchen …" value="${escHtml(filterText)}" oninput="onSearch(this.value)">
+      </div>`;
+  }
+}
 
 function renderTodosNav() {
   const openPersonal = todos.filter(t => !t.done && !isSnoozed(t)).length;
   const openMeeting  = meetings.flatMap(m => m.topics||[]).filter(t => t.isTodo && !t.done && !isSnoozed(t)).length;
   const total = openPersonal + openMeeting;
   const ic = (path, vb='0 0 24 24') => `<svg width="14" height="14" viewBox="${vb}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${path}</svg>`;
-  document.getElementById('todos-nav').innerHTML = `
-    <div class="todo-nav-item ${selectedId === '__themes__' ? 'active' : ''}" onclick="selectView('__themes__')">
-      <div class="todo-nav-icon theme-icon">${ic('<path d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path d="M6 6h.008v.008H6V6z"/>')}</div>
-      <span class="todo-nav-label">Meine Topics</span>
-      ${themes.length > 0 ? `<span class="pill pill-open">${themes.length}</span>` : ''}
-    </div>
-    <div class="todo-nav-item ${selectedId === '__contacts__' ? 'active' : ''}" onclick="selectView('__contacts__')">
-      <div class="todo-nav-icon contact-icon">${ic('<path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>')}</div>
-      <span class="todo-nav-label">Ansprechpartner</span>
-      ${contacts.length > 0 ? `<span class="pill pill-open">${contacts.length}</span>` : ''}
-    </div>
+  const el = document.getElementById('todos-nav');
+
+  if (currentSidebarMode() === 'wissen') {
+    el.innerHTML = `
+      <div class="todo-nav-item ${selectedId === '__contacts__' ? 'active' : ''}" onclick="selectView('__contacts__')">
+        <div class="todo-nav-icon contact-icon">${ic('<path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>')}</div>
+        <span class="todo-nav-label">Ansprechpartner</span>
+        ${contacts.length > 0 ? `<span class="pill pill-open">${contacts.length}</span>` : ''}
+      </div>`;
+    return;
+  }
+
+  el.innerHTML = `
     <div class="todo-nav-item ${selectedId === '__todos__' ? 'active' : ''}" onclick="selectView('__todos__')">
       <div class="todo-nav-icon">${ic('<path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>')}</div>
       <span class="todo-nav-label">Meine Todos</span>
@@ -3181,6 +3476,21 @@ function renderTodosNav() {
 }
 
 function renderSidebar() {
+  document.getElementById('sidebar-section-label').textContent =
+    currentSidebarMode() === 'wissen' ? 'Topics' : 'Meetings';
+  if (currentSidebarMode() === 'wissen') { renderSidebarTree(); return; }
+  renderMeetingsList();
+}
+
+function renderSidebarTree() {
+  const el = document.getElementById('meeting-list');
+  const roots = themeChildren(null);
+  el.innerHTML = roots.length === 0
+    ? `<div class="sb-tree-empty">Noch keine Topics.</div>`
+    : roots.map(t => renderThemeTreeNode(t)).join('');
+}
+
+function renderMeetingsList() {
   const el = document.getElementById('meeting-list');
   const lc = filterText.toLowerCase();
   let list;
@@ -3851,7 +4161,7 @@ function renderAttachSection(refType, refId) {
     const base = window.__TS_BASE__ || '';
     return `<div class="attach-item">
       <span class="attach-icon">${icon}</span>
-      <a class="attach-name" href="${base}/api/attachments/download/${a.id}" target="_blank" download="${escHtml(a.originalName)}">${escHtml(a.originalName)}</a>
+      <a class="attach-name" href="${base}/api/attachments/download/${a.id}" target="_blank" download="${escHtml(a.filename)}">${escHtml(a.filename)}</a>
       <span class="attach-size">${fmtFileSize(a.size)}</span>
       <button class="attach-del" title="Löschen" onclick="deleteAttachment('${a.id}','${refType}','${refId}')">✕</button>
     </div>`;
@@ -4018,15 +4328,17 @@ async function markMeetingTopicDone(mid, tid) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-const VIEW_LABELS = { '__themes__':'Meine Topics', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest' };
+const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest' };
 function updateTopbar(title) {
   const el = document.getElementById('topbar-title');
   if (el) el.textContent = title || '—';
 }
 function selectView(id) {
   selectedId = id; topicFilter = ''; closeMobileSidebar();
+  if (id === '__themes__' || id === '__contacts__') lastWissenView = id; else lastTodosView = id;
   updateTopbar(VIEW_LABELS[id] || '—');
   render(); refreshAiUiVisibility();
+  if (id === '__themes__') { loadKnowledgePages().then(render); }
 }
 
 // ── Drag & Drop (todo reorder) ───────────────────────────────
@@ -4426,72 +4738,215 @@ function buildThemeMap() {
   return map;
 }
 
+// ── Topic-Baum: Hilfsfunktionen ─────────────────────────────
+function themeById(id) { return themes.find(t => t.id === id); }
+function themeChildren(parentId) {
+  return themes.filter(t => (t.parentId || null) === parentId)
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+}
+function themeAncestorsPath(id) {
+  const path = [];
+  let cur = themeById(id);
+  const seen = new Set();
+  while (cur && !seen.has(cur.id)) {
+    path.unshift(cur); seen.add(cur.id);
+    cur = cur.parentId ? themeById(cur.parentId) : null;
+  }
+  return path;
+}
+function themeDescendantIdsClient(id) {
+  const out = []; const stack = [id];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const c of themeChildren(cur)) { out.push(c.id); stack.push(c.id); }
+  }
+  return out;
+}
+
+// Nach Änderungen an Topics/Wissen: Baum neu laden, Detailansicht aktualisieren
+async function afterThemeMutation() {
+  await Promise.all([loadThemes(), loadKnowledgePages()]);
+  if (selectedThemeId && !themeById(selectedThemeId)) selectedThemeId = null;
+  await loadThemeDetail();
+}
+
+async function loadThemeDetail() {
+  if (!selectedThemeId) { themeDetailKnowledge = []; themeDetailTodos = []; return; }
+  themeDetailLoading = true;
+  try {
+    const [kn, td] = await Promise.all([
+      api('GET', `/themes/${selectedThemeId}/knowledge?includeDescendants=${themeShowDescendants}`),
+      api('GET', `/themes/${selectedThemeId}/todos?includeDescendants=${themeShowDescendants}`),
+    ]);
+    themeDetailKnowledge = kn; themeDetailTodos = td;
+  } catch(e) { toast(e.message, 'error'); themeDetailKnowledge = []; themeDetailTodos = []; }
+  finally { themeDetailLoading = false; }
+}
+
+async function selectTheme(id) {
+  selectedThemeId = id;
+  let cur = themeById(id);
+  while (cur && cur.parentId) { expandedThemeIds.add(cur.parentId); cur = themeById(cur.parentId); }
+  themeDetailLoading = true; render();
+  await loadThemeDetail();
+  render();
+}
+
+async function toggleThemeDescendants() {
+  themeShowDescendants = !themeShowDescendants;
+  themeDetailLoading = true; render();
+  await loadThemeDetail();
+  render();
+}
+
+function toggleThemeExpand(id) {
+  if (expandedThemeIds.has(id)) expandedThemeIds.delete(id); else expandedThemeIds.add(id);
+  render();
+}
+
+// ── Topic-Baum: Rendering ────────────────────────────────────
 function renderThemesView(el) {
-  el.innerHTML = `
-    <div class="full-width-view">
-      <div class="meeting-header">
-        <div class="meeting-header-accent" style="background:#7c3aed"></div>
-        <div class="meeting-header-body">
-          <div class="meeting-header-info">
-            <h1 class="meeting-title">Meine Topics</h1>
-            <p class="meeting-description" style="color:var(--text-muted)">
-              Übergreifende Themen, die Meetings-Themen und Todos verbinden.
-            </p>
-          </div>
-          <div class="meeting-header-actions">
-            <button class="btn btn-primary btn-sm" onclick="openThemeModal()"
-              style="background:#7c3aed;border-color:#7c3aed">+ Topic</button>
-          </div>
-        </div>
+  el.innerHTML = `<div class="full-width-view">${renderThemeDetailPanel()}</div>`;
+}
+
+// Rendert einen Baum-Knoten für die dunkle Sidebar (Wissen-Modus).
+function renderThemeTreeNode(theme) {
+  const children = themeChildren(theme.id);
+  const hasChildren = children.length > 0;
+  const expanded = expandedThemeIds.has(theme.id);
+  const active = theme.id === selectedThemeId;
+  return `
+    <div class="sb-tree-node">
+      <div class="sb-tree-row ${active ? 'active' : ''}" onclick="selectTheme('${theme.id}')">
+        <span class="sb-tree-toggle ${hasChildren ? '' : 'leaf'}"
+          onclick="event.stopPropagation();toggleThemeExpand('${theme.id}')"
+          style="transform:rotate(${hasChildren && expanded ? '90deg' : '0deg'})">${hasChildren ? '▸' : ''}</span>
+        <span class="sb-tree-icon-chip"><span class="sb-tree-icon-dot"></span></span>
+        <span class="sb-tree-label" title="${escHtml(theme.title)}">${escHtml(theme.title)}</span>
       </div>
-      ${themes.length === 0 ? `
-        <div class="empty-state" style="padding:3rem 1rem">
-          <div class="empty-state-icon" style="background:#faf5ff;border-color:#e9d5ff">🏷️</div>
-          <h2>Noch keine Topics</h2>
-          <p>Topics verbinden Themen aus verschiedenen Meetings und persönliche Todos unter einem gemeinsamen Oberthema.</p>
-          <button class="btn btn-primary" onclick="openThemeModal()"
-            style="background:#7c3aed;border-color:#7c3aed">+ Erstes Topic erstellen</button>
-        </div>` :
-        themes.map(th => renderThemeCard(th)).join('')}
+      ${hasChildren && expanded ? `<div class="sb-tree-children">${children.map(c => renderThemeTreeNode(c)).join('')}</div>` : ''}
     </div>`;
 }
 
-function renderThemeCard(th) {
-  const items = th.links.map(link => {
-    if (link.refType === 'todo') {
-      const t = todos.find(x => x.id === link.refId);
-      return t ? { type: 'todo', item: t, link, meeting: null } : null;
-    } else if (link.refType === 'topic') {
-      for (const m of meetings) {
-        const t = (m.topics || []).find(x => x.id === link.refId);
-        if (t) return { type: 'topic', item: t, link, meeting: m };
-      }
+function renderThemeDetailPanel() {
+  if (!selectedThemeId) {
+    return `<div class="theme-detail-panel">${renderKnowledgeGrid()}</div>`;
+  }
+  const theme = themeById(selectedThemeId);
+  if (!theme) { selectedThemeId = null; return renderThemeDetailPanel(); }
+  const path = themeAncestorsPath(theme.id);
+  const children = themeChildren(theme.id);
+
+  const linkedTopics = theme.links.filter(l => l.refType === 'topic').map(link => {
+    for (const m of meetings) {
+      const t = (m.topics || []).find(x => x.id === link.refId);
+      if (t) return { type: 'topic', item: t, link, meeting: m };
     }
     return null;
   }).filter(Boolean);
 
-  const openItems = items.filter(x => !x.item.done);
-  const doneItems = items.filter(x =>  x.item.done);
-
   return `
-    <div class="theme-card">
-      <div class="theme-card-header">
-        <div style="flex:1;min-width:0">
-          <div class="theme-card-title">🏷️ ${escHtml(th.title)}</div>
-        </div>
-        <div style="display:flex;gap:.375rem;flex-shrink:0">
-          <button class="btn btn-secondary btn-sm btn-icon" onclick="openThemeModal('${th.id}')" title="Bearbeiten">${SVG.pencil}</button>
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteTheme('${th.id}','${escHtml(th.title)}')" title="Löschen">🗑️</button>
+    <div class="theme-detail-panel">
+      <div class="theme-breadcrumb">
+        ${path.map((p, i) => `
+          ${i > 0 ? '<span class="theme-breadcrumb-sep">›</span>' : ''}
+          <span class="theme-breadcrumb-item ${i === path.length - 1 ? 'current' : ''}"
+            ${i === path.length - 1 ? '' : `onclick="selectTheme('${p.id}')"`}>${escHtml(p.title)}</span>
+        `).join('')}
+      </div>
+      <div class="meeting-header" style="margin-bottom:0">
+        <div class="meeting-header-accent" style="background:#7c3aed"></div>
+        <div class="meeting-header-body">
+          <div class="meeting-header-info">
+            <h1 class="meeting-title">🏷️ ${escHtml(theme.title)}</h1>
+            ${theme.description ? `<p class="meeting-description" style="color:var(--text-muted)">${escHtml(theme.description)}</p>` : ''}
+          </div>
+          <div class="meeting-header-actions">
+            <button class="btn btn-secondary btn-sm" onclick="openThemeModal(null,'${theme.id}')" title="Unter-Topic anlegen">+ Unter-Topic</button>
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="openThemeModal('${theme.id}')" title="Bearbeiten">${SVG.pencil}</button>
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="openThemeMoveModal('${theme.id}')" title="Verschieben">↕</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteTheme('${theme.id}','${escHtml(theme.title)}')" title="Löschen">🗑️</button>
+          </div>
         </div>
       </div>
-      ${th.description ? `<div class="theme-card-desc">${escHtml(th.description)}</div>` : ''}
-      <div class="theme-items-section">
-        ${items.length === 0 ? `
-          <p class="theme-empty-items">Noch keine Elemente verknüpft. Klicken Sie auf 🏷️ bei einem Thema oder Todo, um es hier einzutragen.</p>` : `
-          <div class="theme-items-label">Verknüpfte Elemente (${items.length})</div>
-          ${openItems.map(x => renderThemeItemRow(x)).join('')}
-          ${doneItems.map(x => renderThemeItemRow(x)).join('')}`}
+
+      ${children.length ? `
+        <div class="theme-section" style="margin-top:.75rem">
+          <div class="theme-section-head"><span class="theme-section-title">🗂️ Unter-Topics (${children.length})</span></div>
+          <div style="display:flex;flex-wrap:wrap;gap:.5rem">
+            ${children.map(c => `
+              <button class="btn btn-secondary btn-sm" onclick="selectTheme('${c.id}')"
+                style="border-color:#e9d5ff;background:#faf5ff;color:#6d28d9">🏷️ ${escHtml(c.title)}</button>`).join('')}
+          </div>
+        </div>
+        <label class="theme-descendant-toggle" style="margin:.75rem 0 0">
+          <input type="checkbox" ${themeShowDescendants ? 'checked' : ''} onchange="toggleThemeDescendants()">
+          Wissen &amp; Todos aus Unter-Topics einbeziehen
+        </label>` : ''}
+
+      ${linkedTopics.length ? `
+        <div class="theme-section">
+          <div class="theme-section-head"><span class="theme-section-title">📅 Verknüpfte Meeting-Themen (${linkedTopics.length})</span></div>
+          ${linkedTopics.map(x => renderThemeItemRow(x)).join('')}
+        </div>` : ''}
+
+      <div class="theme-section">
+        <div class="theme-section-head">
+          <span class="theme-section-title">📚 Wissen${themeDetailKnowledge.length ? ` (${themeDetailKnowledge.length})` : ''}</span>
+          <button class="btn btn-primary btn-sm" onclick="openKnowledgeModal(null,'${theme.id}')"
+            style="background:#7c3aed;border-color:#7c3aed">+ Wissen</button>
+        </div>
+        ${themeDetailLoading ? `<p class="theme-empty-items">Lädt …</p>` :
+          themeDetailKnowledge.length === 0 ? `<p class="theme-empty-items">Noch kein Wissen hinterlegt.</p>` :
+          themeDetailKnowledge.map(k => renderKnowledgeCard(k)).join('')}
       </div>
+
+      <div class="theme-section">
+        <div class="theme-section-head">
+          <span class="theme-section-title">✅ Todos${themeDetailTodos.length ? ` (${themeDetailTodos.length})` : ''}</span>
+        </div>
+        ${themeDetailLoading ? `<p class="theme-empty-items">Lädt …</p>` :
+          themeDetailTodos.length === 0 ? `<p class="theme-empty-items">Keine Todos verknüpft. Weisen Sie in der Todos-Ansicht über 🏷️ dieses Topic zu.</p>` :
+          themeDetailTodos.map(t => renderThemeTodoRow(t)).join('')}
+      </div>
+    </div>`;
+}
+
+function renderKnowledgeCard(k) {
+  const paths = k.themeIds
+    .map(id => themeAncestorsPath(id).map(t => t.title).join(' › '))
+    .filter(Boolean);
+  return `
+    <div class="knowledge-card${k.originThemeTitle ? ' knowledge-card--inherited' : ''}">
+      <div class="knowledge-card-head">
+        <div style="display:flex;align-items:center;gap:.5rem;min-width:0;flex:1">
+          <span style="flex-shrink:0">📄</span>
+          <span class="knowledge-card-title" onclick="openKnowledgeModal('${k.id}')">${escHtml(k.title)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.375rem;flex-shrink:0">
+          ${k.originThemeTitle ? `<span class="origin-badge" title="Geerbt von Unter-Topic">${escHtml(k.originThemeTitle)}</span>` : ''}
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteKnowledge('${k.id}','${escHtml(k.title)}')" title="Löschen">🗑️</button>
+        </div>
+      </div>
+      ${paths.length ? `<div class="knowledge-card-path">${paths.map(p => `🏷️ ${escHtml(p)}`).join('&nbsp;&nbsp;·&nbsp;&nbsp;')}</div>` : ''}
+      ${k.content ? `<div class="knowledge-card-body">${displayHtml(k.content)}</div>` : ''}
+    </div>`;
+}
+
+function renderThemeTodoRow(t) {
+  return `
+    <div class="knowledge-card${t.originThemeTitle ? ' knowledge-card--inherited' : ''}">
+      <div class="knowledge-card-head">
+        <div style="display:flex;align-items:center;gap:.5rem;min-width:0;flex:1">
+          <span style="flex-shrink:0">${t.done ? '✅' : '🔲'}</span>
+          <span class="knowledge-card-title" onclick="selectView('__todos__')"
+            style="${t.done ? 'color:var(--text-muted);text-decoration:line-through;text-decoration-thickness:1.5px' : ''}">${escHtml(t.title)}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:.375rem;flex-shrink:0">
+          ${t.originThemeTitle ? `<span class="origin-badge" title="Geerbt von Unter-Topic">${escHtml(t.originThemeTitle)}</span>` : ''}
+        </div>
+      </div>
+      ${t.description ? `<div class="knowledge-card-body">${displayHtml(t.description)}</div>` : ''}
     </div>`;
 }
 
@@ -4513,10 +4968,12 @@ function renderThemeItemRow(x) {
 }
 
 // ── Theme modal ──────────────────────────────────────────────
-function openThemeModal(id) {
+function openThemeModal(id, parentId) {
   editThemeId = id || null;
-  const th = id ? themes.find(x => x.id === id) : null;
-  document.getElementById('theme-modal-title').textContent = th ? 'Topic bearbeiten' : 'Neues Topic';
+  newThemeParentId = editThemeId ? null : (parentId || null);
+  const th = id ? themeById(id) : null;
+  document.getElementById('theme-modal-title').textContent =
+    th ? 'Topic bearbeiten' : (newThemeParentId ? 'Neues Unter-Topic' : 'Neues Topic');
   document.getElementById('theme-name').value = th?.title || '';
   document.getElementById('theme-desc').value = th?.description || '';
   document.getElementById('theme-edit-modal').style.display = 'flex';
@@ -4532,11 +4989,14 @@ async function saveThemeModal() {
   try {
     if (editThemeId) {
       await api('PUT', `/themes/${editThemeId}`, { title, description });
-      const th = themes.find(x => x.id === editThemeId);
+      const th = themeById(editThemeId);
       if (th) { th.title = title; th.description = description; }
     } else {
-      const th = await api('POST', '/themes', { title, description });
+      const th = await api('POST', '/themes', { title, description, parentId: newThemeParentId });
       themes.push(th);
+      if (newThemeParentId) expandedThemeIds.add(newThemeParentId);
+      selectedThemeId = th.id;
+      await loadThemeDetail();
     }
     closeThemeModal(); render();
     toast(editThemeId ? 'Topic aktualisiert' : 'Topic erstellt');
@@ -4544,17 +5004,244 @@ async function saveThemeModal() {
   finally { setBusy('theme-save-btn', false); }
 }
 
-function confirmDeleteTheme(id, name) {
+async function confirmDeleteTheme(id, name) {
+  let preview;
+  try { preview = await api('GET', `/themes/${id}/delete-preview`); }
+  catch(e) { toast(e.message, 'error'); return; }
+
+  if (preview.subTopicCount === 0) {
+    confirmCallback = async () => {
+      try {
+        await api('DELETE', `/themes/${id}?cascade=true`);
+        await afterThemeMutation();
+        render(); toast(`Topic „${name}" gelöscht`);
+      } catch(e) { toast(e.message, 'error'); }
+    };
+    document.getElementById('confirm-title').textContent   = 'Topic löschen?';
+    document.getElementById('confirm-message').textContent =
+      `„${name}" wird gelöscht.${preview.knowledgePageCount ? ` ${preview.knowledgePageCount} Wissensseite(n) werden mit gelöscht, falls sie sonst nirgends verknüpft sind.` : ''} Verknüpfungen zu Themen und Todos werden aufgehoben.`;
+    document.getElementById('confirm-dialog').style.display = 'flex';
+    return;
+  }
+
+  themeDeleteCtx = { id, title: name, ...preview };
+  document.getElementById('theme-delete-info').textContent =
+    `„${name}" hat ${preview.subTopicCount} Unter-Topic${preview.subTopicCount === 1 ? '' : 's'}` +
+    (preview.knowledgePageCount ? ` mit insgesamt ${preview.knowledgePageCount} Wissensseite(n)` : '') + '.';
+  document.getElementById('theme-delete-promote').checked = true;
+  document.getElementById('theme-delete-cascade').checked = false;
+  document.getElementById('theme-delete-modal').style.display = 'flex';
+}
+
+function closeThemeDeleteModal() { document.getElementById('theme-delete-modal').style.display = 'none'; themeDeleteCtx = null; }
+
+async function confirmThemeDeleteChoice() {
+  if (!themeDeleteCtx) return;
+  const cascade = document.getElementById('theme-delete-cascade').checked;
+  setBusy('theme-delete-confirm-btn', true);
+  try {
+    await api('DELETE', `/themes/${themeDeleteCtx.id}?cascade=${cascade}`);
+    const title = themeDeleteCtx.title;
+    closeThemeDeleteModal();
+    await afterThemeMutation();
+    render();
+    toast(`Topic „${title}" gelöscht`);
+  } catch(e) { toast(e.message, 'error'); }
+  finally { setBusy('theme-delete-confirm-btn', false); }
+}
+
+// ── Theme Move modal ─────────────────────────────────────────
+function openThemeMoveModal(id) {
+  themeMoveId = id;
+  const theme = themeById(id);
+  const excluded = new Set([id, ...themeDescendantIdsClient(id)]);
+  const options = ['<option value="">— Wurzel (kein Übertopic) —</option>'].concat(
+    themes.filter(t => !excluded.has(t.id))
+      .map(t => ({ t, path: themeAncestorsPath(t.id).map(p => p.title).join(' › ') }))
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .map(({ t, path }) => `<option value="${t.id}" ${t.id === theme.parentId ? 'selected' : ''}>${escHtml(path)}</option>`)
+  );
+  document.getElementById('theme-move-info').textContent = `„${theme.title}" verschieben unter:`;
+  document.getElementById('theme-move-select').innerHTML = options.join('');
+  document.getElementById('theme-move-modal').style.display = 'flex';
+}
+function closeThemeMoveModal() { document.getElementById('theme-move-modal').style.display = 'none'; themeMoveId = null; }
+
+async function saveThemeMoveModal() {
+  if (!themeMoveId) return;
+  const parentId = document.getElementById('theme-move-select').value || null;
+  setBusy('theme-move-save-btn', true);
+  try {
+    await api('PUT', `/themes/${themeMoveId}/move`, { parentId });
+    closeThemeMoveModal();
+    await afterThemeMutation();
+    render();
+    toast('Topic verschoben');
+  } catch(e) { toast(e.message, 'error'); }
+  finally { setBusy('theme-move-save-btn', false); }
+}
+
+// ── Knowledge (Wissensseiten) ────────────────────────────────
+function findKnowledgePage(id) {
+  return knowledgePages.find(x => x.id === id) || themeDetailKnowledge.find(x => x.id === id) || null;
+}
+
+function openKnowledgeModal(id, presetThemeId) {
+  editKnowledgeId = id || null;
+  const k = id ? findKnowledgePage(id) : null;
+  document.getElementById('knowledge-modal-title').textContent = k ? 'Wissen bearbeiten' : 'Neues Wissen';
+  document.getElementById('knowledge-title').value = k?.title || '';
+  setRT('knowledge-content', k?.content || '');
+  knowledgeThemeSelection = new Set(k ? k.themeIds : (presetThemeId ? [presetThemeId] : (selectedThemeId ? [selectedThemeId] : [])));
+  renderKnowledgeThemeChecklist();
+
+  const attachSlot = document.getElementById('knowledge-attach-slot');
+  if (id) {
+    attachSlot.innerHTML = attachSectionHtml('knowledge_page', id);
+    loadAttachments('knowledge_page', id);
+    setRtImageRef('knowledge-content', 'knowledge_page', id);
+  } else {
+    attachSlot.innerHTML = '<p style="font-size:.8125rem;color:var(--text-muted);font-style:italic">Anhänge und Bilder sind verfügbar, sobald die Seite gespeichert wurde.</p>';
+    clearRtImageRef('knowledge-content');
+  }
+  document.getElementById('knowledge-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('knowledge-title').focus(), 50);
+}
+function closeKnowledgeModal() { document.getElementById('knowledge-modal').style.display = 'none'; }
+
+function renderKnowledgeThemeChecklist() {
+  const el = document.getElementById('knowledge-theme-checklist');
+  if (!el) return;
+  if (!themes.length) {
+    el.innerHTML = '<p class="theme-empty-items">Noch keine Topics vorhanden. Legen Sie zuerst ein Topic an.</p>';
+    return;
+  }
+  el.innerHTML = themes
+    .map(t => ({ t, path: themeAncestorsPath(t.id).map(p => p.title).join(' › ') }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .map(({ t, path }) => {
+      const checked = knowledgeThemeSelection.has(t.id);
+      return `<label style="display:flex;align-items:center;gap:.5rem;padding:.25rem 0;font-size:.8125rem">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleKnowledgeThemeSel('${t.id}',this.checked)">
+        <span>${escHtml(path)}</span>
+      </label>`;
+    }).join('');
+}
+function toggleKnowledgeThemeSel(id, checked) {
+  if (checked) knowledgeThemeSelection.add(id); else knowledgeThemeSelection.delete(id);
+}
+
+async function saveKnowledgeModal() {
+  const title = document.getElementById('knowledge-title').value.trim();
+  if (!title) { document.getElementById('knowledge-title').focus(); return; }
+  const content = getRT('knowledge-content');
+  const themeIds = [...knowledgeThemeSelection];
+  if (!themeIds.length) { toast('Bitte mindestens ein Topic auswählen', 'error'); return; }
+  setBusy('knowledge-save-btn', true);
+  try {
+    if (editKnowledgeId) {
+      await api('PUT', `/knowledge/${editKnowledgeId}`, { title, content });
+      await api('PUT', `/knowledge/${editKnowledgeId}/themes`, { themeIds });
+    } else {
+      await api('POST', '/knowledge', { title, content, themeIds });
+    }
+    closeKnowledgeModal();
+    await afterThemeMutation();
+    render();
+    toast(editKnowledgeId ? 'Wissen gespeichert' : 'Wissen erstellt');
+  } catch(e) { toast(e.message, 'error'); }
+  finally { setBusy('knowledge-save-btn', false); }
+}
+
+function confirmDeleteKnowledge(id, title) {
   confirmCallback = async () => {
     try {
-      await api('DELETE', `/themes/${id}`);
-      themes = themes.filter(x => x.id !== id);
-      render(); toast(`Topic „${name}" gelöscht`);
+      await api('DELETE', `/knowledge/${id}`);
+      await afterThemeMutation();
+      render();
+      toast(`„${title}" gelöscht`);
     } catch(e) { toast(e.message, 'error'); }
   };
-  document.getElementById('confirm-title').textContent   = 'Topic löschen?';
-  document.getElementById('confirm-message').textContent = `„${name}" wird gelöscht. Verknüpfungen zu Themen und Todos werden aufgehoben.`;
+  document.getElementById('confirm-title').textContent   = 'Wissen löschen?';
+  document.getElementById('confirm-message').textContent = `„${title}" wird unwiderruflich gelöscht.`;
   document.getElementById('confirm-dialog').style.display = 'flex';
+}
+
+// ── Globale Wissens-Ansicht ──────────────────────────────────
+async function loadKnowledgePages() {
+  try { knowledgePages = await api('GET', '/knowledge'); } catch { knowledgePages = []; }
+}
+
+function matchesKnowledge(k, query) {
+  if (!query) return true;
+  const haystack = [k.title || '', stripHtmlForSearch(k.content || '')].join('\n').toLowerCase();
+  return query.toLowerCase().split(/\s+/).filter(Boolean).every(token => haystack.includes(token));
+}
+
+function fmtRelativeShort(s) {
+  if (!s) return '';
+  const diff = Date.now() - new Date(s).getTime();
+  const mins  = Math.floor(diff / 60000);
+  const hours = Math.floor(diff / 3600000);
+  const days  = Math.floor(diff / 86400000);
+  if (mins  <  2)  return 'gerade eben';
+  if (mins  < 60)  return `vor ${mins} Min.`;
+  if (hours < 24)  return `vor ${hours} Std.`;
+  if (days  <  2)  return 'gestern';
+  if (days  <  31) return `vor ${days} Tagen`;
+  return fmtDate(s);
+}
+
+// Karten-Raster aller Wissensseiten — Startzustand des Wissen-Bereichs, solange kein Topic
+// im Baum ausgewählt ist (ersetzt die frühere eigenständige Ansicht).
+function renderKnowledgeGrid() {
+  const q = knowledgeSearch.trim();
+  let list = knowledgePages.filter(k => matchesKnowledge(k, q));
+  if (knowledgeFilterThemeId) list = list.filter(k => k.themeIds.includes(knowledgeFilterThemeId));
+  list = list.slice().sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+
+  const themeOptions = themes
+    .map(t => ({ t, path: themeAncestorsPath(t.id).map(p => p.title).join(' › ') }))
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .map(({ t, path }) => `<option value="${t.id}" ${t.id === knowledgeFilterThemeId ? 'selected' : ''}>${escHtml(path)}</option>`)
+    .join('');
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap;margin-bottom:1rem">
+      <h1 class="meeting-title" style="margin:0">Alle Wissensseiten</h1>
+      <button class="btn btn-primary btn-sm" onclick="openKnowledgeModal()"
+        style="background:#7c3aed;border-color:#7c3aed">+ Wissensseite</button>
+    </div>
+    <div style="display:flex;gap:.625rem;flex-wrap:wrap;margin-bottom:1.125rem">
+      <select class="form-control" style="max-width:260px" onchange="knowledgeFilterThemeId=this.value;renderMain()">
+        <option value="">Alle Topics</option>
+        ${themeOptions}
+      </select>
+      <input type="text" class="form-control" style="max-width:260px" placeholder="Wissen durchsuchen …"
+        value="${escHtml(knowledgeSearch)}" oninput="knowledgeSearch=this.value;renderMain()">
+    </div>
+    ${list.length === 0 ? `
+      <div class="empty-state" style="padding:3rem 1rem">
+        <div class="empty-state-icon" style="background:#faf5ff;border-color:#e9d5ff">📚</div>
+        <h2>${knowledgePages.length === 0 ? 'Noch kein Wissen hinterlegt' : 'Keine Treffer'}</h2>
+        <p>${knowledgePages.length === 0 ? 'Legen Sie Wissensseiten an und verknüpfen Sie sie mit Topics.' : 'Suchbegriff oder Topic-Filter anpassen.'}</p>
+      </div>` :
+      `<div class="knowledge-grid">${list.map(k => renderKnowledgeGridCard(k)).join('')}</div>`}`;
+}
+
+function renderKnowledgeGridCard(k) {
+  const paths = k.themeIds.map(id => themeAncestorsPath(id).map(t => t.title).join(' › ')).filter(Boolean);
+  const preview = stripHtmlForSearch(k.content || '');
+  return `
+    <div class="knowledge-grid-card" onclick="openKnowledgeModal('${k.id}')">
+      <div class="knowledge-grid-card-head">
+        <div class="knowledge-grid-card-icon">📄</div>
+        <span class="knowledge-grid-card-time">${escHtml(fmtRelativeShort(k.updatedAt))}</span>
+      </div>
+      <div class="knowledge-grid-card-title">${escHtml(k.title)}</div>
+      ${preview ? `<div class="knowledge-grid-card-preview">${escHtml(preview)}</div>` : ''}
+      ${paths.length ? `<div class="knowledge-grid-card-path">→ ${escHtml(paths.join(' · '))}</div>` : ''}
+    </div>`;
 }
 
 // ── Contacts (Ansprechpartner) ──────────────────────────────
@@ -5006,6 +5693,7 @@ function closeMobileSidebar() {
 // ── Navigation ───────────────────────────────────────────────
 function selectMeeting(id) {
   selectedId = id; topicFilter = ''; closeMobileSidebar();
+  lastTodosView = id;
   const m = meetings.find(x => x.id === id);
   updateTopbar(m ? m.title : '—');
   render(); refreshAiUiVisibility();
@@ -6113,7 +6801,7 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('search-overlay').classList.contains('open')) { closeSearch(); return; }
     closeMobileSidebar();
     closeHelp();
-    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal']
+    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     closeConfirm();
     return;
@@ -6144,11 +6832,12 @@ document.getElementById('login-user').addEventListener('keydown', e => { if (e.k
 
 // ── Init ─────────────────────────────────────────────────────
 ['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc'].forEach(id => initRtToolbar(id+'-tb', id));
+initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });
 
 (async () => {
   try {
     currentUser = await api('GET', '/me');
-    await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadAiSettings(), loadStack()]);
+    await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadKnowledgePages(), loadAiSettings(), loadStack()]);
     await loadDrift();
     showApp(); render();
   } catch { showLogin(); }
@@ -6193,25 +6882,9 @@ function _parseSearchQuery(raw) {
   return tokens;
 }
 
-function _matchesQuery(haystack, tokens) {
-  const h = (haystack || '').toLowerCase();
-  for (const t of tokens) {
-    const found = h.includes(t.text);
-    if (t.negate && found) return false;
-    if (!t.negate && !found) return false;
-  }
-  return true;
-}
-
-// Testet mehrere Felder; gibt true wenn mind. eines passt (AND über Felder hinweg)
-function _matchesAny(fields, tokens) {
-  const combined = fields.map(f => stripHTML(f || '')).join(' \n ');
-  return _matchesQuery(combined, tokens);
-}
-
 // ── Snippet + Highlight ──────────────────────────────────────
 function _snippet(text, tokens) {
-  const plain = stripHTML(text || '').replace(/\s+/g, ' ').trim();
+  const plain = stripHtmlForSearch(text || '').replace(/\s+/g, ' ').trim();
   if (!plain) return '';
   const term = tokens.find(t => !t.negate)?.text || '';
   if (!term) return plain.slice(0, 100);
@@ -6233,37 +6906,56 @@ function _hl(text, tokens) {
 }
 
 // ── Search-Logik ─────────────────────────────────────────────
-function _runSearch(raw) {
+// Zählt bei jedem Aufruf hoch, damit eine spät eintreffende Antwort einer
+// überholten Anfrage das Ergebnis einer neueren nicht mehr überschreiben kann.
+let _searchRequestSeq = 0;
+
+async function _runSearch(raw) {
   const tokens = _parseSearchQuery(raw);
   if (!tokens.length) { _renderSearchEmpty(); return; }
 
-  const groups = [];
+  const seq = ++_searchRequestSeq;
+  let hits;
+  try { hits = await api('GET', `/search?q=${encodeURIComponent(raw)}`); }
+  catch { hits = []; }
+  if (seq !== _searchRequestSeq) return; // veraltete Antwort verwerfen
 
-  // Meetings
-  const mHits = meetings.filter(m =>
-    _matchesAny([m.title, m.description, (m.participants||[]).join(' ')], tokens)
-  );
-  if (mHits.length) groups.push({ label: 'Meetings', type: 'meeting', items: mHits });
+  const byType = {};
+  for (const h of hits) {
+    if (h.type === 'meeting') {
+      const m = meetings.find(x => x.id === h.id);
+      if (m) (byType.meeting ??= []).push(m);
+    } else if (h.type === 'topic') {
+      for (const m of meetings) {
+        const t = (m.topics || []).find(x => x.id === h.id);
+        if (t) { (byType.topic ??= []).push({ topic: t, meeting: m }); break; }
+      }
+    } else if (h.type === 'todo') {
+      const t = todos.find(x => x.id === h.id);
+      if (t) (byType.todo ??= []).push(t);
+    } else if (h.type === 'theme') {
+      const th = themeById(h.id);
+      if (th) (byType.theme ??= []).push(th);
+    } else if (h.type === 'knowledge') {
+      const k = knowledgePages.find(x => x.id === h.id);
+      if (k) (byType.knowledge ??= []).push(k);
+    } else if (h.type === 'contact') {
+      const c = contacts.find(x => x.id === h.id);
+      if (c) (byType.contact ??= []).push(c);
+    }
+  }
 
-  // Themen
-  const tHits = [];
-  meetings.forEach(m => (m.topics||[]).forEach(t => {
-    if (_matchesAny([t.title, t.description, t.result], tokens))
-      tHits.push({ topic: t, meeting: m });
-  }));
-  if (tHits.length) groups.push({ label: 'Themen', type: 'topic', items: tHits });
-
-  // Todos
-  const dHits = todos.filter(t =>
-    _matchesAny([t.title, t.description, t.result], tokens)
-  );
-  if (dHits.length) groups.push({ label: 'Todos', type: 'todo', items: dHits });
-
-  // Kontakte
-  const cHits = contacts.filter(c =>
-    _matchesAny([c.name, c.role, c.email, c.description], tokens)
-  );
-  if (cHits.length) groups.push({ label: 'Kontakte', type: 'contact', items: cHits });
+  const GROUP_DEFS = [
+    { key: 'meeting',   label: 'Meetings' },
+    { key: 'topic',     label: 'Themen' },
+    { key: 'todo',      label: 'Todos' },
+    { key: 'theme',     label: 'Topics' },
+    { key: 'knowledge', label: 'Wissen' },
+    { key: 'contact',   label: 'Kontakte' },
+  ];
+  const groups = GROUP_DEFS
+    .filter(g => byType[g.key]?.length)
+    .map(g => ({ label: g.label, type: g.key, items: byType[g.key] }));
 
   _renderSearchResults(groups, tokens);
 }
@@ -6278,6 +6970,10 @@ const _SEARCH_ICONS = {
     svg:'<path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
   contact: { bg:'#FFF1F2', stroke:'#E11D48',
     svg:'<path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0"/>' },
+  theme:   { bg:'#FAF5FF', stroke:'#7C3AED',
+    svg:'<path d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/><path d="M6 6h.008v.008H6V6z"/>' },
+  knowledge: { bg:'#FAF5FF', stroke:'#7C3AED',
+    svg:'<path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>' },
 };
 
 function _searchIcon(type) {
@@ -6323,7 +7019,7 @@ function _renderSearchResults(groups, tokens) {
         title   = _hl(t.title, tokens);
         context = escHtml(m.title);
         const snipSrc = [t.description, t.result].find(f => {
-          const p = stripHTML(f||'');
+          const p = stripHtmlForSearch(f||'');
           return tokens.filter(tk=>!tk.negate).some(tk=>p.toLowerCase().includes(tk.text));
         }) || t.description;
         snippet = _hl(_snippet(snipSrc, tokens), tokens);
@@ -6334,7 +7030,7 @@ function _renderSearchResults(groups, tokens) {
         title   = _hl(t.title, tokens);
         context = t.dueDate ? `Fällig: ${fmtDateOnly(t.dueDate)}` : '';
         const snipSrc = [t.description, t.result].find(f => {
-          const p = stripHTML(f||'');
+          const p = stripHtmlForSearch(f||'');
           return tokens.filter(tk=>!tk.negate).some(tk=>p.toLowerCase().includes(tk.text));
         }) || t.description;
         snippet = _hl(_snippet(snipSrc, tokens), tokens);
@@ -6347,6 +7043,20 @@ function _renderSearchResults(groups, tokens) {
         snippet = _hl(_snippet(c.description, tokens), tokens);
         srId = c.id;
         nav  = `navigateSearchResult('contact','${c.id}')`;
+      } else if (g.type === 'theme') {
+        const th = item;
+        title   = _hl(th.title, tokens);
+        context = themeAncestorsPath(th.id).slice(0, -1).map(p => p.title).join(' › ');
+        snippet = _hl(_snippet(th.description, tokens), tokens);
+        srId = th.id;
+        nav  = `navigateSearchResult('theme','${th.id}')`;
+      } else if (g.type === 'knowledge') {
+        const k = item;
+        title   = _hl(k.title, tokens);
+        context = k.themeIds.map(id => themeById(id)?.title).filter(Boolean).join(', ');
+        snippet = _hl(_snippet(k.content, tokens), tokens);
+        srId = k.id;
+        nav  = `navigateSearchResult('knowledge','${k.id}')`;
       }
 
       _searchItems.push({ type: srType, id: srId, meetingId: srMid });
@@ -6384,6 +7094,13 @@ function navigateSearchResult(type, id, meetingId) {
   } else if (type === 'contact') {
     selectView('__contacts__');
     setTimeout(() => openContactModal(id), 120);
+  } else if (type === 'theme') {
+    selectView('__themes__');
+    setTimeout(() => selectTheme(id), 120);
+  } else if (type === 'knowledge') {
+    selectedThemeId = null;
+    selectView('__themes__');
+    setTimeout(() => openKnowledgeModal(id), 120);
   }
 }
 

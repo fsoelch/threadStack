@@ -43,6 +43,11 @@ struct SidebarView: View {
                        badge: state.themes.isEmpty ? nil : "\(state.themes.count)",
                        item: .themes)
                     .tag(SidebarItem.themes.sentinel)
+                navRow(icon: "books.vertical.fill", iconColor: DS.purple,
+                       label: "Wissen",
+                       badge: state.knowledgePages.isEmpty ? nil : "\(state.knowledgePages.count)",
+                       item: .knowledge)
+                    .tag(SidebarItem.knowledge.sentinel)
                 navRow(icon: "person.crop.circle.fill", iconColor: DS.pink,
                        label: "Ansprechpartner",
                        badge: state.contacts.isEmpty ? nil : "\(state.contacts.count)",
@@ -92,16 +97,21 @@ struct SidebarView: View {
         List(selection: $selectedMeetingId) {
             // ── Schnellzugriff ──────────────────────────────
             Section {
-                HStack(spacing: 10) {
-                    quickCard(icon: "checkmark.circle.fill", color: DS.green,
-                              label: "Todos", count: state.openTodoCount,
-                              sentinel: SidebarItem.todos.sentinel)
-                    quickCard(icon: "tag.fill", color: DS.purple,
-                              label: "Topics", count: state.themes.count,
-                              sentinel: SidebarItem.themes.sentinel)
-                    quickCard(icon: "person.2.fill", color: DS.pink,
-                              label: "Kontakte", count: state.contacts.count,
-                              sentinel: SidebarItem.contacts.sentinel)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        quickCard(icon: "checkmark.circle.fill", color: DS.green,
+                                  label: "Todos", count: state.openTodoCount,
+                                  sentinel: SidebarItem.todos.sentinel)
+                        quickCard(icon: "tag.fill", color: DS.purple,
+                                  label: "Topics", count: state.themes.count,
+                                  sentinel: SidebarItem.themes.sentinel)
+                        quickCard(icon: "books.vertical.fill", color: DS.purple,
+                                  label: "Wissen", count: state.knowledgePages.count,
+                                  sentinel: SidebarItem.knowledge.sentinel)
+                        quickCard(icon: "person.2.fill", color: DS.pink,
+                                  label: "Kontakte", count: state.contacts.count,
+                                  sentinel: SidebarItem.contacts.sentinel)
+                    }
                 }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
@@ -180,7 +190,7 @@ struct SidebarView: View {
                     .foregroundStyle(.primary)
             }
             .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: 92, alignment: .leading)
             .background(.white)
             .clipShape(RoundedRectangle(cornerRadius: DS.cardRadius))
             .shadow(color: DS.cardShadow, radius: 1, x: 0, y: 1)
@@ -232,20 +242,22 @@ struct SidebarView: View {
 extension SidebarItem {
     var sentinel: String {
         switch self {
-        case .meetings: return "__meetings__"
-        case .themes:   return "__themes__"
-        case .contacts: return "__contacts__"
-        case .todos:    return "__todos__"
-        case .digest:   return "__digest__"
+        case .meetings:  return "__meetings__"
+        case .themes:    return "__themes__"
+        case .knowledge: return "__knowledge__"
+        case .contacts:  return "__contacts__"
+        case .todos:     return "__todos__"
+        case .digest:    return "__digest__"
         }
     }
     static func fromSelection(_ id: String?) -> SidebarItem {
         switch id {
-        case "__themes__"?:   return .themes
-        case "__contacts__"?: return .contacts
-        case "__todos__"?:    return .todos
-        case "__digest__"?:   return .digest
-        default:              return .meetings
+        case "__themes__"?:    return .themes
+        case "__knowledge__"?: return .knowledge
+        case "__contacts__"?:  return .contacts
+        case "__todos__"?:     return .todos
+        case "__digest__"?:    return .digest
+        default:               return .meetings
         }
     }
 }

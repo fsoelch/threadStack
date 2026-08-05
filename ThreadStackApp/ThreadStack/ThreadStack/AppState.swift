@@ -36,6 +36,7 @@ final class AppState: ObservableObject {
     @Published var meetings:    [Meeting]  = []
     @Published var todos:       [TodoItem] = []
     @Published var themes:      [Theme]    = []
+    @Published var knowledgePages: [KnowledgePage] = []
     @Published var contacts:    [Contact]  = []
     @Published var isLoading = false
 
@@ -163,7 +164,7 @@ final class AppState: ObservableObject {
     func logout() async throws {
         stopAutoRefresh()
         try await requestOK("POST", "/logout")
-        currentUser = nil; meetings = []; todos = []; themes = []; contacts = []
+        currentUser = nil; meetings = []; todos = []; themes = []; knowledgePages = []; contacts = []
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]
         // Beim manuellen Logout: stored credentials behalten wir bewusst — der nächste
@@ -214,8 +215,10 @@ final class AppState: ObservableObject {
         async let t:  [TodoItem] = request("GET", "/todos")
         async let th: [Theme]    = request("GET", "/themes")
         async let co: [Contact]  = request("GET", "/contacts")
+        async let kp: [KnowledgePage] = request("GET", "/knowledge")
         meetings = try await m; todos = try await t; themes = try await th
         contacts = (try? await co) ?? contacts   // contacts ist neu, alte Server tolerieren
+        knowledgePages = (try? await kp) ?? knowledgePages // Wissen ist neu, alte Server tolerieren
     }
 
     // MARK: - Meetings
@@ -416,9 +419,10 @@ final class AppState: ObservableObject {
 
     // MARK: - Themes
 
-    func createTheme(title: String, description: String) async throws {
-        let th: Theme = try await request("POST", "/themes",
-                                          body: ["title": title, "description": description])
+    func createTheme(title: String, description: String, parentId: String? = nil) async throws {
+        var body: [String: Any] = ["title": title, "description": description]
+        if let parentId { body["parentId"] = parentId }
+        let th: Theme = try await request("POST", "/themes", body: body)
         themes.append(th)
     }
 
@@ -430,9 +434,66 @@ final class AppState: ObservableObject {
         }
     }
 
-    func deleteTheme(id: String) async throws {
-        try await requestOK("DELETE", "/themes/\(id)")
-        themes.removeAll { $0.id == id }
+    /// Verschiebt ein Topic unter ein neues Parent (nil = Wurzel).
+    func moveTheme(id: String, parentId: String?) async throws {
+        try await requestOK("PUT", "/themes/\(id)/move", body: ["parentId": Self.nullable(parentId)])
+        if let i = themes.firstIndex(where: { $0.id == id }) { themes[i].parentId = parentId }
+    }
+
+    func themeDeletePreview(id: String) async -> ThemeDeletePreview {
+        (try? await request("GET", "/themes/\(id)/delete-preview"))
+            ?? ThemeDeletePreview(subTopicCount: 0, knowledgePageCount: 0)
+    }
+
+    /// cascade=true löscht Unter-Topics und deren Wissen mit; cascade=false stuft Unter-Topics
+    /// eine Ebene hoch. Lädt Themes und Wissen danach neu, da sich die Baumstruktur ändert.
+    func deleteTheme(id: String, cascade: Bool) async throws {
+        try await requestOK("DELETE", "/themes/\(id)?cascade=\(cascade)")
+        themes = (try? await request("GET", "/themes")) ?? themes.filter { $0.id != id }
+        await loadKnowledgePages()
+    }
+
+    func themeChildren(of parentId: String?) -> [Theme] {
+        themes.filter { $0.parentId == parentId }
+            .sorted { ($0.sortOrder ?? 0) < ($1.sortOrder ?? 0) }
+    }
+
+    /// Pfad von der Wurzel bis zum Topic (inklusive), für Breadcrumbs.
+    func themeAncestorsPath(_ id: String) -> [Theme] {
+        var path: [Theme] = []
+        var seen = Set<String>()
+        var current = themes.first(where: { $0.id == id })
+        while let cur = current, !seen.contains(cur.id) {
+            path.insert(cur, at: 0)
+            seen.insert(cur.id)
+            current = cur.parentId.flatMap { pid in themes.first(where: { $0.id == pid }) }
+        }
+        return path
+    }
+
+    func themeDescendantIds(_ id: String) -> [String] {
+        var out: [String] = []
+        var stack = [id]
+        while let cur = stack.popLast() {
+            for c in themeChildren(of: cur) { out.append(c.id); stack.append(c.id) }
+        }
+        return out
+    }
+
+    // MARK: - Knowledge (Wissensseiten, read-only in der App — Bearbeitung nur im Web)
+
+    func loadKnowledgePages() async {
+        knowledgePages = (try? await request("GET", "/knowledge")) ?? knowledgePages
+    }
+
+    /// Wissen zu einem Topic, optional inkl. Unter-Topics (mit originThemeId/-Title für Herkunfts-Badges).
+    func themeKnowledge(id: String, includeDescendants: Bool) async -> [KnowledgePage] {
+        (try? await request("GET", "/themes/\(id)/knowledge?includeDescendants=\(includeDescendants)")) ?? []
+    }
+
+    /// Todos zu einem Topic, optional inkl. Unter-Topics (mit originThemeId/-Title für Herkunfts-Badges).
+    func themeTodos(id: String, includeDescendants: Bool) async -> [TodoItem] {
+        (try? await request("GET", "/themes/\(id)/todos?includeDescendants=\(includeDescendants)")) ?? []
     }
 
     // MARK: - Contacts (Ansprechpartner)

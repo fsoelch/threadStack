@@ -71,6 +71,9 @@ struct TodoItem: Identifiable, Codable, Equatable {
     var isPrivate: Bool = false
     var sortOrder: Int?
     var createdAt: String
+    // Nur gesetzt bei GET /themes/:id/todos?includeDescendants= — zeigt Herkunfts-Unter-Topic
+    var originThemeId: String?
+    var originThemeTitle: String?
 
     var isSnoozed: Bool {
         guard let s = snoozedUntil, !s.isEmpty else { return false }
@@ -112,6 +115,7 @@ struct Theme: Identifiable, Codable, Equatable {
     let id: String
     var title: String
     var description: String
+    var parentId: String?
     var sortOrder: Int?
     var createdAt: String
     var links: [ThemeLink]
@@ -121,6 +125,27 @@ struct ThemeLink: Identifiable, Codable, Equatable {
     let id: String
     var refType: String
     var refId: String
+}
+
+struct ThemeDeletePreview: Codable {
+    let subTopicCount: Int
+    let knowledgePageCount: Int
+}
+
+// MARK: - Knowledge (Wissensseiten)
+// originThemeId/originThemeTitle sind nur bei den themenbezogenen Endpoints
+// (GET /themes/:id/knowledge?includeDescendants=) gesetzt — zeigen, aus welchem
+// Unter-Topic ein vererbter Eintrag stammt.
+struct KnowledgePage: Identifiable, Codable, Equatable {
+    let id: String
+    var title: String
+    var content: String
+    var sortOrder: Int?
+    var createdAt: String
+    var updatedAt: String
+    var themeIds: [String]
+    var originThemeId: String?
+    var originThemeTitle: String?
 }
 
 // MARK: - Contact (Ansprechpartner)
