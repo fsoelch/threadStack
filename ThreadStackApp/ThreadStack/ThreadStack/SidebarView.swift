@@ -53,6 +53,11 @@ struct SidebarView: View {
                        badge: state.openTodoCount > 0 ? "\(state.openTodoCount)" : nil,
                        item: .todos)
                     .tag(SidebarItem.todos.sentinel)
+                navRow(icon: "point.3.filled.connected.trianglepath.dotted", iconColor: DS.accent,
+                       label: "Graph",
+                       badge: nil,
+                       item: .graph)
+                    .tag(SidebarItem.graph.sentinel)
                 if state.aiFeatureEnabled(\.digest) {
                     navRow(icon: "chart.bar.doc.horizontal", iconColor: .blue,
                            label: "Wochen-Digest",
@@ -103,6 +108,18 @@ struct SidebarView: View {
                               label: "Kontakte", count: state.contacts.count,
                               sentinel: SidebarItem.contacts.sentinel)
                 }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+
+                Button {
+                    selectedMeetingId = SidebarItem.graph.sentinel
+                } label: {
+                    Label("Graph", systemImage: "point.3.filled.connected.trianglepath.dotted")
+                        .foregroundStyle(.secondary)
+                        .font(.subheadline)
+                }
+                .buttonStyle(.plain)
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
@@ -237,6 +254,7 @@ extension SidebarItem {
         case .contacts: return "__contacts__"
         case .todos:    return "__todos__"
         case .digest:   return "__digest__"
+        case .graph:    return "__graph__"
         }
     }
     static func fromSelection(_ id: String?) -> SidebarItem {
@@ -245,6 +263,7 @@ extension SidebarItem {
         case "__contacts__"?: return .contacts
         case "__todos__"?:    return .todos
         case "__digest__"?:   return .digest
+        case "__graph__"?:    return .graph
         default:              return .meetings
         }
     }

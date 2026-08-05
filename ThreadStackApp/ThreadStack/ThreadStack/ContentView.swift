@@ -98,6 +98,9 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showAdmin)    { AdminView() }
         .task { await reload() }
+        .onChange(of: state.graphNavigationRequest) { _, target in
+            applyGraphNavigation(target)
+        }
     }
     #endif
 
@@ -121,6 +124,9 @@ struct ContentView: View {
         .sheet(isPresented: $showAdmin)    { AdminView() }
         .refreshable { await reload() }
         .task { await reload() }
+        .onChange(of: state.graphNavigationRequest) { _, target in
+            applyGraphNavigation(target)
+        }
     }
     #endif
 
@@ -157,6 +163,12 @@ struct ContentView: View {
             NavigationStack { DigestView() }
             #else
             DigestView()
+            #endif
+        case .graph:
+            #if os(iOS)
+            NavigationStack { GraphView() }
+            #else
+            GraphView()
             #endif
         }
     }
@@ -207,6 +219,27 @@ struct ContentView: View {
         }
     }
 
+    /// Consumes a Graph-view "Öffnen" request by switching the existing
+    /// sidebar selection to the matching pre-existing detail view.
+    private func applyGraphNavigation(_ target: GraphNavigationTarget?) {
+        guard let target else { return }
+        switch target {
+        case .meeting(let meetingId):
+            selectedView = .meetings
+            selectedMeetingId = meetingId
+        case .todos:
+            selectedMeetingId = SidebarItem.todos.sentinel
+            selectedView = .todos
+        case .themes:
+            selectedMeetingId = SidebarItem.themes.sentinel
+            selectedView = .themes
+        case .contacts:
+            selectedMeetingId = SidebarItem.contacts.sentinel
+            selectedView = .contacts
+        }
+        state.graphNavigationRequest = nil
+    }
+
     private func reload() async {
         do { try await state.loadAll() }
         catch { self.error = error.localizedDescription }
@@ -218,4 +251,4 @@ struct ContentView: View {
     }
 }
 
-enum SidebarItem: Hashable { case meetings, todos, themes, contacts, digest }
+enum SidebarItem: Hashable { case meetings, todos, themes, contacts, digest, graph }

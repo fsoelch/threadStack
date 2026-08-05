@@ -58,6 +58,36 @@ final class AppState: ObservableObject {
     private var refreshTimer: Timer?
     private let autoRefreshInterval: TimeInterval = 60   // Sekunden
 
+    // MARK: - Graph (Story B9)
+
+    @Published var graphNodes: [GraphNode] = []
+    @Published var graphEdges: [GraphEdge] = []
+    @Published var graphSchema: GraphSchema = GraphSchema()
+    @Published var graphStats: GraphStats = GraphStats()
+    @Published var graphIsLoading = false
+    /// Set when the last load failed but a cached snapshot could be shown instead.
+    @Published var graphIsOffline = false
+    /// User-facing error text when neither a live load nor a cache was available.
+    @Published var graphError: String?
+    @Published var graphLastLoadedAt: Date?
+
+    private lazy var graphPositionSync: GraphPositionSync = {
+        let sync = GraphPositionSync()
+        sync.onFlush = { [weak self] moves in
+            try await self?.savePositions(moves)
+        }
+        sync.onError = { [weak self] error in
+            self?.graphPositionSaveError = error.localizedDescription
+        }
+        return sync
+    }()
+    /// Dezenter Hinweis, dass die letzte Positions-Speicherung fehlgeschlagen ist
+    /// (Position bleibt lokal sichtbar, Wiederholung folgt automatisch).
+    @Published var graphPositionSaveError: String?
+    /// Set by the Graph view's node "Öffnen" action, consumed by `ContentView`
+    /// to switch to the matching existing detail view.
+    @Published var graphNavigationRequest: GraphNavigationTarget?
+
     var aiIsActive: Bool { aiSettings?.isActive ?? false }
     func aiFeatureEnabled(_ keyPath: KeyPath<AIFeatures, Bool>) -> Bool {
         guard aiIsActive, let f = aiSettings?.features_enabled else { return false }
@@ -166,8 +196,19 @@ final class AppState: ObservableObject {
         currentUser = nil; meetings = []; todos = []; themes = []; contacts = []
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]
+        clearGraphStateOnLogout()
         // Beim manuellen Logout: stored credentials behalten wir bewusst — der nächste
         // App-Start fragt dann via Face ID nach.
+    }
+
+    /// Security requirement (Story B9 / offline cache): the on-disk graph
+    /// cache holds the previous user's content and must not survive logout.
+    private func clearGraphStateOnLogout() {
+        graphNodes = []; graphEdges = []
+        graphSchema = GraphSchema(); graphStats = GraphStats()
+        graphIsOffline = false; graphError = nil; graphPositionSaveError = nil
+        graphLastLoadedAt = nil
+        GraphCache.clear()
     }
 
     /// Entsperrt die App via Biometrie und meldet sich automatisch am Server an.
@@ -691,6 +732,75 @@ final class AppState: ObservableObject {
             let r: DriftResponse = try await aiRequest("GET", "/ai/insights/drift")
             driftIds = Set(r.drifted.map(\.topic_id))
         } catch { driftIds = [] }
+    }
+
+    // MARK: - Graph (Story B9)
+
+    /// Loads the full graph in a single round trip. Falls back to the last
+    /// cached snapshot (see `GraphCache`) if the request fails, so the view
+    /// still has something useful to show when offline.
+    func loadGraph() async {
+        graphIsLoading = true
+        defer { graphIsLoading = false }
+        do {
+            let resp: GraphResponse = try await request("GET", "/graph")
+            graphNodes = resp.nodes
+            graphEdges = resp.edges
+            graphSchema = resp.schema
+            graphStats = resp.stats
+            graphIsOffline = false
+            graphError = nil
+            graphLastLoadedAt = Date()
+            GraphCache.save(resp)
+            // A reconnect might have brought back moves queued while offline.
+            await graphPositionSync.flushNow()
+        } catch {
+            if let cached = GraphCache.load() {
+                graphNodes = cached.nodes
+                graphEdges = cached.edges
+                graphSchema = cached.schema
+                graphStats = cached.stats
+                graphIsOffline = true
+                graphError = nil
+            } else {
+                graphNodes = []; graphEdges = []
+                graphIsOffline = false
+                graphError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Queues a single node's new position for debounced (500ms), serialized
+    /// persistence. Safe to call repeatedly during a drag; only the final
+    /// position per node key survives to be sent.
+    func enqueueGraphPositionSave(type: String, id: String, x: Double, y: Double) {
+        graphPositionSaveError = nil
+        graphPositionSync.enqueue(type: type, id: id, x: x, y: y)
+    }
+
+    /// Direct save of a batch of positions. Called by `GraphPositionSync`;
+    /// exposed for callers (e.g. tests) that want to bypass debouncing.
+    /// Contract: `PATCH /api/graph/positions`, body `{positions: [...]}`, max 500 per request.
+    func savePositions(_ moves: [GraphPositionSync.Move]) async throws {
+        guard !moves.isEmpty else { return }
+        var idx = 0
+        while idx < moves.count {
+            let end = min(idx + 500, moves.count)
+            let chunk = moves[idx..<end]
+            let payload: [[String: Any]] = chunk.map {
+                ["type": $0.type, "id": $0.id, "x": $0.x, "y": $0.y]
+            }
+            let _: GraphPositionsSaveResponse = try await request("PATCH", "/graph/positions",
+                                                                   body: ["positions": payload])
+            idx = end
+        }
+    }
+
+    /// Reparents a theme (topic) node — reuses the existing `/themes/:id/move`
+    /// endpoint. Errors surface the server's `code` (`SELF_PARENT`, `CYCLE`, ...)
+    /// via `APIError.server(message)` so callers can show the exact backend text.
+    func moveTheme(id: String, parentId: String?) async throws {
+        try await requestOK("PUT", "/themes/\(id)/move", body: ["parentId": Self.nullable(parentId)])
     }
 
     // MARK: - Refresh (auto + manual)
