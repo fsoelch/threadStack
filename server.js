@@ -1135,7 +1135,7 @@ app.delete(`${A}/themes/:id`, requireAuth, (req, res) => {
       db.prepare(`DELETE FROM themes WHERE id IN (${placeholders}) AND user_id=?`).run(...allIds, req.session.uid);
       for (const pid of pageIds) {
         const remaining = db.prepare('SELECT COUNT(*) as c FROM knowledge_topic_links WHERE knowledge_page_id=?').get(pid).c;
-        if (remaining === 0) db.prepare('DELETE FROM knowledge_pages WHERE id=?').run(pid);
+        if (remaining === 0) db.prepare('DELETE FROM knowledge_pages WHERE id=? AND user_id=?').run(pid, req.session.uid);
       }
     } else {
       // Promote direct children to the deleted topic's parent, then delete just this topic
@@ -2173,8 +2173,12 @@ function parseAttachment(a) {
 // ── Statische Assets (Graph-Modul: /public/graph.js, graph.css) ──
 // Unter beiden Pfaden gemountet, damit `/assets/...` in index.html unabhängig
 // von einem konfigurierten BASE_PATH funktioniert.
-app.use('/assets', express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'ignore', etag: true, maxAge: 0 }));
-if (BASE) app.use(`${BASE}/assets`, express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'ignore', etag: true, maxAge: 0 }));
+// graph-dev.html ist eine Entwickler-Harness (Mock-Backend, keine Secrets) und soll
+// nicht im Produktionsauslieferungspfad erreichbar sein.
+const assetsGuard = (req, res, next) => (req.path.toLowerCase() === '/graph-dev.html') ? res.status(404).end() : next();
+const assetsStatic = express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'ignore', etag: true, maxAge: 0 });
+app.use('/assets', assetsGuard, assetsStatic);
+if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
 
 // ── Frontend ─────────────────────────────────────────────────
 app.get(BASE || '/', (req, res) => {

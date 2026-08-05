@@ -22,7 +22,7 @@ function buildDb() {
     CREATE TABLE theme_links(id TEXT PRIMARY KEY, theme_id TEXT NOT NULL, ref_type TEXT NOT NULL, ref_id TEXT NOT NULL, created_at TEXT, UNIQUE(theme_id, ref_id));
     CREATE TABLE knowledge_pages(id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT, updated_at TEXT, created_at TEXT);
     CREATE TABLE knowledge_topic_links(id TEXT PRIMARY KEY, knowledge_page_id TEXT NOT NULL, theme_id TEXT NOT NULL, created_at TEXT, UNIQUE(knowledge_page_id, theme_id));
-    CREATE TABLE knowledge_links(id TEXT PRIMARY KEY, page_a_id TEXT NOT NULL, page_b_id TEXT NOT NULL, created_at TEXT, UNIQUE(page_a_id, page_b_id));
+    CREATE TABLE knowledge_links(id TEXT PRIMARY KEY, user_id TEXT NOT NULL, page_a_id TEXT NOT NULL, page_b_id TEXT NOT NULL, created_at TEXT, UNIQUE(page_a_id, page_b_id), CHECK(page_a_id < page_b_id));
     CREATE TABLE contacts(id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT, role TEXT NOT NULL DEFAULT '', created_at TEXT);
     CREATE TABLE graph_node_positions(user_id TEXT NOT NULL, node_type TEXT NOT NULL, node_id TEXT NOT NULL, x REAL, y REAL, updated_at TEXT, PRIMARY KEY(user_id, node_type, node_id));
   `);
@@ -432,7 +432,7 @@ test('DELETE kk: löscht Wissen-zu-Wissen-Verweis', async () => {
   const kpB = makeKnowledge(db, userId);
   const [a, b] = [kpA, kpB].sort();
   const linkId = id('kk');
-  db.prepare('INSERT INTO knowledge_links(id,page_a_id,page_b_id,created_at) VALUES (?,?,?,?)').run(linkId, a, b, now());
+  db.prepare('INSERT INTO knowledge_links(id,user_id,page_a_id,page_b_id,created_at) VALUES (?,?,?,?,?)').run(linkId, userId, a, b, now());
 
   const res = await request(app).delete(`/api/graph/edges/kk:${linkId}`).set('x-user-id', userId);
   assert.equal(res.status, 200);

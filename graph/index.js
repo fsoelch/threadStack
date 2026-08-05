@@ -375,7 +375,7 @@ module.exports = function graphRoutes(app, ctx) {
       let created = false;
       if (!row) {
         const id = newId();
-        db.prepare('INSERT INTO knowledge_links(id,page_a_id,page_b_id,created_at) VALUES (?,?,?,?)').run(id, aId, bId, now);
+        db.prepare('INSERT INTO knowledge_links(id,user_id,page_a_id,page_b_id,created_at) VALUES (?,?,?,?,?)').run(id, userId, aId, bId, now);
         row = { id };
         created = true;
       }

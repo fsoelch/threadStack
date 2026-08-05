@@ -3011,6 +3011,16 @@ function escHtml(s) {
 }
 function nlBr(s) { return escHtml(s).replace(/\n/g,'<br>'); }
 
+// Für Werte, die als String-Literal in ein Inline-onclick-Attribut eingebettet werden
+// (z. B. onclick="foo('${escJsAttr(title)}')"): escHtml() allein reicht hier NICHT,
+// weil der HTML-Parser Entities im Attributwert dekodiert, BEVOR der Inhalt als
+// JavaScript geparst wird — ein einfaches Anführungszeichen käme unverändert wieder
+// heraus und würde aus dem String ausbrechen. \uXXXX-Escapes überleben die
+// HTML-Entity-Dekodierung unverändert und sind daher sowohl HTML- als auch JS-sicher.
+function escJsAttr(s) {
+  return String(s || '').replace(/[\\'"<>&\n\r]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+}
+
 // ── Rich-Text helpers ────────────────────────────────────────
 function sanitizeHtml(html) {
   if (!html) return '';
@@ -3407,6 +3417,11 @@ async function doLogin() {
 
 async function doLogout() {
   try { await api('POST', '/logout'); } catch {}
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.startsWith('ts_kb_draft_'))
+      .forEach(k => localStorage.removeItem(k));
+  } catch {}
   currentUser = null; meetings = []; selectedId = null;
   showLogin();
 }
@@ -4929,7 +4944,7 @@ function renderThemeDetailPanel() {
             <button class="btn btn-secondary btn-sm" onclick="openThemeModal(null,'${theme.id}')" title="Unter-Topic anlegen">+ Unter-Topic</button>
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openThemeModal('${theme.id}')" title="Bearbeiten">${SVG.pencil}</button>
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openThemeMoveModal('${theme.id}')" title="Verschieben">↕</button>
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteTheme('${theme.id}','${escHtml(theme.title)}')" title="Löschen">🗑️</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteTheme('${theme.id}','${escJsAttr(theme.title)}')" title="Löschen">🗑️</button>
           </div>
         </div>
       </div>
@@ -4989,7 +5004,7 @@ function renderKnowledgeCard(k) {
         </div>
         <div style="display:flex;align-items:center;gap:.375rem;flex-shrink:0">
           ${k.originThemeTitle ? `<span class="origin-badge" title="Geerbt von Unter-Topic">${escHtml(k.originThemeTitle)}</span>` : ''}
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteKnowledge('${k.id}','${escHtml(k.title)}')" title="Löschen">🗑️</button>
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteKnowledge('${k.id}','${escJsAttr(k.title)}')" title="Löschen">🗑️</button>
         </div>
       </div>
       ${paths.length ? `<div class="knowledge-card-path">${paths.map(p => `🏷️ ${escHtml(p)}`).join('&nbsp;&nbsp;·&nbsp;&nbsp;')}</div>` : ''}
@@ -5157,7 +5172,7 @@ let kbDraftTimer = null;
 let kbDraftIndicatorTimer = null;
 let kbRelatedFocusIdx = -1;
 
-function kbDraftKey() { return `ts_kb_draft_${editKnowledgeId || 'new'}`; }
+function kbDraftKey() { return `ts_kb_draft_${currentUser?.id || 'anon'}_${editKnowledgeId || 'new'}`; }
 
 function openKnowledgeModal(id, presetThemeId) {
   editKnowledgeId = id || null;
@@ -5343,10 +5358,12 @@ function kbSearchRelated(q) {
       } else {
         resultsEl.innerHTML = filtered.slice(0, 6).map((r, i) => `
           <div class="kb-related-result" tabindex="-1" data-idx="${i}" data-id="${r.id}" data-title="${escHtml(r.title)}"
-               onclick="kbSelectRelated('${r.id}','${escHtml(r.title).replace(/"/g,'&quot;')}')"
                style="padding:.5rem .75rem;font-size:.8125rem;cursor:pointer;border-bottom:1px solid var(--border)">
             <strong>${escHtml(r.title)}</strong>
           </div>`).join('');
+        resultsEl.querySelectorAll('.kb-related-result').forEach(el => {
+          el.addEventListener('click', () => kbSelectRelated(el.dataset.id, el.dataset.title));
+        });
       }
       resultsEl.style.display = 'block';
     } catch { resultsEl.style.display = 'none'; }
@@ -5878,7 +5895,7 @@ function renderUserList() {
           <td style="font-size:.8125rem">${fmtLastActive(u.last_active_at)}</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn btn-secondary btn-sm" onclick="openEditUser('${u.id}')">✏️</button>
-            ${u.id!==currentUser.id?`<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteUser('${u.id}','${escHtml(u.username)}')">🗑️</button>`:''}
+            ${u.id!==currentUser.id?`<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="confirmDeleteUser('${u.id}','${escJsAttr(u.username)}')">🗑️</button>`:''}
           </td>
         </tr>`).join('')}
       </tbody>
