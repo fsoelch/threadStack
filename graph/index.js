@@ -320,7 +320,7 @@ module.exports = function graphRoutes(app, ctx) {
           outcome = { error: ['SELF_PARENT', 'Ein Topic kann nicht sein eigenes Elternteil sein'] };
           return;
         }
-        const descendants = themeDescendantIds(source.id) || [];
+        const descendants = themeDescendantIds(source.id, userId) || [];
         if (descendants.includes(target.id)) {
           outcome = { error: ['CYCLE', 'Zyklus: Ziel ist ein Unter-Topic dieses Topics'] };
           return;

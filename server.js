@@ -6,6 +6,7 @@ const Database = require('better-sqlite3');
 const crypto   = require('crypto');
 const path     = require('path');
 const fs       = require('fs');
+const { sanitizeKnowledgeHtml, htmlToText, MAX_KNOWLEDGE_CONTENT } = require('./lib/sanitize');
 
 const app      = express();
 // If behind a trusted reverse proxy (e.g. nginx on same host), set TRUST_PROXY=1
@@ -437,6 +438,82 @@ db.exec(`
   }
 }
 
+// ── Migration: Wissensseiten-Verknüpfungen (Wissensmanagement v2.1, Block A) ──
+// Ungerichtete Verknüpfung zwischen zwei Wissensseiten. Ungerichtetheit wird
+// strukturell erzwungen: vor jedem Insert werden die beiden IDs lexikografisch
+// sortiert (a < b), das CHECK verhindert Selbstverweise, UNIQUE liefert Idempotenz.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS knowledge_links (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id)            ON DELETE CASCADE,
+    page_a_id  TEXT NOT NULL REFERENCES knowledge_pages(id)  ON DELETE CASCADE,
+    page_b_id  TEXT NOT NULL REFERENCES knowledge_pages(id)  ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    UNIQUE(page_a_id, page_b_id),
+    CHECK(page_a_id < page_b_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_klinks_a ON knowledge_links(page_a_id);
+  CREATE INDEX IF NOT EXISTS idx_klinks_b ON knowledge_links(page_b_id);
+`);
+
+// ── Migration: Graph-Knoten-Positionen (Wissensmanagement v2.1, Paket 1b) ──
+// Nur das Schema wird hier angelegt; Routen dafür gehören zu einem separaten
+// Arbeitspaket (Graph-Modul).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS graph_node_positions (
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    node_type  TEXT NOT NULL,
+    node_id    TEXT NOT NULL,
+    x          REAL NOT NULL,
+    y          REAL NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, node_type, node_id)
+  ) WITHOUT ROWID;
+`);
+
+// ── Migration: knowledge_pages.content_text + FTS-Neuaufbau (Wissensmanagement v2.1, Block A) ──
+// content_text hält den auf reinen Text reduzierten Inhalt (via htmlToText) für
+// FTS/Snippets; content bleibt das sanitized HTML für die Anzeige.
+{
+  const hasContentText = db.prepare('PRAGMA table_info(knowledge_pages)').all().some(c => c.name === 'content_text');
+  if (!hasContentText) {
+    db.transaction(() => {
+      db.exec(`ALTER TABLE knowledge_pages ADD COLUMN content_text TEXT NOT NULL DEFAULT ''`);
+
+      const pages = db.prepare('SELECT id, content FROM knowledge_pages').all();
+      const updText = db.prepare('UPDATE knowledge_pages SET content_text=? WHERE id=?');
+      for (const p of pages) updText.run(htmlToText(p.content || ''), p.id);
+
+      // Drop + recreate the three FTS triggers so they index content_text instead of raw content.
+      db.exec(`
+        DROP TRIGGER IF EXISTS trg_search_knowledge_ai;
+        DROP TRIGGER IF EXISTS trg_search_knowledge_au;
+        DROP TRIGGER IF EXISTS trg_search_knowledge_ad;
+
+        CREATE TRIGGER trg_search_knowledge_ai AFTER INSERT ON knowledge_pages BEGIN
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content_text);
+        END;
+        CREATE TRIGGER trg_search_knowledge_au AFTER UPDATE ON knowledge_pages BEGIN
+          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
+          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content_text);
+        END;
+        CREATE TRIGGER trg_search_knowledge_ad AFTER DELETE ON knowledge_pages BEGIN
+          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
+        END;
+      `);
+
+      // Reindex all existing knowledge rows in search_index with the new body.
+      db.exec(`DELETE FROM search_index WHERE ref_type='knowledge'`);
+      const reindex = db.prepare(
+        `INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', ?, ?, ?, ?)`
+      );
+      for (const p of db.prepare('SELECT id, user_id, title, content_text FROM knowledge_pages').all()) {
+        reindex.run(p.id, p.user_id, p.title, p.content_text);
+      }
+    })();
+  }
+}
+
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
 let encryptionKey;
@@ -493,6 +570,12 @@ function isValidDate(s) { return !s || /^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]{1,30})?$/.
 
 const MAX_TITLE = 300;
 const MAX_DESC  = 500_000;
+
+// ── Fehler-Envelope (verbindlich für Wissensmanagement-v2.1-Endpunkte, Block A) ──
+// { error: 'Deutscher Klartext', code: 'UPPER_SNAKE_CASE', ...extra }
+function fail(res, status, code, msg, extra) {
+  res.status(status).json(Object.assign({ error: msg, code }, extra || {}));
+}
 
 function stripUnsafeHtml(s) {
   if (!s || typeof s !== 'string') return s;
@@ -1014,9 +1097,9 @@ app.put(`${A}/themes/:id/move`, requireAuth, (req, res) => {
   if (parentId) {
     const parent = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(parentId, req.session.uid);
     if (!parent) return res.status(400).json({ error: 'Übergeordnetes Topic nicht gefunden' });
-    if (parentId === t.id) return res.status(400).json({ error: 'Ein Topic kann nicht sein eigenes Elternteil sein' });
+    if (parentId === t.id) return fail(res, 409, 'SELF_PARENT', 'Ein Topic kann nicht sein eigenes Elternteil sein');
     const descendants = themeDescendantIds(t.id, req.session.uid);
-    if (descendants.includes(parentId)) return res.status(400).json({ error: 'Zyklus: Ziel ist ein Unter-Topic dieses Topics' });
+    if (descendants.includes(parentId)) return fail(res, 409, 'CYCLE', 'Zyklus: Ziel ist ein Unter-Topic dieses Topics');
   }
   db.prepare('UPDATE themes SET parent_id=? WHERE id=? AND user_id=?').run(parentId, t.id, req.session.uid);
   res.json({ ok: true });
@@ -1068,7 +1151,10 @@ app.post(`${A}/themes/:id/links`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT * FROM themes WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   const { refType, refId } = req.body || {};
-  if (!['topic','todo'].includes(refType) || !refId) return res.status(400).json({ error: 'Ungültige Verknüpfung' });
+  if (!['topic','todo','contact'].includes(refType) || !refId) return res.status(400).json({ error: 'Ungültige Verknüpfung' });
+  // Sicherheitsfix: Eigentümerschaft von refId prüfen, BEVOR der Link angelegt wird —
+  // sonst könnte ein Nutzer fremde Todos/Themen/Kontakte an sein eigenes Topic hängen.
+  if (!ownsRef(req.session.uid, refType, refId)) return res.status(404).json({ error: 'Nicht gefunden' });
   try {
     const id = uid();
     db.prepare('INSERT INTO theme_links(id,theme_id,ref_type,ref_id,created_at) VALUES (?,?,?,?,?)')
@@ -1123,11 +1209,11 @@ app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
 });
 
 // ── Knowledge (Wissensseiten) ────────────────────────────────
-function parseKnowledgePage(k, themeIds = []) {
+function parseKnowledgePage(k, themeIds = [], relatedPageIds = []) {
   return {
     id: k.id, title: k.title, content: k.content,
     sortOrder: k.sort_order, createdAt: k.created_at, updatedAt: k.updated_at,
-    themeIds,
+    themeIds, relatedPageIds,
   };
 }
 
@@ -1144,12 +1230,39 @@ function knowledgeThemeIds(pageIds) {
   return map;
 }
 
+// Sammelabfrage: alle knowledge_links, die mindestens eine der übergebenen
+// Seiten betreffen — vermeidet N+1-Queries beim Listing (GET /api/knowledge).
+function knowledgeRelatedIds(pageIds) {
+  if (!pageIds.length) return new Map();
+  const placeholders = pageIds.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT page_a_id, page_b_id FROM knowledge_links WHERE page_a_id IN (${placeholders}) OR page_b_id IN (${placeholders})`
+  ).all(...pageIds, ...pageIds);
+  const idSet = new Set(pageIds);
+  const map = new Map();
+  for (const r of rows) {
+    if (idSet.has(r.page_a_id)) {
+      if (!map.has(r.page_a_id)) map.set(r.page_a_id, []);
+      map.get(r.page_a_id).push(r.page_b_id);
+    }
+    if (idSet.has(r.page_b_id)) {
+      if (!map.has(r.page_b_id)) map.set(r.page_b_id, []);
+      map.get(r.page_b_id).push(r.page_a_id);
+    }
+  }
+  return map;
+}
+
+function ownsKnowledgePage(userId, id) {
+  return db.prepare('SELECT * FROM knowledge_pages WHERE id=? AND user_id=?').get(id, userId);
+}
+
 // Global knowledge listing, optionally filtered by themeId (?themeId=...)
 app.get(`${A}/knowledge`, requireAuth, (req, res) => {
   let pages;
   if (req.query.themeId) {
     const t = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(req.query.themeId, req.session.uid);
-    if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+    if (!t) return fail(res, 404, 'NOT_FOUND', 'Nicht gefunden');
     pages = db.prepare(`
       SELECT kp.* FROM knowledge_pages kp
       JOIN knowledge_topic_links kl ON kl.knowledge_page_id = kp.id
@@ -1159,65 +1272,176 @@ app.get(`${A}/knowledge`, requireAuth, (req, res) => {
   } else {
     pages = db.prepare('SELECT * FROM knowledge_pages WHERE user_id=? ORDER BY sort_order, created_at').all(req.session.uid);
   }
-  const themeIdsByPage = knowledgeThemeIds(pages.map(p => p.id));
-  res.json(pages.map(p => parseKnowledgePage(p, themeIdsByPage.get(p.id) || [])));
+  const pageIds = pages.map(p => p.id);
+  const themeIdsByPage = knowledgeThemeIds(pageIds);
+  const relatedByPage  = knowledgeRelatedIds(pageIds);
+  res.json(pages.map(p => parseKnowledgePage(p, themeIdsByPage.get(p.id) || [], relatedByPage.get(p.id) || [])));
 });
 
 app.post(`${A}/knowledge`, requireAuth, (req, res) => {
-  const { title, content='', themeIds=[] } = req.body || {};
-  if (!title?.trim()) return res.status(400).json({ error: 'Überschrift erforderlich' });
-  if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Überschrift zu lang' });
-  if (String(content).length > MAX_DESC) return res.status(400).json({ error: 'Inhalt zu lang' });
-  if (!Array.isArray(themeIds) || !themeIds.length) return res.status(400).json({ error: 'Mindestens ein Topic erforderlich' });
-  const themes = db.prepare(`SELECT id FROM themes WHERE user_id=? AND id IN (${themeIds.map(()=>'?').join(',')})`)
-    .all(req.session.uid, ...themeIds);
-  if (themes.length !== themeIds.length) return res.status(400).json({ error: 'Ungültiges Topic in themeIds' });
+  const { title, content = '', themeIds = [] } = req.body || {};
+  if (!String(title || '').trim()) return fail(res, 400, 'TITLE_REQUIRED', 'Überschrift erforderlich');
+  if (String(title).length > MAX_TITLE) return fail(res, 400, 'TITLE_TOO_LONG', 'Überschrift zu lang', { limit: MAX_TITLE });
+  if (String(content).length > MAX_KNOWLEDGE_CONTENT) return fail(res, 400, 'CONTENT_TOO_LONG', 'Inhalt zu lang', { limit: MAX_KNOWLEDGE_CONTENT });
 
+  // themeIds ist optional (A3): unbekannte/fremde IDs werden stillschweigend verworfen statt 400.
+  const requestedThemeIds = Array.isArray(themeIds) ? [...new Set(themeIds.filter(x => typeof x === 'string'))] : [];
+  const validThemes = requestedThemeIds.length
+    ? db.prepare(`SELECT id FROM themes WHERE user_id=? AND id IN (${requestedThemeIds.map(()=>'?').join(',')})`)
+        .all(req.session.uid, ...requestedThemeIds)
+    : [];
+  const appliedThemeIds = validThemes.map(t => t.id);
+
+  const sanitized   = sanitizeKnowledgeHtml(content);
+  const contentText = htmlToText(sanitized);
   const id = uid();
   const now = new Date().toISOString();
   const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM knowledge_pages WHERE user_id=?').get(req.session.uid).m;
   db.transaction(() => {
-    db.prepare('INSERT INTO knowledge_pages(id,user_id,title,content,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?)')
-      .run(id, req.session.uid, title.trim(), stripUnsafeHtml(content), mx + 1, now, now);
+    db.prepare('INSERT INTO knowledge_pages(id,user_id,title,content,content_text,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)')
+      .run(id, req.session.uid, title.trim(), sanitized, contentText, mx + 1, now, now);
     const ins = db.prepare('INSERT INTO knowledge_topic_links(id,knowledge_page_id,theme_id,created_at) VALUES (?,?,?,?)');
-    for (const themeId of themeIds) ins.run(uid(), id, themeId, now);
+    for (const themeId of appliedThemeIds) ins.run(uid(), id, themeId, now);
   })();
-  res.status(201).json(parseKnowledgePage(db.prepare('SELECT * FROM knowledge_pages WHERE id=?').get(id), themeIds));
+  res.status(201).json(parseKnowledgePage(db.prepare('SELECT * FROM knowledge_pages WHERE id=?').get(id), appliedThemeIds, []));
 });
 
 app.put(`${A}/knowledge/:id`, requireAuth, (req, res) => {
-  const k = db.prepare('SELECT * FROM knowledge_pages WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
-  if (!k) return res.status(404).json({ error: 'Nicht gefunden' });
-  const { title=k.title, content=k.content } = req.body || {};
-  if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Überschrift zu lang' });
-  if (String(content).length > MAX_DESC) return res.status(400).json({ error: 'Inhalt zu lang' });
-  if (!String(title).trim()) return res.status(400).json({ error: 'Überschrift erforderlich' });
-  db.prepare('UPDATE knowledge_pages SET title=?,content=?,updated_at=? WHERE id=?')
-    .run(title.trim(), stripUnsafeHtml(content), new Date().toISOString(), k.id);
-  res.json({ ok: true });
+  const k = ownsKnowledgePage(req.session.uid, req.params.id);
+  // Kein Existenz-Orakel: gelöscht und fremd liefern denselben Code/Text.
+  if (!k) return fail(res, 404, 'KNOWLEDGE_PAGE_GONE', 'Diese Wissensseite existiert nicht mehr.');
+  const { title = k.title, content = k.content } = req.body || {};
+  if (!String(title || '').trim()) return fail(res, 400, 'TITLE_REQUIRED', 'Überschrift erforderlich');
+  if (String(title).length > MAX_TITLE) return fail(res, 400, 'TITLE_TOO_LONG', 'Überschrift zu lang', { limit: MAX_TITLE });
+  if (String(content).length > MAX_KNOWLEDGE_CONTENT) return fail(res, 400, 'CONTENT_TOO_LONG', 'Inhalt zu lang', { limit: MAX_KNOWLEDGE_CONTENT });
+
+  const sanitized   = sanitizeKnowledgeHtml(content);
+  const contentText = htmlToText(sanitized);
+  const now = new Date().toISOString();
+  db.prepare('UPDATE knowledge_pages SET title=?,content=?,content_text=?,updated_at=? WHERE id=?')
+    .run(String(title).trim(), sanitized, contentText, now, k.id);
+  res.json({ ok: true, updatedAt: now });
 });
 
 app.delete(`${A}/knowledge/:id`, requireAuth, (req, res) => {
   const r = db.prepare('DELETE FROM knowledge_pages WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
-  r.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Nicht gefunden' });
+  r.changes ? res.json({ ok: true }) : fail(res, 404, 'NOT_FOUND', 'Nicht gefunden');
 });
 
-// Replace the full set of topic links for a knowledge page
+// Replace the full set of topic links for a knowledge page (themeIds darf leer sein)
 app.put(`${A}/knowledge/:id/themes`, requireAuth, (req, res) => {
-  const k = db.prepare('SELECT * FROM knowledge_pages WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
-  if (!k) return res.status(404).json({ error: 'Nicht gefunden' });
+  const k = ownsKnowledgePage(req.session.uid, req.params.id);
+  if (!k) return fail(res, 404, 'KNOWLEDGE_PAGE_GONE', 'Diese Wissensseite existiert nicht mehr.');
   const { themeIds } = req.body || {};
-  if (!Array.isArray(themeIds) || !themeIds.length) return res.status(400).json({ error: 'Mindestens ein Topic erforderlich' });
-  const themes = db.prepare(`SELECT id FROM themes WHERE user_id=? AND id IN (${themeIds.map(()=>'?').join(',')})`)
-    .all(req.session.uid, ...themeIds);
-  if (themes.length !== themeIds.length) return res.status(400).json({ error: 'Ungültiges Topic in themeIds' });
+  if (!Array.isArray(themeIds)) return fail(res, 400, 'VALIDATION_FAILED', 'themeIds muss ein Array sein');
+
+  const requestedThemeIds = [...new Set(themeIds.filter(x => typeof x === 'string'))];
+  const validThemes = requestedThemeIds.length
+    ? db.prepare(`SELECT id FROM themes WHERE user_id=? AND id IN (${requestedThemeIds.map(()=>'?').join(',')})`)
+        .all(req.session.uid, ...requestedThemeIds)
+    : [];
+  const appliedThemeIds = validThemes.map(t => t.id);
+  // droppedCount bündelt gelöschte UND fremde IDs — kein Auskunfts-Unterschied.
+  const droppedCount = requestedThemeIds.length - appliedThemeIds.length;
+
   const now = new Date().toISOString();
   db.transaction(() => {
     db.prepare('DELETE FROM knowledge_topic_links WHERE knowledge_page_id=?').run(k.id);
     const ins = db.prepare('INSERT INTO knowledge_topic_links(id,knowledge_page_id,theme_id,created_at) VALUES (?,?,?,?)');
-    for (const themeId of themeIds) ins.run(uid(), k.id, themeId, now);
+    for (const themeId of appliedThemeIds) ins.run(uid(), k.id, themeId, now);
   })();
+  res.json({ ok: true, appliedThemeIds, droppedCount });
+});
+
+// ── Wissensseiten-Verknüpfungen (ungerichtet, Wissensmanagement v2.1, Block A) ──
+app.get(`${A}/knowledge/:id/links`, requireAuth, (req, res) => {
+  const k = ownsKnowledgePage(req.session.uid, req.params.id);
+  if (!k) return fail(res, 404, 'NOT_FOUND', 'Nicht gefunden');
+  const rows = db.prepare(`
+    SELECT kl.id as link_id, kp.id as page_id, kp.title as page_title, kp.updated_at as page_updated_at
+    FROM knowledge_links kl
+    JOIN knowledge_pages kp ON kp.id = CASE WHEN kl.page_a_id = ? THEN kl.page_b_id ELSE kl.page_a_id END
+    WHERE kl.user_id = ? AND (kl.page_a_id = ? OR kl.page_b_id = ?)
+  `).all(k.id, req.session.uid, k.id, k.id);
+  res.json(rows.map(r => ({
+    linkId: r.link_id,
+    page: { id: r.page_id, title: r.page_title, updatedAt: r.page_updated_at },
+  })));
+});
+
+app.post(`${A}/knowledge/:id/links`, requireAuth, (req, res) => {
+  const k = ownsKnowledgePage(req.session.uid, req.params.id);
+  if (!k) return fail(res, 404, 'NOT_FOUND', 'Nicht gefunden');
+  const { targetId } = req.body || {};
+  if (!targetId || typeof targetId !== 'string') {
+    return fail(res, 400, 'VALIDATION_FAILED', 'targetId erforderlich');
+  }
+  if (targetId === k.id) {
+    return fail(res, 400, 'VALIDATION_FAILED', 'Eine Wissensseite kann nicht mit sich selbst verknüpft werden.');
+  }
+  const target = ownsKnowledgePage(req.session.uid, targetId);
+  if (!target) return fail(res, 404, 'NOT_FOUND', 'Nicht gefunden');
+
+  // Ungerichtetheit strukturell erzwingen: IDs lexikografisch sortieren vor dem Insert.
+  const [a, b] = k.id < target.id ? [k.id, target.id] : [target.id, k.id];
+  const existing = db.prepare('SELECT id FROM knowledge_links WHERE page_a_id=? AND page_b_id=?').get(a, b);
+  const pageOut = { id: target.id, title: target.title, updatedAt: target.updated_at };
+  if (existing) {
+    return res.status(200).json({ linkId: existing.id, created: false, page: pageOut });
+  }
+  const id = uid();
+  db.prepare('INSERT INTO knowledge_links(id,user_id,page_a_id,page_b_id,created_at) VALUES (?,?,?,?,?)')
+    .run(id, req.session.uid, a, b, new Date().toISOString());
+  res.status(201).json({ linkId: id, created: true, page: pageOut });
+});
+
+app.delete(`${A}/knowledge/:id/links/:linkId`, requireAuth, (req, res) => {
+  const k = ownsKnowledgePage(req.session.uid, req.params.id);
+  if (!k) return fail(res, 404, 'NOT_FOUND', 'Nicht gefunden');
+  const existing = db.prepare('SELECT id, page_a_id, page_b_id, user_id FROM knowledge_links WHERE id=?').get(req.params.linkId);
+  if (existing) {
+    const belongs = existing.user_id === req.session.uid && (existing.page_a_id === k.id || existing.page_b_id === k.id);
+    if (!belongs) return fail(res, 404, 'NOT_FOUND', 'Nicht gefunden');
+    db.prepare('DELETE FROM knowledge_links WHERE id=?').run(existing.id);
+  }
+  // Idempotent: war der Link schon weg, ist das ebenfalls ok:true.
   res.json({ ok: true });
+});
+
+// ── Wissensseiten-Volltextsuche (FTS5, Wissensmanagement v2.1, Block A) ──
+app.get(`${A}/knowledge/search`, requireAuth, (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json({ query: q, results: [] }); // kein DB-Zugriff unter 2 Zeichen
+
+  const ftsQuery = buildFts5Query(q);
+  if (!ftsQuery) return res.json({ query: q, results: [] });
+
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT ref_id as id, title,
+             snippet(search_index, 4, '', '', '…', 20) as snippet
+      FROM search_index
+      WHERE search_index MATCH ? AND user_id = ? AND ref_type = 'knowledge'
+      ORDER BY bm25(search_index)
+      LIMIT 50
+    `).all(ftsQuery, req.session.uid);
+  } catch (e) {
+    // Ungültige FTS5-Syntax darf nie zu 500 führen -> leere Trefferliste.
+    return res.json({ query: q, results: [] });
+  }
+
+  const pageIds = rows.map(r => r.id);
+  const themeIdsByPage = knowledgeThemeIds(pageIds);
+  res.json({
+    query: q,
+    results: rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      snippet: String(r.snippet || ''),
+      themeIds: themeIdsByPage.get(r.id) || [],
+    })),
+  });
 });
 
 // Knowledge pages linked to this topic, optionally including sub-topics' pages.
@@ -1542,6 +1766,15 @@ function ownsRef(uid, refType, refId) {
   }
   if (refType === 'todo') {
     return !!db.prepare('SELECT 1 FROM todos WHERE id=? AND user_id=?').get(refId, uid);
+  }
+  if (refType === 'contact') {
+    return !!db.prepare('SELECT 1 FROM contacts WHERE id=? AND user_id=?').get(refId, uid);
+  }
+  if (refType === 'theme') {
+    return !!db.prepare('SELECT 1 FROM themes WHERE id=? AND user_id=?').get(refId, uid);
+  }
+  if (refType === 'knowledge') {
+    return !!db.prepare('SELECT 1 FROM knowledge_pages WHERE id=? AND user_id=?').get(refId, uid);
   }
   return false;
 }
@@ -2007,6 +2240,27 @@ app.get(`${BASE}/addin/icon-64.png`, (req, res) => {
     <text x="32" y="42" text-anchor="middle" font-family="sans-serif" font-size="28" font-weight="bold" fill="white">T</text>
   </svg>`;
   res.type('image/svg+xml').send(svg);
+});
+
+// ── Graph-API (Wissensmanagement v2.1, Paket 1b) ──────────────
+require('./graph')(app, {
+  db,
+  requireAuth,
+  uid: (req) => req.session.uid,
+  ownsRef,
+  themeDescendantIds,
+  fail,
+  htmlToText,
+  NODE_TYPES: ['theme', 'knowledge', 'todo', 'topic', 'contact'],
+});
+
+// ── Globaler Error-Handler (letzte Middleware) ────────────────
+// Loggt den Stacktrace ausschließlich nach stderr, niemals in der Antwort an
+// den Endnutzer (keine internen Details wie Pfade/Query-Strings/Stacktraces).
+app.use((err, req, res, next) => {
+  console.error(err && err.stack ? err.stack : err);
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Interner Fehler', code: 'INTERNAL_ERROR' });
 });
 
 module.exports = { app, db };
