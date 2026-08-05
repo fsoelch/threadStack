@@ -1674,6 +1674,8 @@ body.ai-disabled .ai-action { display: none !important; }
   padding:.05rem .3rem; font-size:.6875rem; font-family:var(--font-mono);
 }
 </style>
+<link rel="stylesheet" href="/assets/graph.css">
+<script defer src="/assets/graph.js"></script>
 </head>
 <body>
 
@@ -1791,6 +1793,7 @@ body.ai-disabled .ai-action { display: none !important; }
       </div>
       <!-- Main Content -->
       <main class="main" id="main-content"></main>
+      <div id="graph-root" hidden style="height:100%"></div>
     </div>
   </div>
 </div>
@@ -2230,35 +2233,63 @@ body.ai-disabled .ai-action { display: none !important; }
 </div>
 
 <!-- ── Knowledge Modal (Wissensseite) ──────────────────────────── -->
-<div id="knowledge-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'knowledge-modal')">
-  <div class="modal modal-wide" onclick="event.stopPropagation()">
+<div id="knowledge-modal" class="modal-overlay" style="display:none" onclick="kbOverlayClick(event)">
+  <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="knowledge-modal-title" onclick="event.stopPropagation()">
     <div class="modal-header">
       <h2 id="knowledge-modal-title">Neues Wissen</h2>
-      <button class="modal-close" onclick="closeKnowledgeModal()">×</button>
+      <button class="modal-close" onclick="requestCloseKnowledgeModal()">×</button>
     </div>
     <div class="modal-body">
+      <div id="knowledge-draft-banner" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:var(--r-md);padding:.625rem .875rem;margin-bottom:.875rem;font-size:.8125rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem" aria-live="polite">
+        <span>Ungespeicherter Entwurf gefunden – möchtest du weiterschreiben?</span>
+        <span style="display:flex;gap:.5rem;flex-shrink:0">
+          <button type="button" class="btn btn-secondary" style="padding:.25rem .625rem;font-size:.75rem" onclick="kbDiscardDraft()">Verwerfen</button>
+          <button type="button" class="btn btn-primary" style="padding:.25rem .625rem;font-size:.75rem;background:#7c3aed;border-color:#7c3aed" onclick="kbRestoreDraft()">Wiederherstellen</button>
+        </span>
+      </div>
+      <div id="knowledge-error-banner" class="form-error" style="display:none;margin-bottom:.875rem"></div>
       <div class="form-group">
-        <label class="form-label">Überschrift <span style="color:var(--red)">*</span></label>
-        <input type="text" class="form-control" id="knowledge-title" maxlength="300" placeholder="z. B. Deployment-Prozess">
+        <label class="form-label" for="knowledge-title">Überschrift <span style="color:var(--red)">*</span></label>
+        <input type="text" class="form-control" id="knowledge-title" maxlength="300" placeholder="z. B. Deployment-Prozess"
+               aria-describedby="knowledge-title-error" oninput="kbTrackDirty()">
+        <div id="knowledge-title-error" class="form-error" style="display:none"></div>
       </div>
       <div class="form-group">
         <label class="form-label">Inhalt</label>
         <div class="rt-wrapper">
           <div class="rt-toolbar" id="knowledge-content-tb"></div>
           <div class="rt-content" id="knowledge-content" contenteditable="true"
-               data-placeholder="Formatierter Text, Tabellen, Links, Bilder …" style="min-height:220px"></div>
+               data-placeholder="Formatierter Text, Tabellen, Links, Bilder …" style="min-height:220px"
+               oninput="kbTrackDirty()"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;margin-top:.25rem">
+          <span id="knowledge-content-counter" style="font-size:.75rem;color:var(--text-muted)"></span>
         </div>
       </div>
       <div class="form-group">
-        <label class="form-label">Zugehörige Topics <span style="color:var(--red)">*</span></label>
+        <label class="form-label">Zugehörige Topics <span class="opt">(optional)</span></label>
+        <input type="text" class="form-control" id="knowledge-theme-filter" placeholder="Topics durchsuchen …"
+               style="margin-bottom:.5rem" oninput="renderKnowledgeThemeChecklist()">
+        <div id="knowledge-theme-selected-chips" style="display:flex;flex-wrap:wrap;gap:.375rem;margin-bottom:.5rem"></div>
         <div id="knowledge-theme-checklist" style="max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-md);padding:.5rem .75rem"></div>
+        <p style="font-size:.75rem;color:var(--text-muted);margin-top:.375rem">Ohne Topic-Zuordnung erscheint diese Seite unter „Ohne Topic" in der globalen Wissens-Ansicht.</p>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Verwandtes Wissen <span class="opt">(optional)</span></label>
+        <input type="text" class="form-control" id="knowledge-related-search" placeholder="Wissensseite suchen und verknüpfen …"
+               oninput="kbSearchRelated(this.value)" onkeydown="kbRelatedSearchKeydown(event)">
+        <div id="knowledge-related-results" style="display:none;max-height:180px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-md);margin-top:.375rem"></div>
+        <div id="knowledge-related-chips" style="display:flex;flex-wrap:wrap;gap:.375rem;margin-top:.5rem"></div>
       </div>
       <div class="form-group" id="knowledge-attach-slot"></div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeKnowledgeModal()">Abbrechen</button>
-      <button class="btn btn-primary" id="knowledge-save-btn" onclick="saveKnowledgeModal()"
-        style="background:#7c3aed;border-color:#7c3aed">Speichern</button>
+    <div class="modal-footer" style="justify-content:space-between">
+      <span id="knowledge-draft-indicator" style="font-size:.75rem;color:var(--text-muted)" aria-live="polite"></span>
+      <span style="display:flex;gap:.5rem">
+        <button class="btn btn-secondary" onclick="requestCloseKnowledgeModal()">Abbrechen</button>
+        <button class="btn btn-primary" id="knowledge-save-btn" onclick="saveKnowledgeModal()"
+          style="background:#7c3aed;border-color:#7c3aed">Speichern</button>
+      </span>
     </div>
   </div>
 </div>
@@ -2828,6 +2859,22 @@ async function api(method, path, body) {
   }
   return data;
 }
+
+// ── TSHost — Schnittstelle für das Graph-Modul (public/graph.js) ──
+window.TSHost = {
+  api: (method, path, body, opts) => api(method, path, body),
+  toast: (msg, type) => toast(msg, type),
+  escHtml: (s) => escHtml(s),
+  themeAncestorsPath: (id) => themeAncestorsPath(id),
+  openKnowledge: (id) => openKnowledgeModal(id),
+  openObject: (type, id, meta) => {
+    if (type === 'todo') { selectView('__todos__'); openTodoModal(id); }
+    else if (type === 'topic') { if (meta?.meetingId) selectView(meta.meetingId); openTopicModal(meta?.meetingId, id); }
+    else if (type === 'contact') { selectView('__contacts__'); openContactModal(id); }
+  },
+  confirm: ({ title, message, confirmLabel, cancelLabel }) => genericConfirm(title, message, confirmLabel, cancelLabel),
+  reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+};
 
 // ── Utils ────────────────────────────────────────────────────
 const getMeeting = id => meetings.find(m => m.id === id);
@@ -3404,7 +3451,7 @@ function render() { renderSidebarModeSwitch(); renderSidebarTop(); renderTodosNa
 let lastTodosView = '__todos__';
 let lastWissenView = '__themes__';
 function currentSidebarMode() {
-  return (selectedId === '__themes__' || selectedId === '__contacts__') ? 'wissen' : 'todos';
+  return (selectedId === '__themes__' || selectedId === '__contacts__' || selectedId === '__graph__') ? 'wissen' : 'todos';
 }
 function switchSidebarMode(mode) {
   if (mode === currentSidebarMode()) return;
@@ -3450,6 +3497,10 @@ function renderTodosNav() {
         <div class="todo-nav-icon contact-icon">${ic('<path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"/>')}</div>
         <span class="todo-nav-label">Ansprechpartner</span>
         ${contacts.length > 0 ? `<span class="pill pill-open">${contacts.length}</span>` : ''}
+      </div>
+      <div class="todo-nav-item ${selectedId === '__graph__' ? 'active' : ''}" onclick="selectView('__graph__')">
+        <div class="todo-nav-icon">${ic('<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8.2 7.3L10 16m5.8-8.7L14 16M8.3 6h7.4"/>')}</div>
+        <span class="todo-nav-label">Graph</span>
       </div>`;
     return;
   }
@@ -3540,6 +3591,19 @@ function renderMeetingsList() {
 
 function renderMain() {
   const el = document.getElementById('main-content');
+  if (selectedId === '__graph__') {
+    document.getElementById('graph-root').hidden = false;
+    el.innerHTML = '';
+    if (window.TSGraph) {
+      window.TSGraph.mount(document.getElementById('graph-root'));
+    } else {
+      document.getElementById('graph-root').innerHTML = '<div class="empty-state"><p>Graph-Ansicht wird geladen …</p></div>';
+    }
+    return;
+  } else {
+    const gr = document.getElementById('graph-root');
+    if (gr) { window.TSGraph?.unmount?.(); gr.hidden = true; gr.innerHTML = ''; }
+  }
   if (selectedId === '__themes__')   { renderThemesView(el); return; }
   if (selectedId === '__contacts__') { renderContactsView(el); return; }
   if (selectedId === '__todos__')    { renderTodosView(el); return; }
@@ -4328,14 +4392,14 @@ async function markMeetingTopicDone(mid, tid) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest' };
+const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest', '__graph__':'Graph' };
 function updateTopbar(title) {
   const el = document.getElementById('topbar-title');
   if (el) el.textContent = title || '—';
 }
 function selectView(id) {
   selectedId = id; topicFilter = ''; closeMobileSidebar();
-  if (id === '__themes__' || id === '__contacts__') lastWissenView = id; else lastTodosView = id;
+  if (id === '__themes__' || id === '__contacts__' || id === '__graph__') lastWissenView = id; else lastTodosView = id;
   updateTopbar(VIEW_LABELS[id] || '—');
   render(); refreshAiUiVisibility();
   if (id === '__themes__') { loadKnowledgePages().then(render); }
@@ -5086,14 +5150,37 @@ function findKnowledgePage(id) {
   return knowledgePages.find(x => x.id === id) || themeDetailKnowledge.find(x => x.id === id) || null;
 }
 
+let knowledgeRelatedSelection = new Map(); // id -> {id,title} — im Modal ausgewählte verwandte Wissensseiten
+let knowledgeRelatedOriginal  = new Set(); // linkId-lose Menge der beim Öffnen bereits verknüpften IDs
+let kbOriginalSnapshot = null;  // {title,content,themeIds,relatedIds} beim Öffnen, für Dirty-Check
+let kbDraftTimer = null;
+let kbDraftIndicatorTimer = null;
+let kbRelatedFocusIdx = -1;
+
+function kbDraftKey() { return `ts_kb_draft_${editKnowledgeId || 'new'}`; }
+
 function openKnowledgeModal(id, presetThemeId) {
   editKnowledgeId = id || null;
   const k = id ? findKnowledgePage(id) : null;
   document.getElementById('knowledge-modal-title').textContent = k ? 'Wissen bearbeiten' : 'Neues Wissen';
   document.getElementById('knowledge-title').value = k?.title || '';
+  document.getElementById('knowledge-title-error').style.display = 'none';
+  document.getElementById('knowledge-error-banner').style.display = 'none';
+  document.getElementById('knowledge-theme-filter').value = '';
   setRT('knowledge-content', k?.content || '');
   knowledgeThemeSelection = new Set(k ? k.themeIds : (presetThemeId ? [presetThemeId] : (selectedThemeId ? [selectedThemeId] : [])));
+  knowledgeRelatedSelection = new Map();
+  knowledgeRelatedOriginal = new Set();
+  (k?.relatedPageIds || []).forEach(rid => {
+    knowledgeRelatedOriginal.add(rid);
+    const p = findKnowledgePage(rid);
+    knowledgeRelatedSelection.set(rid, { id: rid, title: p?.title || '(Wissensseite)' });
+  });
   renderKnowledgeThemeChecklist();
+  renderKnowledgeRelatedChips();
+  document.getElementById('knowledge-related-results').style.display = 'none';
+  document.getElementById('knowledge-related-search').value = '';
+  kbUpdateContentCounter();
 
   const attachSlot = document.getElementById('knowledge-attach-slot');
   if (id) {
@@ -5106,51 +5193,275 @@ function openKnowledgeModal(id, presetThemeId) {
   }
   document.getElementById('knowledge-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('knowledge-title').focus(), 50);
+
+  kbOriginalSnapshot = kbCurrentSnapshot();
+  document.getElementById('knowledge-draft-indicator').textContent = '';
+  clearTimeout(kbDraftTimer);
+  kbDraftTimer = setTimeout(kbMaybeSaveDraft, 5000);
+
+  const draftRaw = localStorage.getItem(kbDraftKey());
+  document.getElementById('knowledge-draft-banner').style.display = draftRaw ? 'flex' : 'none';
 }
-function closeKnowledgeModal() { document.getElementById('knowledge-modal').style.display = 'none'; }
+
+function kbCurrentSnapshot() {
+  return {
+    title: document.getElementById('knowledge-title').value,
+    content: getRT('knowledge-content'),
+    themeIds: [...knowledgeThemeSelection].sort(),
+    relatedIds: [...knowledgeRelatedSelection.keys()].sort(),
+  };
+}
+function kbIsDirty() {
+  if (!kbOriginalSnapshot) return false;
+  return JSON.stringify(kbCurrentSnapshot()) !== JSON.stringify(kbOriginalSnapshot);
+}
+function kbTrackDirty() {
+  kbUpdateContentCounter();
+  clearTimeout(kbDraftTimer);
+  kbDraftTimer = setTimeout(kbMaybeSaveDraft, 5000);
+}
+function kbUpdateContentCounter() {
+  const el = document.getElementById('knowledge-content-counter');
+  if (!el) return;
+  const len = getRT('knowledge-content').length;
+  const max = 500000;
+  el.textContent = `${len.toLocaleString('de-DE')} / ${max.toLocaleString('de-DE')} Zeichen`;
+  el.style.color = len > max ? 'var(--red)' : (len > max * 0.9 ? '#b45309' : 'var(--text-muted)');
+}
+
+function kbMaybeSaveDraft() {
+  if (!document.getElementById('knowledge-modal') || document.getElementById('knowledge-modal').style.display === 'none') return;
+  if (!kbIsDirty()) return;
+  try {
+    localStorage.setItem(kbDraftKey(), JSON.stringify({ ...kbCurrentSnapshot(), savedAt: Date.now() }));
+    const ind = document.getElementById('knowledge-draft-indicator');
+    ind.textContent = 'Entwurf lokal gespeichert · gerade eben';
+    clearTimeout(kbDraftIndicatorTimer);
+    kbDraftIndicatorTimer = setTimeout(() => {
+      if (ind) ind.textContent = 'Entwurf lokal gespeichert';
+    }, 30000);
+  } catch {}
+  kbDraftTimer = setTimeout(kbMaybeSaveDraft, 5000);
+}
+function kbClearDraft() { try { localStorage.removeItem(kbDraftKey()); } catch {} }
+
+function kbRestoreDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem(kbDraftKey()) || 'null');
+    if (!draft) return;
+    document.getElementById('knowledge-title').value = draft.title || '';
+    setRT('knowledge-content', draft.content || '');
+    knowledgeThemeSelection = new Set(draft.themeIds || []);
+    knowledgeRelatedSelection = new Map((draft.relatedIds || []).map(rid => [rid, knowledgeRelatedSelection.get(rid) || { id: rid, title: findKnowledgePage(rid)?.title || '(Wissensseite)' }]));
+    renderKnowledgeThemeChecklist();
+    renderKnowledgeRelatedChips();
+    kbUpdateContentCounter();
+  } catch {}
+  document.getElementById('knowledge-draft-banner').style.display = 'none';
+  document.getElementById('knowledge-content').focus();
+}
+function kbDiscardDraft() {
+  kbClearDraft();
+  document.getElementById('knowledge-draft-banner').style.display = 'none';
+}
+
+function kbOverlayClick(e) {
+  if (e.target.id === 'knowledge-modal') requestCloseKnowledgeModal();
+}
+
+async function requestCloseKnowledgeModal() {
+  if (!kbIsDirty()) { closeKnowledgeModal(); return; }
+  const ok = await genericConfirm('Ungespeicherte Änderungen verwerfen?', 'Deine Änderungen gehen verloren, wenn du fortfährst.', 'Verwerfen', 'Weiterbearbeiten');
+  if (ok) closeKnowledgeModal();
+}
+function closeKnowledgeModal() {
+  clearTimeout(kbDraftTimer);
+  document.getElementById('knowledge-modal').style.display = 'none';
+  kbOriginalSnapshot = null;
+}
 
 function renderKnowledgeThemeChecklist() {
   const el = document.getElementById('knowledge-theme-checklist');
+  const chipsEl = document.getElementById('knowledge-theme-selected-chips');
   if (!el) return;
   if (!themes.length) {
     el.innerHTML = '<p class="theme-empty-items">Noch keine Topics vorhanden. Legen Sie zuerst ein Topic an.</p>';
+    if (chipsEl) chipsEl.innerHTML = '';
     return;
   }
-  el.innerHTML = themes
+  const filterRaw = (document.getElementById('knowledge-theme-filter')?.value || '').trim().toLowerCase();
+  const all = themes
     .map(t => ({ t, path: themeAncestorsPath(t.id).map(p => p.title).join(' › ') }))
-    .sort((a, b) => a.path.localeCompare(b.path))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  const filtered = filterRaw ? all.filter(x => x.path.toLowerCase().includes(filterRaw)) : all;
+
+  if (chipsEl) {
+    const selected = all.filter(x => knowledgeThemeSelection.has(x.t.id));
+    chipsEl.innerHTML = selected.length
+      ? `<span style="width:100%;font-size:.75rem;color:var(--text-muted)">Ausgewählt (${selected.length})</span>` +
+        selected.map(({ t, path }) => `<span class="theme-chip" style="display:inline-flex;align-items:center;gap:.25rem">
+          ${escHtml(path)}
+          <button type="button" aria-label="${escHtml(t.title)} entfernen" onclick="toggleKnowledgeThemeSel('${t.id}',false)" style="background:none;border:none;cursor:pointer;color:inherit;font-size:1rem;line-height:1;padding:0">×</button>
+        </span>`).join('')
+      : '';
+  }
+
+  if (!filtered.length) {
+    el.innerHTML = '<p class="theme-empty-items">Keine Topics gefunden</p>';
+    return;
+  }
+  el.innerHTML = filtered
     .map(({ t, path }) => {
       const checked = knowledgeThemeSelection.has(t.id);
+      const hl = filterRaw ? escHtml(path).replace(new RegExp(`(${filterRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>') : escHtml(path);
       return `<label style="display:flex;align-items:center;gap:.5rem;padding:.25rem 0;font-size:.8125rem">
         <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleKnowledgeThemeSel('${t.id}',this.checked)">
-        <span>${escHtml(path)}</span>
+        <span>${hl}</span>
       </label>`;
     }).join('');
 }
 function toggleKnowledgeThemeSel(id, checked) {
   if (checked) knowledgeThemeSelection.add(id); else knowledgeThemeSelection.delete(id);
+  renderKnowledgeThemeChecklist();
+  kbTrackDirty();
+}
+
+// ── A8: Verweise zwischen Wissensseiten ("Verwandtes Wissen") ──
+let kbRelatedSearchTimer = null;
+function kbSearchRelated(q) {
+  clearTimeout(kbRelatedSearchTimer);
+  const resultsEl = document.getElementById('knowledge-related-results');
+  const query = q.trim();
+  if (query.length < 2) { resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; return; }
+  kbRelatedSearchTimer = setTimeout(async () => {
+    try {
+      const { results } = await api('GET', `/knowledge/search?q=${encodeURIComponent(query)}`);
+      const filtered = results.filter(r => r.id !== editKnowledgeId && !knowledgeRelatedSelection.has(r.id));
+      kbRelatedFocusIdx = -1;
+      if (!filtered.length) {
+        resultsEl.innerHTML = '<div style="padding:.5rem .75rem;font-size:.8125rem;color:var(--text-muted);font-style:italic">Keine Treffer</div>';
+      } else {
+        resultsEl.innerHTML = filtered.slice(0, 6).map((r, i) => `
+          <div class="kb-related-result" tabindex="-1" data-idx="${i}" data-id="${r.id}" data-title="${escHtml(r.title)}"
+               onclick="kbSelectRelated('${r.id}','${escHtml(r.title).replace(/"/g,'&quot;')}')"
+               style="padding:.5rem .75rem;font-size:.8125rem;cursor:pointer;border-bottom:1px solid var(--border)">
+            <strong>${escHtml(r.title)}</strong>
+          </div>`).join('');
+      }
+      resultsEl.style.display = 'block';
+    } catch { resultsEl.style.display = 'none'; }
+  }, 200);
+}
+function kbRelatedSearchKeydown(e) {
+  const resultsEl = document.getElementById('knowledge-related-results');
+  const items = [...resultsEl.querySelectorAll('.kb-related-result')];
+  if (!items.length) return;
+  if (e.key === 'ArrowDown') { e.preventDefault(); kbRelatedFocusIdx = Math.min(kbRelatedFocusIdx + 1, items.length - 1); items[kbRelatedFocusIdx]?.focus(); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); kbRelatedFocusIdx = Math.max(kbRelatedFocusIdx - 1, 0); items[kbRelatedFocusIdx]?.focus(); }
+  else if (e.key === 'Enter' && kbRelatedFocusIdx >= 0) { e.preventDefault(); const it = items[kbRelatedFocusIdx]; kbSelectRelated(it.dataset.id, it.dataset.title); }
+}
+function kbSelectRelated(id, title) {
+  knowledgeRelatedSelection.set(id, { id, title });
+  document.getElementById('knowledge-related-search').value = '';
+  document.getElementById('knowledge-related-results').style.display = 'none';
+  renderKnowledgeRelatedChips();
+  kbTrackDirty();
+}
+function kbRemoveRelated(id) {
+  knowledgeRelatedSelection.delete(id);
+  renderKnowledgeRelatedChips();
+  kbTrackDirty();
+}
+function renderKnowledgeRelatedChips() {
+  const el = document.getElementById('knowledge-related-chips');
+  if (!el) return;
+  const items = [...knowledgeRelatedSelection.values()];
+  el.innerHTML = items.length
+    ? `<span style="width:100%;font-size:.75rem;color:var(--text-muted)">Verknüpft (${items.length})</span>` +
+      items.map(r => `<span class="theme-chip" style="display:inline-flex;align-items:center;gap:.25rem">
+        ${escHtml(r.title)}
+        <button type="button" aria-label="Verknüpfung zu ${escHtml(r.title)} entfernen" onclick="kbRemoveRelated('${r.id}')" style="background:none;border:none;cursor:pointer;color:inherit;font-size:1rem;line-height:1;padding:0">×</button>
+      </span>`).join('')
+    : '';
+}
+
+async function kbSyncRelatedLinks(pageId) {
+  const finalIds = new Set(knowledgeRelatedSelection.keys());
+  const toAdd = [...finalIds].filter(id => !knowledgeRelatedOriginal.has(id));
+  const toRemove = [...knowledgeRelatedOriginal].filter(id => !finalIds.has(id));
+  for (const targetId of toAdd) {
+    try { await api('POST', `/knowledge/${pageId}/links`, { targetId }); } catch {}
+  }
+  if (toRemove.length) {
+    try {
+      const links = await api('GET', `/knowledge/${pageId}/links`);
+      for (const rid of toRemove) {
+        const link = links.find(l => l.page.id === rid);
+        if (link) { try { await api('DELETE', `/knowledge/${pageId}/links/${link.linkId}`); } catch {} }
+      }
+    } catch {}
+  }
 }
 
 async function saveKnowledgeModal() {
-  const title = document.getElementById('knowledge-title').value.trim();
-  if (!title) { document.getElementById('knowledge-title').focus(); return; }
+  const titleEl = document.getElementById('knowledge-title');
+  const titleErrEl = document.getElementById('knowledge-title-error');
+  const bannerEl = document.getElementById('knowledge-error-banner');
+  titleErrEl.style.display = 'none';
+  bannerEl.style.display = 'none';
+  const title = titleEl.value.trim();
+  if (!title) {
+    titleErrEl.textContent = 'Titel erforderlich';
+    titleErrEl.style.display = 'block';
+    titleEl.setAttribute('aria-invalid', 'true');
+    titleEl.focus();
+    return;
+  }
+  titleEl.removeAttribute('aria-invalid');
   const content = getRT('knowledge-content');
   const themeIds = [...knowledgeThemeSelection];
-  if (!themeIds.length) { toast('Bitte mindestens ein Topic auswählen', 'error'); return; }
   setBusy('knowledge-save-btn', true);
   try {
+    let pageId = editKnowledgeId;
     if (editKnowledgeId) {
       await api('PUT', `/knowledge/${editKnowledgeId}`, { title, content });
       await api('PUT', `/knowledge/${editKnowledgeId}/themes`, { themeIds });
     } else {
-      await api('POST', '/knowledge', { title, content, themeIds });
+      const created = await api('POST', '/knowledge', { title, content, themeIds });
+      pageId = created.id;
     }
+    await kbSyncRelatedLinks(pageId);
+    kbClearDraft();
     closeKnowledgeModal();
     await afterThemeMutation();
+    await loadKnowledgePages();
     render();
     toast(editKnowledgeId ? 'Wissen gespeichert' : 'Wissen erstellt');
-  } catch(e) { toast(e.message, 'error'); }
+    window.TSGraph?.invalidate?.();
+  } catch(e) {
+    const code = e.body?.code;
+    if (code === 'TITLE_REQUIRED') {
+      titleErrEl.textContent = 'Titel erforderlich'; titleErrEl.style.display = 'block'; titleEl.focus();
+    } else if (code === 'TITLE_TOO_LONG') {
+      titleErrEl.textContent = `Der Titel ist zu lang (maximal ${e.body?.limit ?? 300} Zeichen).`; titleErrEl.style.display = 'block';
+    } else if (code === 'CONTENT_TOO_LONG') {
+      bannerEl.textContent = `Der Inhalt ist zu lang (maximal ${e.body?.limit ?? 500000} Zeichen). Bitte kürzen und erneut speichern.`;
+      bannerEl.style.display = 'block';
+    } else if (code === 'KNOWLEDGE_PAGE_GONE') {
+      bannerEl.innerHTML = 'Diese Wissensseite wurde inzwischen gelöscht. ' +
+        '<button type="button" class="btn btn-secondary" style="padding:.125rem .5rem;font-size:.75rem;margin-left:.5rem" onclick="saveKnowledgeAsNew()">Als neue Seite speichern</button>';
+      bannerEl.style.display = 'block';
+    } else {
+      bannerEl.textContent = 'Die Wissensseite konnte nicht gespeichert werden. Bitte versuche es erneut.';
+      bannerEl.style.display = 'block';
+    }
+  }
   finally { setBusy('knowledge-save-btn', false); }
+}
+
+async function saveKnowledgeAsNew() {
+  editKnowledgeId = null;
+  await saveKnowledgeModal();
 }
 
 function confirmDeleteKnowledge(id, title) {
@@ -5677,6 +5988,33 @@ function confirmDelete(type, ...args) {
 
 function closeConfirm() { document.getElementById('confirm-dialog').style.display = 'none'; confirmCallback = null; }
 async function executeConfirm() { const cb = confirmCallback; closeConfirm(); if (cb) await cb(); }
+
+// Generische Promise-basierte Bestätigung mit anpassbaren Button-Labels (nutzt
+// den bestehenden confirm-dialog, stellt Standard-Labels/-Klassen danach wieder her).
+function genericConfirm(title, message, confirmLabel, cancelLabel) {
+  return new Promise(resolve => {
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    const actions = document.querySelector('#confirm-dialog .confirm-actions');
+    const cancelBtn = actions.children[0];
+    const confirmBtn = actions.children[1];
+    const origCancelText = cancelBtn.textContent, origConfirmText = confirmBtn.textContent;
+    const origConfirmClass = confirmBtn.className;
+    cancelBtn.textContent = cancelLabel || 'Abbrechen';
+    confirmBtn.textContent = confirmLabel || 'Bestätigen';
+    confirmBtn.className = 'btn btn-primary';
+    const cleanup = () => {
+      cancelBtn.textContent = origCancelText;
+      confirmBtn.textContent = origConfirmText;
+      confirmBtn.className = origConfirmClass;
+      confirmCallback = null;
+    };
+    confirmCallback = async () => { cleanup(); resolve(true); };
+    cancelBtn.onclick = () => { closeConfirm(); cleanup(); resolve(false); cancelBtn.onclick = () => closeConfirm(); };
+    document.getElementById('confirm-dialog').style.display = 'flex';
+    confirmBtn.focus();
+  });
+}
 
 // ── Mobile sidebar ───────────────────────────────────────────
 function openMobileSidebar() {

@@ -27,10 +27,10 @@ function nodeKey(type, id) {
  * @param {object} ctx
  */
 module.exports = function graphRoutes(app, ctx) {
-  const { db, requireAuth, uid, ownsRef, themeDescendantIds, fail, htmlToText } = ctx;
+  const { db, requireAuth, uid, ownsRef, themeDescendantIds, fail, htmlToText, apiBase = '/api' } = ctx;
 
   // ── GET /api/graph — der einzige Ladevorgang für den gesamten Graphen ──
-  app.get('/api/graph', requireAuth, (req, res) => {
+  app.get(`${apiBase}/graph`, requireAuth, (req, res) => {
     const userId = uid(req);
 
     const result = db.transaction(() => {
@@ -289,7 +289,7 @@ module.exports = function graphRoutes(app, ctx) {
   });
 
   // ── POST /api/graph/edges — Kante anlegen (Story B6) ──
-  app.post('/api/graph/edges', requireAuth, (req, res) => {
+  app.post(`${apiBase}/graph/edges`, requireAuth, (req, res) => {
     const userId = uid(req);
     const { source, target } = req.body || {};
 
@@ -417,7 +417,7 @@ module.exports = function graphRoutes(app, ctx) {
   });
 
   // ── DELETE /api/graph/edges/:edgeId — Kante entfernen (Story B7) ──
-  app.delete('/api/graph/edges/:edgeId', requireAuth, (req, res) => {
+  app.delete(`${apiBase}/graph/edges/:edgeId`, requireAuth, (req, res) => {
     const userId = uid(req);
     const edgeId = String(req.params.edgeId || '');
     const sep = edgeId.indexOf(':');
@@ -488,7 +488,7 @@ module.exports = function graphRoutes(app, ctx) {
   });
 
   // ── PATCH /api/graph/positions — Positionen speichern (Story B8) ──
-  app.patch('/api/graph/positions', requireAuth, (req, res) => {
+  app.patch(`${apiBase}/graph/positions`, requireAuth, (req, res) => {
     const userId = uid(req);
     const positions = req.body && req.body.positions;
 

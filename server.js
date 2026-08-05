@@ -2170,6 +2170,12 @@ function parseAttachment(a) {
   };
 }
 
+// ── Statische Assets (Graph-Modul: /public/graph.js, graph.css) ──
+// Unter beiden Pfaden gemountet, damit `/assets/...` in index.html unabhängig
+// von einem konfigurierten BASE_PATH funktioniert.
+app.use('/assets', express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'ignore', etag: true, maxAge: 0 }));
+if (BASE) app.use(`${BASE}/assets`, express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'ignore', etag: true, maxAge: 0 }));
+
 // ── Frontend ─────────────────────────────────────────────────
 app.get(BASE || '/', (req, res) => {
   const fs = require('fs');
@@ -2251,6 +2257,7 @@ require('./graph')(app, {
   themeDescendantIds,
   fail,
   htmlToText,
+  apiBase: A,
   NODE_TYPES: ['theme', 'knowledge', 'todo', 'topic', 'contact'],
 });
 
