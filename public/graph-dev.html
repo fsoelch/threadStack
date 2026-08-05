@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ThreadStack — Graph Dev Harness</title>
+<style>
+  html, body { margin:0; padding:0; height:100%; font-family: 'Inter', system-ui, sans-serif; }
+  #dev-toolbar {
+    display:flex; gap:8px; align-items:center; padding:8px 12px; background:#0f172a; color:#fff; font-size:12px; flex-wrap:wrap;
+  }
+  #dev-toolbar button {
+    background:#1e293b; color:#fff; border:1px solid #334155; border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px;
+  }
+  #dev-toolbar button:hover { background:#334155; }
+  #dev-status { margin-left:auto; opacity:.8; }
+  #graph-root { position:absolute; top:40px; left:0; right:0; bottom:0; }
+  #dev-log {
+    position:fixed; bottom:0; left:0; right:0; max-height:140px; overflow-y:auto;
+    background:#0f172a; color:#a7f3d0; font-family:monospace; font-size:11px; padding:6px 10px; display:none; z-index:100;
+  }
+  #dev-log.open { display:block; }
+  #dev-confirm-overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,.4); display:none; align-items:center; justify-content:center; z-index:1000;
+  }
+  #dev-confirm-overlay.open { display:flex; }
+  #dev-confirm-box { background:#fff; border-radius:10px; padding:18px; max-width:340px; box-shadow:0 10px 40px rgba(0,0,0,.3); }
+  #dev-confirm-box h3 { margin:0 0 8px; font-size:15px; }
+  #dev-confirm-box p { margin:0 0 14px; font-size:13px; color:#334155; }
+  #dev-confirm-box .row { display:flex; gap:8px; justify-content:flex-end; }
+  #dev-confirm-box button { padding:6px 12px; border-radius:6px; border:1px solid #cbd5e1; background:#f8fafc; cursor:pointer; font-size:13px; }
+  #dev-confirm-box button.primary { background:#6366f1; color:#fff; border-color:#6366f1; }
+</style>
+<link rel="stylesheet" href="graph.css">
+</head>
+<body>
+
+<div id="dev-toolbar">
+  <strong>Graph Dev Harness</strong>
+  <button id="btn-mount">Mount</button>
+  <button id="btn-unmount">Unmount</button>
+  <button id="btn-invalidate">Invalidate</button>
+  <button id="btn-small">Kleines Beispiel (12 Knoten)</button>
+  <button id="btn-empty">Leerer Graph</button>
+  <button id="btn-error">Fehler simulieren</button>
+  <button id="btn-500">500-Knoten-Benchmark</button>
+  <button id="btn-toggle-log">Log ein/aus</button>
+  <span id="dev-status">bereit</span>
+</div>
+
+<div id="graph-root"></div>
+<div id="dev-log"></div>
+
+<div id="dev-confirm-overlay">
+  <div id="dev-confirm-box">
+    <h3 id="dev-confirm-title">Bestätigen</h3>
+    <p id="dev-confirm-message"></p>
+    <div class="row">
+      <button id="dev-confirm-cancel">Abbrechen</button>
+      <button id="dev-confirm-ok" class="primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===========================================================================
+// Mock-Datenmodell (In-Memory) — simuliert das Backend aus Paket-Vertrag
+// ===========================================================================
+(function () {
+  'use strict';
+
+  var logEl = document.getElementById('dev-log');
+  function log(msg) {
+    var line = document.createElement('div');
+    line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  document.getElementById('btn-toggle-log').addEventListener('click', function () {
+    logEl.classList.toggle('open');
+  });
+
+  var COMPAT = [
+    { source: 'theme', target: 'theme', kind: 'hierarchy' },
+    { source: 'theme', target: 'knowledge', kind: 'knowledge_topic' },
+    { source: 'theme', target: 'todo', kind: 'theme_link' },
+    { source: 'theme', target: 'topic', kind: 'theme_link' },
+    { source: 'theme', target: 'contact', kind: 'theme_link' },
+    { source: 'knowledge', target: 'theme', kind: 'knowledge_topic' },
+    { source: 'knowledge', target: 'knowledge', kind: 'knowledge_knowledge' },
+    { source: 'todo', target: 'theme', kind: 'theme_link' },
+    { source: 'topic', target: 'theme', kind: 'theme_link' },
+    { source: 'contact', target: 'theme', kind: 'theme_link' }
+  ];
+
+  function makeStore(nodes, edges) {
+    var idSeq = 1000;
+    return {
+      nodes: nodes, edges: edges,
+      addEdge: function (source, target) {
+        var compat = COMPAT.find(function (c) { return c.source === source.type && c.target === target.type; });
+        if (!compat) { var e = new Error('Diese Verknüpfung ist nicht möglich.'); e.code = 'INCOMPATIBLE_LINK'; e.status = 409; throw e; }
+        var existing = this.edges.find(function (e) {
+          return e.kind === compat.kind &&
+            e.source.type === source.type && e.source.id === source.id &&
+            e.target.type === target.type && e.target.id === target.id;
+        });
+        if (existing) return { created: false, edge: existing };
+        if (compat.kind === 'hierarchy' && source.id === target.id) {
+          var e2 = new Error('Ein Topic kann nicht sein eigenes Elternteil sein'); e2.code = 'SELF_PARENT'; e2.status = 409; throw e2;
+        }
+        var edge = { id: 'e' + (idSeq++), kind: compat.kind, source: source, target: target };
+        this.edges.push(edge);
+        return { created: true, edge: edge };
+      },
+      removeEdge: function (edgeId) {
+        var idx = this.edges.findIndex(function (e) { return e.id === edgeId; });
+        if (idx === -1) { var e = new Error('Nicht gefunden'); e.code = 'NOT_FOUND'; e.status = 404; throw e; }
+        var edge = this.edges[idx];
+        this.edges.splice(idx, 1);
+        var warning = null;
+        if (edge.kind === 'knowledge_topic') warning = 'KNOWLEDGE_PAGE_NOW_UNASSIGNED';
+        return { ok: true, warning: warning };
+      },
+      movetheme: function (id, parentId) {
+        if (parentId === id) { var e = new Error('Ein Topic kann nicht sein eigenes Elternteil sein'); e.code = 'SELF_PARENT'; e.status = 409; throw e; }
+        // cycle check
+        if (parentId) {
+          var cur = parentId, guard = 0;
+          while (cur && guard++ < 1000) {
+            if (cur === id) { var e2 = new Error('Zyklus'); e2.code = 'CYCLE'; e2.status = 409; throw e2; }
+            var edge = this.edges.find(function (ed) { return ed.kind === 'hierarchy' && ed.source.id === cur; });
+            cur = edge ? edge.target.id : null;
+          }
+        }
+        this.edges = this.edges.filter(function (e) { return !(e.kind === 'hierarchy' && e.source.id === id); });
+        if (parentId) this.edges.push({ id: 'e' + (idSeq++), kind: 'hierarchy', source: { type: 'theme', id: id }, target: { type: 'theme', id: parentId } });
+        return { ok: true };
+      },
+      setPositions: function (positions) {
+        var self = this;
+        var saved = 0, ignored = [];
+        positions.forEach(function (p) {
+          var n = self.nodes.find(function (nn) { return nn.type === p.type && nn.id === p.id; });
+          if (!n) { ignored.push({ type: p.type, id: p.id, reason: 'NOT_FOUND' }); return; }
+          n.x = p.x; n.y = p.y; n.hasStoredPosition = true;
+          saved++;
+        });
+        return { ok: true, saved: saved, ignored: ignored };
+      }
+    };
+  }
+
+  function sampleData() {
+    var nodes = [
+      { type: 'theme', id: 't1', title: 'Produktstrategie', x: null, y: null, hasStoredPosition: false, done: null, meta: { parentId: null, childCount: 2, linkCount: 3, descriptionText: 'Übergeordnetes Topic' } },
+      { type: 'theme', id: 't2', title: 'Onboarding', x: null, y: null, hasStoredPosition: false, done: null, meta: { parentId: 't1', childCount: 0, linkCount: 1, descriptionText: '' } },
+      { type: 'theme', id: 't3', title: 'Roadmap Q3', x: null, y: null, hasStoredPosition: false, done: null, meta: { parentId: 't1', childCount: 0, linkCount: 2, descriptionText: '' } },
+      { type: 'knowledge', id: 'k1', title: 'Architektur-Überblick <XSS-Test> & "Quotes"', x: null, y: null, hasStoredPosition: false, done: null, meta: { updatedAt: '2026-07-01T10:00:00Z' } },
+      { type: 'knowledge', id: 'k2', title: 'API-Konventionen', x: null, y: null, hasStoredPosition: false, done: null, meta: { updatedAt: '2026-07-15T10:00:00Z' } },
+      { type: 'todo', id: 'd1', title: 'Kickoff-Meeting vorbereiten', x: null, y: null, hasStoredPosition: false, done: false, meta: { dueDate: '2026-08-10' } },
+      { type: 'todo', id: 'd2', title: 'Feedback einholen', x: null, y: null, hasStoredPosition: false, done: true, meta: { dueDate: null } },
+      { type: 'topic', id: 'm1', title: 'Sprint-Review Thema', x: null, y: null, hasStoredPosition: false, done: false, meta: { meetingId: 'mm1', meetingTitle: 'Sprint Review 12' } },
+      { type: 'contact', id: 'c1', title: 'Frau Beispiel', x: null, y: null, hasStoredPosition: false, done: null, meta: { role: 'Product Owner' } },
+      { type: 'contact', id: 'c2', title: 'Herr Muster', x: null, y: null, hasStoredPosition: false, done: null, meta: { role: 'Entwickler' } }
+    ];
+    var edges = [
+      { id: 'e1', kind: 'hierarchy', source: { type: 'theme', id: 't2' }, target: { type: 'theme', id: 't1' } },
+      { id: 'e2', kind: 'hierarchy', source: { type: 'theme', id: 't3' }, target: { type: 'theme', id: 't1' } },
+      { id: 'e3', kind: 'knowledge_topic', source: { type: 'knowledge', id: 'k1' }, target: { type: 'theme', id: 't1' } },
+      { id: 'e4', kind: 'knowledge_knowledge', source: { type: 'knowledge', id: 'k1' }, target: { type: 'knowledge', id: 'k2' } },
+      { id: 'e5', kind: 'theme_link', source: { type: 'todo', id: 'd1' }, target: { type: 'theme', id: 't2' } },
+      { id: 'e6', kind: 'theme_link', source: { type: 'todo', id: 'd2' }, target: { type: 'theme', id: 't2' } },
+      { id: 'e7', kind: 'theme_link', source: { type: 'topic', id: 'm1' }, target: { type: 'theme', id: 't3' } },
+      { id: 'e8', kind: 'theme_link', source: { type: 'contact', id: 'c1' }, target: { type: 'theme', id: 't1' } },
+      { id: 'e9', kind: 'theme_link', source: { type: 'contact', id: 'c2' }, target: { type: 'theme', id: 't2' } }
+    ];
+    return makeStore(nodes, edges);
+  }
+
+  function bigData(n, e) {
+    var nodes = [], edges = [];
+    var types = ['theme', 'knowledge', 'todo', 'topic', 'contact'];
+    var themeIds = [];
+    var themeCount = Math.round(n * 0.25);
+    for (var i = 0; i < n; i++) {
+      var type = i < themeCount ? 'theme' : types[1 + (i % 4)];
+      var id = type + i;
+      if (type === 'theme') themeIds.push(id);
+      nodes.push({
+        type: type, id: id, title: type + ' ' + i, x: null, y: null, hasStoredPosition: false,
+        done: (type === 'todo' || type === 'topic') ? (i % 3 === 0) : null,
+        meta: {}
+      });
+    }
+    var eid = 0;
+    // hierarchy among themes (random shallow tree)
+    themeIds.forEach(function (tid, idx) {
+      if (idx === 0) return;
+      var parent = themeIds[Math.floor(Math.random() * idx)];
+      edges.push({ id: 'be' + (eid++), kind: 'hierarchy', source: { type: 'theme', id: tid }, target: { type: 'theme', id: parent } });
+    });
+    var others = nodes.filter(function (n) { return n.type !== 'theme'; });
+    others.forEach(function (o) {
+      var theme = themeIds[Math.floor(Math.random() * themeIds.length)];
+      var kind = o.type === 'knowledge' ? 'knowledge_topic' : 'theme_link';
+      edges.push({ id: 'be' + (eid++), kind: kind, source: { type: o.type, id: o.id }, target: { type: 'theme', id: theme } });
+    });
+    var knowledgeNodes = nodes.filter(function (n) { return n.type === 'knowledge'; });
+    var extra = Math.max(0, e - edges.length);
+    for (var j = 0; j < extra && knowledgeNodes.length > 1; j++) {
+      var a = knowledgeNodes[Math.floor(Math.random() * knowledgeNodes.length)];
+      var b = knowledgeNodes[Math.floor(Math.random() * knowledgeNodes.length)];
+      if (a.id === b.id) continue;
+      edges.push({ id: 'be' + (eid++), kind: 'knowledge_knowledge', source: { type: 'knowledge', id: a.id }, target: { type: 'knowledge', id: b.id } });
+    }
+    return makeStore(nodes, edges);
+  }
+
+  var store = sampleData();
+  var simulateError = false;
+
+  // ---- confirm() Dialog Implementation (used by TSHost.confirm) -----------
+  var confirmOverlay = document.getElementById('dev-confirm-overlay');
+  var confirmTitle = document.getElementById('dev-confirm-title');
+  var confirmMessage = document.getElementById('dev-confirm-message');
+  var confirmOk = document.getElementById('dev-confirm-ok');
+  var confirmCancel = document.getElementById('dev-confirm-cancel');
+
+  function showConfirm(opts) {
+    return new Promise(function (resolve) {
+      confirmTitle.textContent = opts.title || 'Bestätigen';
+      confirmMessage.textContent = opts.message || '';
+      confirmOk.textContent = opts.confirmLabel || 'OK';
+      confirmOverlay.classList.add('open');
+      var cleanup = function (val) {
+        confirmOverlay.classList.remove('open');
+        confirmOk.removeEventListener('click', onOk);
+        confirmCancel.removeEventListener('click', onCancel);
+        resolve(val);
+      };
+      var onOk = function () { cleanup(true); };
+      var onCancel = function () { cleanup(false); };
+      confirmOk.addEventListener('click', onOk);
+      confirmCancel.addEventListener('click', onCancel);
+    });
+  }
+
+  function escHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // ---- window.TSHost mock ---------------------------------------------------
+  window.TSHost = {
+    api: function (method, path, body, opts) {
+      log(method + ' ' + path + (body ? ' ' + JSON.stringify(body).slice(0, 120) : ''));
+      return new Promise(function (resolve, reject) {
+        var delay = 60 + Math.random() * 120;
+        setTimeout(function () {
+          if (opts && opts.signal && opts.signal.aborted) {
+            var abErr = new Error('Aborted'); abErr.name = 'AbortError'; reject(abErr); return;
+          }
+          try {
+            if (simulateError) {
+              var e = new Error('Simulierter Fehler'); e.code = 'MOCK_ERROR'; e.status = 500; throw e;
+            }
+            if (method === 'GET' && path === '/api/graph') {
+              resolve({
+                nodes: store.nodes, edges: store.edges,
+                schema: { nodeTypes: ['theme', 'knowledge', 'todo', 'topic', 'contact'], edgeKinds: ['hierarchy', 'knowledge_topic', 'knowledge_knowledge', 'theme_link'], compatibility: COMPAT },
+                stats: { nodeCount: store.nodes.length, edgeCount: store.edges.length, truncated: false }
+              });
+            } else if (method === 'POST' && path === '/api/graph/edges') {
+              var result = store.addEdge(body.source, body.target);
+              resolve(result);
+            } else if (method === 'DELETE' && path.indexOf('/api/graph/edges/') === 0) {
+              var edgeId = decodeURIComponent(path.split('/').pop());
+              resolve(store.removeEdge(edgeId));
+            } else if (method === 'PATCH' && path === '/api/graph/positions') {
+              resolve(store.setPositions(body.positions));
+            } else if (method === 'PUT' && /^\/api\/themes\/.+\/move$/.test(path)) {
+              var id = decodeURIComponent(path.split('/')[3]);
+              resolve(store.movetheme(id, body.parentId));
+            } else {
+              var nf = new Error('Unbekannter Endpunkt'); nf.status = 404; nf.code = 'NOT_FOUND'; throw nf;
+            }
+          } catch (err) { reject(err); }
+        }, delay);
+      });
+    },
+    toast: function (msg, type) { log('TOAST[' + type + ']: ' + msg); },
+    escHtml: escHtml,
+    themeAncestorsPath: function (themeId) {
+      var path = [];
+      var cur = store.nodes.find(function (n) { return n.type === 'theme' && n.id === themeId; });
+      var guard = 0;
+      while (cur && guard++ < 50) {
+        path.unshift({ id: cur.id, title: cur.title });
+        var edge = store.edges.find(function (e) { return e.kind === 'hierarchy' && e.source.id === cur.id; });
+        cur = edge ? store.nodes.find(function (n) { return n.type === 'theme' && n.id === edge.target.id; }) : null;
+      }
+      return path;
+    },
+    openKnowledge: function (id) { log('openKnowledge(' + id + ')'); return Promise.resolve(); },
+    openObject: function (type, id, meta) { log('openObject(' + type + ', ' + id + ')'); return Promise.resolve(); },
+    confirm: showConfirm,
+    reducedMotion: function () { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  };
+
+  // ---- dev toolbar wiring ---------------------------------------------------
+  var status = document.getElementById('dev-status');
+  document.getElementById('btn-mount').addEventListener('click', function () {
+    window.TSGraph.mount(document.getElementById('graph-root'));
+    status.textContent = 'mounted=' + window.TSGraph.isMounted();
+  });
+  document.getElementById('btn-unmount').addEventListener('click', function () {
+    window.TSGraph.unmount();
+    status.textContent = 'mounted=' + window.TSGraph.isMounted();
+  });
+  document.getElementById('btn-invalidate').addEventListener('click', function () {
+    window.TSGraph.invalidate();
+  });
+  document.getElementById('btn-small').addEventListener('click', function () {
+    simulateError = false;
+    store = sampleData();
+    window.TSGraph.invalidate();
+  });
+  document.getElementById('btn-empty').addEventListener('click', function () {
+    simulateError = false;
+    store = makeStore([], []);
+    window.TSGraph.invalidate();
+  });
+  document.getElementById('btn-error').addEventListener('click', function () {
+    simulateError = true;
+    window.TSGraph.invalidate();
+    setTimeout(function () { simulateError = false; }, 4000);
+  });
+
+  // ===========================================================================
+  // Performance-Benchmark: 500 Knoten / 1500 Kanten
+  // Misst: Zeit von Dateneintreffen bis erstes vollständiges Rendering,
+  // sowie Frame-Zeiten während eines simulierten Drags eines einzelnen Knotens.
+  // ===========================================================================
+  document.getElementById('btn-500').addEventListener('click', function () {
+    simulateError = false;
+    store = bigData(500, 1500);
+    var t0 = performance.now();
+    window.TSGraph.mount(document.getElementById('graph-root'));
+    // Poll until nodes are actually rendered in the DOM (data arrives async via mock api)
+    var checkRendered = function () {
+      var root = document.getElementById('graph-root');
+      var nodeEls = root.querySelectorAll('.tsg-node');
+      if (nodeEls.length >= 500) {
+        var t1 = performance.now();
+        log('Initiales Rendering (500 Knoten / 1500 Kanten): ' + (t1 - t0).toFixed(1) + ' ms (Ziel < 1500 ms nach Dateneintreffen)');
+        runDragBenchmark();
+      } else {
+        requestAnimationFrame(checkRendered);
+      }
+    };
+    requestAnimationFrame(checkRendered);
+  });
+
+  function runDragBenchmark() {
+    var root = document.getElementById('graph-root');
+    var nodeEls = root.querySelectorAll('.tsg-node');
+    if (!nodeEls.length) { log('Benchmark: keine Knoten gefunden.'); return; }
+    var target = nodeEls[Math.floor(nodeEls.length / 2)];
+    var rect = target.getBoundingClientRect();
+    var startX = rect.left + rect.width / 2, startY = rect.top + rect.height / 2;
+
+    var frameTimes = [];
+    var last = performance.now();
+    var frames = 0;
+    var maxFrames = 90;
+
+    function step() {
+      var now = performance.now();
+      frameTimes.push(now - last);
+      last = now;
+      frames++;
+      var dx = Math.sin(frames / 8) * 120;
+      var dy = Math.cos(frames / 8) * 80;
+      var moveEvent = new PointerEvent('pointermove', {
+        clientX: startX + dx, clientY: startY + dy, bubbles: true, pointerId: 1
+      });
+      window.dispatchEvent(moveEvent);
+      if (frames < maxFrames) {
+        requestAnimationFrame(step);
+      } else {
+        window.dispatchEvent(new PointerEvent('pointerup', { clientX: startX, clientY: startY, bubbles: true, pointerId: 1 }));
+        var avg = frameTimes.reduce(function (a, b) { return a + b; }, 0) / frameTimes.length;
+        var fps = 1000 / avg;
+        var worst = Math.max.apply(null, frameTimes);
+        log('Drag-Benchmark: Ø ' + avg.toFixed(2) + ' ms/Frame (~' + fps.toFixed(1) + ' fps), langsamster Frame ' + worst.toFixed(2) + ' ms (Ziel ≥30fps / ≤33ms)');
+      }
+    }
+
+    target.dispatchEvent(new PointerEvent('pointerdown', {
+      clientX: startX, clientY: startY, bubbles: true, pointerId: 1, button: 0
+    }));
+    requestAnimationFrame(step);
+  }
+
+  log('Dev-Harness bereit. TSHost gemockt, In-Memory-Store aktiv.');
+})();
+</script>
+
+<script src="graph.js" defer></script>
+<script defer>
+  window.addEventListener('DOMContentLoaded', function () {
+    window.TSGraph.mount(document.getElementById('graph-root'));
+  });
+</script>
+
+</body>
+</html>
