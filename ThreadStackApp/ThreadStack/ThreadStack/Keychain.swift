@@ -100,7 +100,6 @@ enum Keychain {
             kSecReturnData as String:               true,
             kSecMatchLimit as String:               kSecMatchLimitOne,
             kSecUseAuthenticationContext as String: ctx,
-            kSecUseOperationPrompt as String:       prompt,
         ]
         var item: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -138,7 +137,7 @@ enum Keychain {
             kSecAttrService as String:         service,
             kSecAttrAccount as String:         account,
             kSecMatchLimit as String:          kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
         ]
         let status = SecItemCopyMatching(query as CFDictionary, nil)
         // errSecInteractionNotAllowed = Item existiert, würde aber Auth verlangen → es ist also da.
