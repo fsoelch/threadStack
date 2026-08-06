@@ -3472,7 +3472,12 @@ function currentSidebarMode() {
   return (selectedId === '__themes__' || selectedId === '__contacts__' || selectedId === '__graph__') ? 'wissen' : 'todos';
 }
 function switchSidebarMode(mode) {
-  if (mode === currentSidebarMode()) return;
+  // Kein No-Op, solange wir im Graph sind: __graph__ zaehlt zwar als "wissen"-Modus
+  // (fuer die aktiv-Markierung des Umschalters), ein Klick auf "Wissen" soll aber
+  // immer tatsaechlich navigieren/neu rendern - sonst bleibt z.B. ein verpasster
+  // Graph-Mount-Versuch (window.TSGraph war beim ersten Mount-Aufruf noch nicht
+  // bereit) dauerhaft haengen, weil kein erneutes render() ausgeloest wird.
+  if (mode === currentSidebarMode() && selectedId !== '__graph__') return;
   selectView(mode === 'wissen' ? lastWissenView : lastTodosView);
 }
 function renderSidebarModeSwitch() {
