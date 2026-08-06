@@ -2862,7 +2862,10 @@ async function api(method, path, body) {
 
 // ── TSHost — Schnittstelle für das Graph-Modul (public/graph.js) ──
 window.TSHost = {
-  api: (method, path, body, opts) => api(method, path, body),
+  // graph.js ruft Pfade inkl. führendem "/api" auf (z.B. "/api/graph"), die
+  // interne api()-Funktion baut die URL bereits als `${_path}/api${path}` —
+  // ohne dieses Kürzen entsteht ein doppeltes "/api/api/...".
+  api: (method, path, body, opts) => api(method, path.replace(/^\/api(?=\/|$)/, ''), body),
   toast: (msg, type) => toast(msg, type),
   escHtml: (s) => escHtml(s),
   themeAncestorsPath: (id) => themeAncestorsPath(id),
@@ -4863,6 +4866,8 @@ async function loadThemeDetail() {
 }
 
 async function selectTheme(id) {
+  selectedId = '__themes__';
+  lastWissenView = '__themes__';
   selectedThemeId = id;
   let cur = themeById(id);
   while (cur && cur.parentId) { expandedThemeIds.add(cur.parentId); cur = themeById(cur.parentId); }
