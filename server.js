@@ -2184,6 +2184,15 @@ if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
 app.get(BASE || '/', (req, res) => {
   const fs = require('fs');
   let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+  // Graph-Assets sind im Quelltext auf "/assets/..." verlinkt (funktioniert direkt
+  // gegen den Node-Prozess). Hinter einem Reverse-Proxy, der nur BASE_PATH an die
+  // App weiterleitet (siehe deploy.sh-Beispielkonfiguration), muss der ausgelieferte
+  // Pfad das BASE-Präfix tragen, sonst laedt /assets/graph.js/.css nie.
+  if (BASE) {
+    html = html
+      .replace('href="/assets/graph.css"', `href="${BASE}/assets/graph.css"`)
+      .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`);
+  }
   html = html.replace('</head>',
     `<script>window.__TS_BASE__ = ${JSON.stringify(BASE).replace(/</g, '\\u003c')};</script>\n</head>`);
   res.type('text/html').send(html);
