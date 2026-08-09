@@ -1324,6 +1324,20 @@ body.ai-disabled .ai-action { display: none !important; }
   font-size:.75rem; color:var(--text-muted); margin-top:.5rem;
 }
 
+/* ─── Link-Dialog (Rich-Text: Link + KI-Zusammenfassung) ────── */
+.ai-link-summary {
+  border-left:3px solid var(--primary); padding-left:.625rem; margin:.375rem 0;
+  color:var(--text-muted);
+}
+.ai-summary-badge {
+  display:inline-block; padding:.0625rem .5rem; border-radius:999px;
+  background:var(--primary-light); color:var(--primary-dark);
+  font-size:.6875rem; font-weight:600; margin-right:.375rem;
+}
+.rt-link-length-btn.active {
+  background:var(--primary); color:white; border-color:var(--primary);
+}
+
 /* ─── Stack panel (Phase 2) ──────────────────────────────────── */
 .stack-panel {
   position:fixed; right:16px; bottom:16px; z-index:30;
@@ -2598,6 +2612,71 @@ body.ai-disabled .ai-action { display: none !important; }
   </div>
 </div>
 
+<!-- ── Link-Dialog (Rich-Text: Link + optionale KI-Zusammenfassung) ─ -->
+<div id="rt-link-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'rt-link-modal')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rt-link-title" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2 id="rt-link-title">🔗 Link einfügen</h2>
+      <button class="modal-close" onclick="closeLinkModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label" for="rt-link-url">URL</label>
+        <input type="url" class="form-control" id="rt-link-url" autofocus placeholder="https://example.com" oninput="onLinkUrlInput()">
+        <div id="rt-link-url-error" class="form-error" style="display:none"></div>
+      </div>
+
+      <div class="form-group" role="radiogroup" aria-labelledby="rt-link-mode-label">
+        <label id="rt-link-mode-label" class="form-label">Wie soll der Link eingefügt werden?</label>
+        <div style="display:flex;flex-direction:column;gap:.5rem">
+          <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+            <input type="radio" name="rt-link-mode" id="rt-link-mode-link" value="link" onchange="renderLinkModalPhase()">
+            <span><strong>Nur Link</strong><br><span style="font-size:.8125rem;color:var(--text-muted)">Fügt nur den Link ein.</span></span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+            <input type="radio" name="rt-link-mode" id="rt-link-mode-summary" value="link_summary" onchange="renderLinkModalPhase()">
+            <span><strong>Link + KI-Zusammenfassung</strong><br><span style="font-size:.8125rem;color:var(--text-muted)">Ruft die Seite ab und erzeugt eine kurze Zusammenfassung.</span></span>
+          </label>
+          <div id="rt-link-mode-hint" style="display:none;font-size:.75rem;color:var(--text-muted)">
+            Noch nicht konfiguriert — <a href="#" onclick="event.preventDefault(); closeLinkModal(); openAiSettings();">zu den AI-Einstellungen</a>
+          </div>
+        </div>
+      </div>
+
+      <div id="rt-link-summary-fields" style="display:none">
+        <div class="form-group">
+          <label class="form-label" id="rt-link-length-label">Länge der Zusammenfassung</label>
+          <div id="rt-link-length-group" role="group" aria-labelledby="rt-link-length-label" style="display:flex;gap:.5rem">
+            <button type="button" class="btn btn-secondary btn-sm rt-link-length-btn" data-length="short" aria-pressed="false" onclick="onLinkLengthChange('short')">kurz</button>
+            <button type="button" class="btn btn-secondary btn-sm rt-link-length-btn" data-length="medium" aria-pressed="false" onclick="onLinkLengthChange('medium')">mittel</button>
+            <button type="button" class="btn btn-secondary btn-sm rt-link-length-btn" data-length="long" aria-pressed="false" onclick="onLinkLengthChange('long')">lang</button>
+          </div>
+        </div>
+        <div class="form-hint">Der Seiteninhalt der eingegebenen URL wird zur Zusammenfassung an den konfigurierten KI-Anbieter übermittelt.</div>
+        <div id="rt-link-ai-status" class="ai-status-line" aria-live="assertive"></div>
+        <div id="rt-link-progress" role="status" class="ai-status-line" style="display:none">
+          <span class="ai-spinner"></span> Lädt Seite und erzeugt Zusammenfassung …
+          <button type="button" class="btn btn-secondary btn-sm" style="margin-left:.5rem" onclick="cancelLinkLoading()">Abbrechen</button>
+        </div>
+        <div id="rt-link-preview" style="display:none">
+          <div><span class="ai-summary-badge">✨ Vorschau</span></div>
+          <div id="rt-link-preview-text" class="ai-link-summary"></div>
+          <div style="display:flex;gap:.5rem;margin-top:.625rem;flex-wrap:wrap">
+            <button type="button" class="btn btn-primary btn-sm" onclick="applyPreview()">Übernehmen</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="discardPreview()">Verwerfen</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="regenerateSummary()">Neu erzeugen</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeLinkModal()">Abbrechen</button>
+      <button class="btn btn-secondary" id="rt-link-only-btn" style="display:none" onclick="submitLinkOnly()">Nur Link einfügen</button>
+      <button class="btn btn-primary" id="rt-link-submit-btn" onclick="submitLinkAction()">Link einfügen</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── AI Brief Modal ──────────────────────────────────────────── -->
 <div id="ai-brief-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'ai-brief-modal')">
   <div class="modal modal-wide" onclick="event.stopPropagation()">
@@ -3235,14 +3314,414 @@ function rtCmd(cmd) {
   _restoreSelection();
   document.execCommand(cmd, false, null);
 }
-function rtLink() {
-  _restoreSelection();
-  const url = prompt('URL eingeben (z. B. https://example.com):');
-  if (!url) return;
-  _restoreSelection();
-  document.execCommand('createLink', false, url.includes('://') ? url : 'https://' + url);
-  // Make inserted link open in new tab
-  document.getSelection()?.anchorNode?.parentElement?.closest('a')?.setAttribute('target','_blank');
+// ── Link-Dialog (Rich-Text: "nur Link" vs. "Link + KI-Zusammenfassung") ──
+// Ersetzt die frühere prompt()-basierte rtLink(). Konsumiert die Backend-
+// Endpunkte POST /api/ai/link/fetch und POST /api/ai/link/summarize.
+//
+// Wichtig: das gespeicherte Selection-Range wird bewusst NICHT im globalen
+// _rtRange gehalten (das würde bei parallelem Weiterarbeiten im Editor
+// während der Dialog offen ist überschrieben), sondern lokal in
+// _rtLinkState geklont — siehe openLinkModal().
+let _rtLinkState = null;
+
+function _rtLinkDefaultMode() {
+  if (!aiFeatureOn('link_summary')) return 'link';
+  const stored = localStorage.getItem('ts.link.mode');
+  return stored === 'link_summary' ? 'link_summary' : 'link';
+}
+function _rtLinkDefaultLength() {
+  const stored = localStorage.getItem('ts.link.length');
+  return (stored === 'short' || stored === 'medium' || stored === 'long') ? stored : 'medium';
+}
+
+function openLinkModal(triggerEl) {
+  // _rtSel/_rtRange wurden bereits im onmousedown des Toolbar-Buttons per
+  // _saveSelection() gesetzt (Standardmuster dieser Toolbar) — hier lokal
+  // klonen, damit spätere Editor-Interaktionen den Dialog-State nicht mehr
+  // beeinflussen können.
+  _rtLinkState = {
+    savedSel: _rtSel,
+    savedRange: _rtRange ? _rtRange.cloneRange() : null,
+    opId: 0,
+    controller: null,
+    loadingTimer: null,
+    pageToken: null,
+    finalUrl: '',
+    title: '',
+    summary: '',
+    mode: _rtLinkDefaultMode(),
+    length: _rtLinkDefaultLength(),
+    phase: 'idle', // idle | loading-pending | loading | preview
+    triggerEl: triggerEl || null,
+  };
+
+  const urlInput = document.getElementById('rt-link-url');
+  urlInput.value = '';
+  hideLinkUrlError();
+
+  const featureOn = aiFeatureOn('link_summary');
+  const summaryRadio = document.getElementById('rt-link-mode-summary');
+  summaryRadio.disabled = !featureOn;
+  document.getElementById('rt-link-mode-hint').style.display = featureOn ? 'none' : '';
+  document.getElementById('rt-link-mode-link').checked = _rtLinkState.mode === 'link';
+  summaryRadio.checked = _rtLinkState.mode === 'link_summary';
+
+  setLinkLengthUi(_rtLinkState.length);
+  setLinkAiStatus('');
+  document.getElementById('rt-link-progress').style.display = 'none';
+  document.getElementById('rt-link-preview').style.display = 'none';
+  renderLinkModalPhase();
+
+  document.getElementById('rt-link-modal').style.display = 'flex';
+  setTimeout(() => urlInput.focus(), 50);
+}
+
+function closeLinkModal() {
+  const st = _rtLinkState;
+  if (st) {
+    st.opId += 1;
+    if (st.controller) st.controller.abort();
+    if (st.loadingTimer) clearTimeout(st.loadingTimer);
+  }
+  document.getElementById('rt-link-modal').style.display = 'none';
+  _rtLinkState = null;
+  if (st && st.triggerEl && document.body.contains(st.triggerEl)) st.triggerEl.focus();
+}
+
+function _rtLinkRestoreSelection() {
+  const st = _rtLinkState;
+  if (st && st.savedSel && st.savedRange) {
+    st.savedSel.removeAllRanges();
+    st.savedSel.addRange(st.savedRange);
+  }
+}
+
+function normalizeLinkUrl(raw) {
+  const url = (raw || '').trim();
+  if (!url) return '';
+  return /:\/\//.test(url) ? url : 'https://' + url;
+}
+function validateLinkUrl(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return /^https?:$/.test(u.protocol) && !!u.hostname;
+  } catch (_) {
+    return false;
+  }
+}
+function showLinkUrlError(msg) {
+  const el = document.getElementById('rt-link-url-error');
+  el.textContent = msg;
+  el.style.display = '';
+}
+function hideLinkUrlError() {
+  const el = document.getElementById('rt-link-url-error');
+  el.textContent = '';
+  el.style.display = 'none';
+}
+function setLinkAiStatus(msg, isError) {
+  const el = document.getElementById('rt-link-ai-status');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.style.color = isError ? 'var(--red)' : '';
+}
+function setLinkLengthUi(length) {
+  document.querySelectorAll('#rt-link-length-group .rt-link-length-btn').forEach(b => {
+    const active = b.dataset.length === length;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+}
+function onLinkLengthChange(len) {
+  if (!_rtLinkState) return;
+  _rtLinkState.length = len;
+  setLinkLengthUi(len);
+}
+
+function onLinkUrlInput() {
+  hideLinkUrlError();
+  const st = _rtLinkState;
+  if (!st) return;
+  // Eine geänderte URL macht einen zuvor abgerufenen page_token ungültig -
+  // erzwingt bei erneutem "Zusammenfassung erzeugen" einen frischen fetch.
+  if (st.pageToken || st.phase !== 'idle') {
+    st.opId += 1;
+    if (st.controller) st.controller.abort();
+    if (st.loadingTimer) clearTimeout(st.loadingTimer);
+    st.pageToken = null; st.finalUrl = ''; st.title = ''; st.summary = '';
+    st.phase = 'idle';
+    renderLinkModalPhase();
+    setLinkAiStatus('');
+  }
+}
+
+function renderLinkModalPhase() {
+  const st = _rtLinkState;
+  if (!st) return;
+  const modeInput = document.querySelector('input[name="rt-link-mode"]:checked');
+  st.mode = modeInput ? modeInput.value : 'link';
+
+  const summaryFields = document.getElementById('rt-link-summary-fields');
+  const progress      = document.getElementById('rt-link-progress');
+  const preview       = document.getElementById('rt-link-preview');
+  const onlyBtn       = document.getElementById('rt-link-only-btn');
+  const submitBtn     = document.getElementById('rt-link-submit-btn');
+
+  summaryFields.style.display = st.mode === 'link_summary' ? '' : 'none';
+  progress.style.display = (st.mode === 'link_summary' && (st.phase === 'loading')) ? '' : 'none';
+  preview.style.display  = (st.mode === 'link_summary' && st.phase === 'preview') ? '' : 'none';
+
+  if (st.mode !== 'link_summary') {
+    onlyBtn.style.display = 'none';
+    submitBtn.style.display = '';
+    submitBtn.textContent = 'Link einfügen';
+    submitBtn.disabled = false;
+  } else {
+    onlyBtn.style.display = '';
+    if (st.phase === 'preview') {
+      submitBtn.style.display = 'none';
+    } else {
+      submitBtn.style.display = '';
+      const busy = st.phase === 'loading' || st.phase === 'loading-pending';
+      submitBtn.textContent = busy ? 'Erzeuge …' : 'Zusammenfassung erzeugen';
+      submitBtn.disabled = busy;
+    }
+  }
+
+  if (st.mode === 'link_summary' && st.phase === 'preview') {
+    document.getElementById('rt-link-preview-text').innerHTML = escHtml(st.summary).replace(/\n/g, '<br>');
+  }
+}
+
+// Dünner fetch()-Wrapper analog api(), aber mit AbortSignal-Unterstützung
+// (für den "Abbrechen"-Button im Ladezustand) und mit err.code/err.body,
+// damit der 428/402-Confirm-Flow (analog aiCall()) ausgewertet werden kann.
+async function linkApiFetch(method, path, body, signal) {
+  const opts = { method, credentials: 'same-origin', signal };
+  if (body !== undefined) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
+  const res = await fetch(API + path, opts);
+  if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || 'Fehler');
+    err.status = res.status; err.code = data.code; err.body = data;
+    throw err;
+  }
+  return data;
+}
+
+const RT_LINK_ERROR_TEXT = {
+  invalid_url:              'Die eingegebene URL ist ungültig.',
+  blocked_target:           'Diese Adresse kann aus Sicherheitsgründen nicht abgerufen werden.',
+  fetch_in_progress:        'Für diese Seite läuft bereits ein Abruf. Bitte kurz warten.',
+  budget_exceeded:          'Monatliches AI-Budget erschöpft.',
+  too_large:                'Die Seite ist zu groß, um sie zusammenzufassen.',
+  unsupported_content_type: 'Dieser Inhaltstyp wird nicht unterstützt.',
+  no_text_content:          'Auf der Seite konnte kein Text gefunden werden.',
+  fetch_http_error:         'Die Seite konnte nicht abgerufen werden (Fehler beim Laden).',
+  too_many_redirects:       'Zu viele Weiterleitungen beim Abrufen der Seite.',
+  fetch_failed:             'Die Seite konnte nicht abgerufen werden.',
+  fetch_timeout:            'Der Abruf der Seite hat zu lange gedauert (Zeitüberschreitung).',
+  invalid_length:           'Ungültige Länge ausgewählt.',
+  page_token_expired:       'Der Seiteninhalt ist nicht mehr verfügbar, bitte erneut laden',
+  empty_summary:            'Die Zusammenfassung ist leer ausgefallen.',
+};
+function mapLinkApiError(e) {
+  if (e.status === 409) return e.message || 'Feature deaktiviert.';
+  if (e.code && RT_LINK_ERROR_TEXT[e.code]) return RT_LINK_ERROR_TEXT[e.code];
+  if (e.status === 503) return 'Die KI ist gerade nicht erreichbar. Bitte später erneut versuchen.';
+  return e.message || 'Unbekannter Fehler.';
+}
+
+function linkFetchApi(url, signal) {
+  return linkApiFetch('POST', '/ai/link/fetch', { url }, signal);
+}
+function linkSummarizeApi(pageToken, length, signal, confirmed) {
+  const path = '/ai/link/summarize' + (confirmed ? '?confirm=true' : '');
+  return linkApiFetch('POST', path, { page_token: pageToken, length }, signal);
+}
+
+function _rtLinkArmLoadingIndicator(myOpId) {
+  const st = _rtLinkState;
+  st.phase = 'loading-pending';
+  renderLinkModalPhase();
+  st.loadingTimer = setTimeout(() => {
+    if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+    _rtLinkState.phase = 'loading';
+    renderLinkModalPhase();
+  }, 1000);
+}
+
+async function startLinkSummary() {
+  const st = _rtLinkState;
+  if (!st) return;
+  const urlRaw = document.getElementById('rt-link-url').value;
+  const url = normalizeLinkUrl(urlRaw);
+  if (!validateLinkUrl(url)) {
+    showLinkUrlError('Bitte eine gültige URL eingeben (z. B. https://example.com).');
+    return;
+  }
+  hideLinkUrlError();
+  setLinkAiStatus('');
+
+  st.opId += 1;
+  const myOpId = st.opId;
+  st.controller = new AbortController();
+  _rtLinkArmLoadingIndicator(myOpId);
+
+  try {
+    const fetchRes = await linkFetchApi(url, st.controller.signal);
+    if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+    st.pageToken = fetchRes.page_token;
+    st.finalUrl = fetchRes.final_url || url;
+    st.title = fetchRes.title || '';
+    await requestSummary(myOpId);
+  } catch (e) {
+    if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+    if (e.name === 'AbortError') return;
+    clearTimeout(st.loadingTimer);
+    st.phase = 'idle';
+    renderLinkModalPhase();
+    setLinkAiStatus(mapLinkApiError(e), true);
+  }
+}
+
+async function requestSummary(myOpId) {
+  const st = _rtLinkState;
+  if (!st) return;
+  try {
+    const data = await linkSummarizeApi(st.pageToken, st.length, st.controller.signal, false);
+    if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+    finishSummarySuccess(data);
+  } catch (e) {
+    if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+    if (e.name === 'AbortError') return;
+    if (e.status === 428) {
+      const det = e.body?.detail || {};
+      const cents = det.estimated_cost_cents | 0;
+      const thr = det.threshold_cents | 0;
+      clearTimeout(st.loadingTimer);
+      st.phase = 'idle';
+      renderLinkModalPhase();
+      const ok = confirm(`Geschätzte Kosten: ${(cents/100).toFixed(2)} € (Schwelle: ${(thr/100).toFixed(2)} €).\nFortfahren?`);
+      if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+      if (!ok) { setLinkAiStatus('Abgebrochen.'); return; }
+      _rtLinkArmLoadingIndicator(myOpId);
+      try {
+        const data2 = await linkSummarizeApi(st.pageToken, st.length, st.controller.signal, true);
+        if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+        finishSummarySuccess(data2);
+      } catch (e2) {
+        if (!_rtLinkState || _rtLinkState.opId !== myOpId) return;
+        if (e2.name === 'AbortError') return;
+        clearTimeout(st.loadingTimer);
+        st.phase = 'idle';
+        renderLinkModalPhase();
+        setLinkAiStatus(mapLinkApiError(e2), true);
+      }
+      return;
+    }
+    clearTimeout(st.loadingTimer);
+    st.phase = 'idle';
+    renderLinkModalPhase();
+    setLinkAiStatus(mapLinkApiError(e), true);
+  }
+}
+
+function finishSummarySuccess(data) {
+  const st = _rtLinkState;
+  if (!st) return;
+  clearTimeout(st.loadingTimer);
+  st.summary = data.summary || '';
+  st.phase = 'preview';
+  renderLinkModalPhase();
+  setLinkAiStatus(data.truncated ? 'Hinweis: Die Zusammenfassung wurde gekürzt.' : '');
+}
+
+async function regenerateSummary() {
+  const st = _rtLinkState;
+  if (!st || !st.pageToken) return;
+  st.opId += 1;
+  const myOpId = st.opId;
+  st.controller = new AbortController();
+  setLinkAiStatus('');
+  _rtLinkArmLoadingIndicator(myOpId);
+  await requestSummary(myOpId);
+}
+
+function cancelLinkLoading() {
+  const st = _rtLinkState;
+  if (!st) return;
+  st.opId += 1;
+  if (st.controller) st.controller.abort();
+  if (st.loadingTimer) clearTimeout(st.loadingTimer);
+  st.phase = 'idle';
+  renderLinkModalPhase();
+  setLinkAiStatus('Vorgang abgebrochen.');
+}
+
+function discardPreview() {
+  const st = _rtLinkState;
+  if (!st) return;
+  st.phase = 'idle';
+  st.summary = '';
+  renderLinkModalPhase();
+  setLinkAiStatus('');
+}
+
+function buildLinkOnlyHtml(finalUrl, linkText) {
+  return `<p><a href="${escHtml(finalUrl)}" target="_blank" rel="noopener noreferrer">${escHtml(linkText)}</a></p>`;
+}
+
+function submitLinkOnly() {
+  const st = _rtLinkState;
+  if (!st) return;
+  const urlRaw = document.getElementById('rt-link-url').value;
+  const url = normalizeLinkUrl(urlRaw);
+  if (!validateLinkUrl(url)) {
+    showLinkUrlError('Bitte eine gültige URL eingeben (z. B. https://example.com).');
+    return;
+  }
+  hideLinkUrlError();
+  const finalUrl = st.finalUrl || url;
+  const linkText = st.title || finalUrl;
+  const html = buildLinkOnlyHtml(finalUrl, linkText);
+
+  st.opId += 1; // spätere Ergebnisse eines laufenden AI-Aufrufs nicht mehr einfügen
+  if (st.controller) st.controller.abort();
+
+  _rtLinkRestoreSelection();
+  document.execCommand('insertHTML', false, html);
+  closeLinkModal();
+}
+
+function submitLinkAction() {
+  const st = _rtLinkState;
+  if (!st) return;
+  if (st.mode === 'link_summary') startLinkSummary();
+  else submitLinkOnly();
+}
+
+function applyPreview() {
+  const st = _rtLinkState;
+  if (!st || st.phase !== 'preview') return;
+  const url = normalizeLinkUrl(document.getElementById('rt-link-url').value);
+  const finalUrl = st.finalUrl || url;
+  const linkText = st.title || finalUrl;
+  let html = buildLinkOnlyHtml(finalUrl, linkText);
+  const paragraphs = (st.summary || '').split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+  paragraphs.forEach((p, i) => {
+    html += i === 0
+      ? `<p><em>✨ KI-Zusammenfassung:</em> ${escHtml(p)}</p>`
+      : `<p>${escHtml(p)}</p>`;
+  });
+
+  _rtLinkRestoreSelection();
+  document.execCommand('insertHTML', false, html);
+  localStorage.setItem('ts.link.mode', 'link_summary');
+  localStorage.setItem('ts.link.length', st.length);
+  closeLinkModal();
 }
 
 // Fügt eine Tabelle an der Cursorposition ein.
@@ -3393,7 +3872,7 @@ function initRtToolbar(tbId, editorId, opts = {}) {
   const linkBtn = document.createElement('button');
   linkBtn.type = 'button'; linkBtn.className = 'rt-btn'; linkBtn.title = 'Link einfügen'; linkBtn.innerHTML = '🔗 Link';
   linkBtn.onmousedown = e => { e.preventDefault(); _saveSelection(); };
-  linkBtn.onclick = rtLink;
+  linkBtn.onclick = () => openLinkModal(linkBtn);
 
   const tableBtn = document.createElement('button');
   tableBtn.type = 'button'; tableBtn.className = 'rt-btn'; tableBtn.title = 'Tabelle einfügen'; tableBtn.innerHTML = '📊 Tabelle';
@@ -6504,6 +6983,7 @@ const AI_FEATURE_LABELS = {
   digest:        'Wochen-Digest',
   cross_meeting: 'Cross-Meeting-Insight',
   drift:         'Drift-Detection',
+  link_summary:  'Link-Zusammenfassung',
 };
 
 const AI_MODEL_DEFAULTS = {
@@ -7646,6 +8126,7 @@ document.addEventListener('keydown', e => {
     closeHelp();
     ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
     closeConfirm();
     return;
   }
