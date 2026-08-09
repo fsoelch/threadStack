@@ -1716,6 +1716,9 @@ body.ai-disabled .ai-action { display: none !important; }
     <button class="user-menu-item" onclick="closeUserMenu(); openAiSettings()">
       <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg></span><span>AI-Einstellungen</span>
     </button>
+    <button class="user-menu-item" onclick="closeUserMenu(); openExportModal()">
+      <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></span><span>Export</span>
+    </button>
     <button class="user-menu-item" id="user-menu-admin" style="display:none" onclick="closeUserMenu(); openAdminPanel()">
       <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg></span><span>Benutzerverwaltung</span>
     </button>
@@ -2520,6 +2523,67 @@ body.ai-disabled .ai-action { display: none !important; }
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="document.getElementById('ai-settings-modal').style.display='none'">Schließen</button>
       <button class="btn btn-primary" onclick="saveAiSettingsForm()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Export Modal ────────────────────────────────────────────── -->
+<div id="export-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'export-modal')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Export</h2>
+      <button class="modal-close" onclick="document.getElementById('export-modal').style.display='none'">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Was soll exportiert werden?</label>
+        <div style="display:flex;flex-direction:column;gap:.5rem">
+          <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+            <input type="radio" name="export-scope" value="knowledge" checked onchange="onExportScopeChange()">
+            <span><strong>Nur Wissen</strong><br><span style="font-size:.8125rem;color:var(--text-muted)">Alle Wissensseiten, optional inkl. Topic-Struktur.</span></span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+            <input type="radio" name="export-scope" value="todos" onchange="onExportScopeChange()">
+            <span><strong>Nur Todos &amp; Tasks</strong><br><span style="font-size:.8125rem;color:var(--text-muted)">Alle Todos, wahlweise nur offene.</span></span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+            <input type="radio" name="export-scope" value="both" onchange="onExportScopeChange()">
+            <span><strong>Beides</strong><br><span style="font-size:.8125rem;color:var(--text-muted)">Wissen und Todos in einem Export.</span></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="form-group" id="export-graph-field">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+          <input type="checkbox" id="export-include-graph" checked>
+          <span>Topic-/Graph-Struktur einschließen</span>
+        </label>
+      </div>
+
+      <div class="form-group" id="export-open-only-field" style="display:none">
+        <label style="display:flex;align-items:center;gap:.5rem;cursor:pointer">
+          <input type="checkbox" id="export-open-only">
+          <span>Nur offene Todos</span>
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Format</label>
+        <div style="display:flex;flex-direction:column;gap:.5rem">
+          <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+            <input type="radio" name="export-format" value="docx" checked>
+            <span><strong>Word-Dokument (.docx)</strong><br><span style="font-size:.8125rem;color:var(--text-muted)">Sauber strukturiert zum Nachlesen.</span></span>
+          </label>
+          <label style="display:flex;align-items:flex-start;gap:.625rem;padding:.75rem;border:1px solid var(--border);border-radius:var(--r-md);cursor:pointer">
+            <input type="radio" name="export-format" value="xml">
+            <span><strong>XML</strong><br><span style="font-size:.8125rem;color:var(--text-muted)">Für einen späteren Re-Import.</span></span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="document.getElementById('export-modal').style.display='none'">Abbrechen</button>
+      <button class="btn btn-primary" id="export-run-btn" onclick="runExport()">Exportieren</button>
     </div>
   </div>
 </div>
@@ -6350,6 +6414,63 @@ function refreshAiUiVisibility() {
   // sind durch die `ai-action`-Klasse global via body.ai-disabled ein/aus.
 }
 
+// ── Export ───────────────────────────────────────────────────
+function openExportModal() {
+  document.getElementById('export-modal').style.display = 'flex';
+  onExportScopeChange();
+}
+
+function onExportScopeChange() {
+  const scope = document.querySelector('input[name="export-scope"]:checked').value;
+  document.getElementById('export-graph-field').style.display = (scope === 'knowledge' || scope === 'both') ? '' : 'none';
+  document.getElementById('export-open-only-field').style.display = (scope === 'todos' || scope === 'both') ? '' : 'none';
+}
+
+// Bewusste Ausnahme vom sonst üblichen "<a href download>"-Muster: fetch()+Blob
+// statt reiner Navigation, weil (a) ein Fehler (abgelaufene Session,
+// Serverfehler) sonst als fehlgeschlagener "Download" einer JSON-Fehlerseite
+// erscheinen würde statt als Toast, (b) der Busy-State erst nach echtem
+// Abschluss zurückgesetzt werden kann.
+async function runExport() {
+  const scope        = document.querySelector('input[name="export-scope"]:checked').value;
+  const format        = document.querySelector('input[name="export-format"]:checked').value;
+  const includeGraph  = document.getElementById('export-include-graph').checked;
+  const openOnly      = document.getElementById('export-open-only').checked;
+
+  const params = new URLSearchParams({
+    scope, format,
+    graph: includeGraph ? '1' : '0',
+    openOnly: openOnly ? '1' : '0',
+  });
+
+  setBusy('export-run-btn', true);
+  try {
+    const res = await fetch(`${API}/export?${params.toString()}`, { method: 'GET', credentials: 'same-origin' });
+    if (res.status === 401) { showLogin(); throw new Error('Sitzung abgelaufen'); }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Export fehlgeschlagen');
+    }
+    const blob = await res.blob();
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = /filename\*=UTF-8''([^;]+)/.exec(disposition);
+    const filename = match ? decodeURIComponent(match[1]) : `ThreadStack-Export.${format}`;
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+
+    document.getElementById('export-modal').style.display = 'none';
+    toast('Export erstellt', 'success');
+  } catch (e) {
+    toast(e.message || 'Export fehlgeschlagen', 'error');
+  } finally {
+    setBusy('export-run-btn', false);
+  }
+}
+
 async function loadAiSettings() {
   try { aiSettings = await api('GET', '/ai/settings'); }
   catch { aiSettings = null; }
@@ -7394,7 +7515,7 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('search-overlay').classList.contains('open')) { closeSearch(); return; }
     closeMobileSidebar();
     closeHelp();
-    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal']
+    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     closeConfirm();
     return;

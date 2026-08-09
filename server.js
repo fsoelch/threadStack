@@ -7,6 +7,7 @@ const crypto   = require('crypto');
 const path     = require('path');
 const fs       = require('fs');
 const { sanitizeKnowledgeHtml, htmlToText, MAX_KNOWLEDGE_CONTENT } = require('./lib/sanitize');
+const { knowledgeThemeIds, knowledgeRelatedIds } = require('./lib/knowledge-queries');
 
 const app      = express();
 // If behind a trusted reverse proxy (e.g. nginx on same host), set TRUST_PROXY=1
@@ -1217,42 +1218,6 @@ function parseKnowledgePage(k, themeIds = [], relatedPageIds = []) {
   };
 }
 
-function knowledgeThemeIds(pageIds) {
-  if (!pageIds.length) return new Map();
-  const rows = db.prepare(
-    `SELECT * FROM knowledge_topic_links WHERE knowledge_page_id IN (${pageIds.map(()=>'?').join(',')})`
-  ).all(...pageIds);
-  const map = new Map();
-  for (const r of rows) {
-    if (!map.has(r.knowledge_page_id)) map.set(r.knowledge_page_id, []);
-    map.get(r.knowledge_page_id).push(r.theme_id);
-  }
-  return map;
-}
-
-// Sammelabfrage: alle knowledge_links, die mindestens eine der übergebenen
-// Seiten betreffen — vermeidet N+1-Queries beim Listing (GET /api/knowledge).
-function knowledgeRelatedIds(pageIds) {
-  if (!pageIds.length) return new Map();
-  const placeholders = pageIds.map(() => '?').join(',');
-  const rows = db.prepare(
-    `SELECT page_a_id, page_b_id FROM knowledge_links WHERE page_a_id IN (${placeholders}) OR page_b_id IN (${placeholders})`
-  ).all(...pageIds, ...pageIds);
-  const idSet = new Set(pageIds);
-  const map = new Map();
-  for (const r of rows) {
-    if (idSet.has(r.page_a_id)) {
-      if (!map.has(r.page_a_id)) map.set(r.page_a_id, []);
-      map.get(r.page_a_id).push(r.page_b_id);
-    }
-    if (idSet.has(r.page_b_id)) {
-      if (!map.has(r.page_b_id)) map.set(r.page_b_id, []);
-      map.get(r.page_b_id).push(r.page_a_id);
-    }
-  }
-  return map;
-}
-
 function ownsKnowledgePage(userId, id) {
   return db.prepare('SELECT * FROM knowledge_pages WHERE id=? AND user_id=?').get(id, userId);
 }
@@ -1273,8 +1238,8 @@ app.get(`${A}/knowledge`, requireAuth, (req, res) => {
     pages = db.prepare('SELECT * FROM knowledge_pages WHERE user_id=? ORDER BY sort_order, created_at').all(req.session.uid);
   }
   const pageIds = pages.map(p => p.id);
-  const themeIdsByPage = knowledgeThemeIds(pageIds);
-  const relatedByPage  = knowledgeRelatedIds(pageIds);
+  const themeIdsByPage = knowledgeThemeIds(db, pageIds);
+  const relatedByPage  = knowledgeRelatedIds(db, pageIds);
   res.json(pages.map(p => parseKnowledgePage(p, themeIdsByPage.get(p.id) || [], relatedByPage.get(p.id) || [])));
 });
 
@@ -1432,7 +1397,7 @@ app.get(`${A}/knowledge/search`, requireAuth, (req, res) => {
   }
 
   const pageIds = rows.map(r => r.id);
-  const themeIdsByPage = knowledgeThemeIds(pageIds);
+  const themeIdsByPage = knowledgeThemeIds(db, pageIds);
   res.json({
     query: q,
     results: rows.map(r => ({
@@ -1466,7 +1431,7 @@ app.get(`${A}/themes/:id/knowledge`, requireAuth, (req, res) => {
   const pages = db.prepare(
     `SELECT * FROM knowledge_pages WHERE user_id=? AND id IN (${pageIds.map(()=>'?').join(',')}) ORDER BY sort_order, created_at`
   ).all(req.session.uid, ...pageIds);
-  const themeIdsByPage = knowledgeThemeIds(pageIds);
+  const themeIdsByPage = knowledgeThemeIds(db, pageIds);
   res.json(pages.map(p => {
     const originThemeId = seen.get(p.id);
     const origin = themesById.get(originThemeId);
@@ -2272,6 +2237,14 @@ require('./graph')(app, {
   htmlToText,
   apiBase: A,
   NODE_TYPES: ['theme', 'knowledge', 'todo', 'topic', 'contact'],
+});
+
+// ── Export-API (Web-only Feature) ─────────────────────────────
+require('./export')(app, {
+  db,
+  requireAuth,
+  fail,
+  apiBase: A,
 });
 
 // ── Globaler Error-Handler (letzte Middleware) ────────────────
