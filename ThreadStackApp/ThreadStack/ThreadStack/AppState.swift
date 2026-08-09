@@ -814,6 +814,17 @@ final class AppState: ObservableObject {
         } catch { driftIds = [] }
     }
 
+    // MARK: - v1.1: AI link summary
+
+    func aiLinkFetch(url: String) async throws -> LinkFetchResponse {
+        try await aiRequest("POST", "/ai/link/fetch", body: ["url": url])
+    }
+
+    func aiLinkSummarize(pageToken: String, length: String, confirm: Bool = false) async throws -> LinkSummaryResponse {
+        try await aiRequest("POST", "/ai/link/summarize\(confirm ? "?confirm=true" : "")",
+                            body: ["page_token": pageToken, "length": length])
+    }
+
     // MARK: - Graph (Story B9)
 
     /// Loads the full graph in a single round trip. Falls back to the last
