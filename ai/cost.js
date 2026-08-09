@@ -18,6 +18,12 @@ const FEATURE_MAX_OUTPUT_TOKENS = {
   digest:        1500,
   cross_meeting:  800,
   drift:          800,
+  // link_summary hat eine je `length` variable Obergrenze (short=200,
+  // medium=400, long=800 — siehe ai/index.js summarizeLink). Für die
+  // Budget-/Kostenschätzung vor dem eigentlichen Aufruf (estimateBeforeCall)
+  // wird hier der größte mögliche Wert als konservative Obergrenze verwendet,
+  // analog zum bestehenden Muster dieser Tabelle (ein Wert pro Feature).
+  link_summary:   800,
   test:             1,
 };
 

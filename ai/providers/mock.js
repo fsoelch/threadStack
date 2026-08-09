@@ -25,14 +25,23 @@ const FIXTURES = {
   },
   cross_meeting:  { matches: [] },
   drift:          { drifted: [] },
+  link_summary:   'Mock-Zusammenfassung.',
   test:           'OK',
 };
 
 // Allows tests to override the response for a specific feature.
 function setMockResponse(feature, value) { FIXTURES[feature] = value; }
 
-async function callModel({ feature, json = false, maxTokens = 1024 }) {
+// Records the parameters of the most recent callModel invocation, so tests
+// can assert on things (e.g. maxTokens, prompt content) that don't show up
+// in the returned content itself. Additive, non-breaking: existing tests
+// that never call getLastCall() are unaffected.
+let lastCall = null;
+function getLastCall() { return lastCall; }
+
+async function callModel({ feature, json = false, maxTokens = 1024, system, user }) {
   const f = feature || 'test';
+  lastCall = { feature: f, json, maxTokens, system, user };
   let content = FIXTURES[f] != null ? FIXTURES[f] : 'OK';
   if (json && typeof content !== 'string') content = JSON.stringify(content);
   if (!json && typeof content !== 'string') content = String(content);
@@ -43,4 +52,4 @@ async function testConnection() {
   return { ok: true, model: 'mock', sample: 'OK' };
 }
 
-module.exports = { callModel, testConnection, setMockResponse };
+module.exports = { callModel, testConnection, setMockResponse, getLastCall };

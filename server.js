@@ -8,6 +8,10 @@ const path     = require('path');
 const fs       = require('fs');
 const { sanitizeKnowledgeHtml, htmlToText, MAX_KNOWLEDGE_CONTENT } = require('./lib/sanitize');
 const { knowledgeThemeIds, knowledgeRelatedIds } = require('./lib/knowledge-queries');
+const { safeFetchPage, SafeFetchError } = require('./lib/safe-fetch');
+const { extractReadableText, ExtractError } = require('./lib/html-extract');
+const linkCache = require('./ai/link-cache');
+const aiUsage = require('./ai/usage');
 
 const app      = express();
 // If behind a trusted reverse proxy (e.g. nginx on same host), set TRUST_PROXY=1
@@ -1737,6 +1741,145 @@ app.get(`${A}/ai/insights/drift`, requireAuth, (req, res) => {
   const s = ai.loadSettings(db, req.session.uid);
   const driftDays = (s && s.drift_days) || 21;
   res.json({ drifted: ai.driftDetection(db, req.session.uid, driftDays), drift_days: driftDays });
+});
+
+// ── KI-Zusammenfassung beim Einfügen von Links ───────────────
+// Verhindert, dass ein Nutzer mehrere gleichzeitige Seitenabrufe anstößt
+// (Missbrauch als Portscanner / Ressourcenerschöpfung). Rein In-Memory,
+// pro Prozess — kein Persistenzbedarf, TTL nicht nötig, da der Eintrag in
+// jedem Abschlusspfad (finally) wieder entfernt wird.
+const linkFetchInProgress = new Set();
+
+// Bewusst nur EIN Test-only-Bypass für die SSRF-Loopback-Sperre von
+// lib/safe-fetch.js: `safeFetchPage()` unterstützt laut lib/safe-fetch.js
+// eine (im öffentlichen Vertrag von Paket 1 nicht dokumentierte) Option
+// `allowLoopbackForTest`, die ausschließlich Loopback-Literale (127.0.0.1,
+// ::1) von der Sperre ausnimmt — alle anderen SSRF-Schutzmaßnahmen bleiben
+// unverändert aktiv. Damit die Testsuite dieses Pakets einen echten
+// lokalen http.createServer() abrufen kann, wird dieser Schalter über eine
+// Umgebungsvariable freigeschaltet, die außerhalb von Tests nicht gesetzt
+// wird (Default: aus). Siehe Abschlussbericht: Abweichung, da der
+// Schnittstellenvertrag zu Paket 1 diese Option nicht erwähnt.
+function allowLoopbackForTest() {
+  return process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST === 'true';
+}
+
+// Zentrale Fehler-Mapping-Funktion: SafeFetchError/ExtractError -> HTTP.
+// Liefert IMMER generische, nutzertaugliche Texte ohne interne Details
+// (keine IP-/Hostnamen-/Netzwerkdetails, kein Stacktrace).
+function mapLinkFetchError(e) {
+  if (e instanceof SafeFetchError) {
+    switch (e.code) {
+      case 'invalid_url':             return { status: 400, code: e.code, message: 'Keine gültige http/https-Adresse.' };
+      case 'blocked_target':          return { status: 403, code: e.code, message: 'Diese Adresse kann nicht abgerufen werden.' };
+      case 'too_large':               return { status: 413, code: e.code, message: 'Die Seite ist zu groß.' };
+      case 'unsupported_content_type':return { status: 415, code: e.code, message: 'Dieser Inhaltstyp lässt sich nicht zusammenfassen.' };
+      case 'fetch_http_error':        return { status: 502, code: e.code, message: `Die Seite hat mit Status ${e.status || '?'} geantwortet.` };
+      case 'too_many_redirects':      return { status: 502, code: e.code, message: 'Zu viele Weiterleitungen.' };
+      case 'fetch_timeout':           return { status: 504, code: e.code, message: 'Die Seite hat nicht rechtzeitig geantwortet.' };
+      case 'fetch_failed':
+      default:                        return { status: 502, code: 'fetch_failed', message: 'Die Seite ist nicht erreichbar.' };
+    }
+  }
+  if (e instanceof ExtractError) {
+    return { status: 422, code: 'no_text_content', message: 'Auf der Seite wurde zu wenig Text gefunden.' };
+  }
+  return { status: 502, code: 'fetch_failed', message: 'Die Seite ist nicht erreichbar.' };
+}
+
+app.post(`${A}/ai/link/fetch`, requireAuth, async (req, res) => {
+  const uid = req.session.uid;
+  const startedAt = Date.now();
+
+  const rawUrl = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
+  if (!rawUrl) {
+    return res.status(400).json({ error: 'Keine gültige http/https-Adresse.', code: 'invalid_url' });
+  }
+
+  let s;
+  try {
+    s = ai.loadSettings(db, uid);
+    ai.assertActive(s, 'link_summary');
+    aiUsage.assertBudgetOk(db, uid, s, 0);
+  } catch (e) { return aiErr(res, e); }
+
+  if (linkFetchInProgress.has(uid)) {
+    return res.status(409).json({ error: 'Ein Seitenabruf läuft bereits.', code: 'fetch_in_progress' });
+  }
+  linkFetchInProgress.add(uid);
+
+  try {
+    let fetched;
+    try {
+      fetched = await safeFetchPage(rawUrl, {
+        timeoutMs: 10000,
+        maxBytes: 2 * 1024 * 1024,
+        maxRedirects: 3,
+        allowLoopbackForTest: allowLoopbackForTest(),
+      });
+    } catch (e) {
+      const mapped = mapLinkFetchError(e);
+      console.warn('[link-summary] fetch failed', { code: mapped.code, durationMs: Date.now() - startedAt });
+      return res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
+    }
+
+    let extracted;
+    try {
+      extracted = extractReadableText(fetched.body, { charset: fetched.charset, maxChars: 12000 });
+    } catch (e) {
+      const mapped = mapLinkFetchError(e);
+      console.warn('[link-summary] extract failed', { code: mapped.code, durationMs: Date.now() - startedAt });
+      return res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
+    }
+
+    const page = {
+      title:    extracted.title,
+      text:     extracted.text,
+      lang:     extracted.lang,
+      finalUrl: fetched.finalUrl,
+      truncated: !!extracted.truncated,
+    };
+    const page_token = linkCache.put(uid, page);
+
+    res.json({
+      page_token,
+      title: page.title,
+      final_url: page.finalUrl,
+      lang: page.lang,
+      text_chars: page.text.length,
+      truncated: page.truncated,
+    });
+  } finally {
+    linkFetchInProgress.delete(uid);
+  }
+});
+
+const LINK_SUMMARY_VALID_LENGTHS = new Set(['short', 'medium', 'long']);
+
+app.post(`${A}/ai/link/summarize`, requireAuth, async (req, res) => {
+  const uid = req.session.uid;
+  const body = req.body || {};
+  const length = body.length;
+  const pageToken = typeof body.page_token === 'string' ? body.page_token : '';
+
+  if (!LINK_SUMMARY_VALID_LENGTHS.has(length)) {
+    return res.status(400).json({ error: 'Ungültige Länge.', code: 'invalid_length' });
+  }
+
+  try {
+    const s = ai.loadSettings(db, uid);
+    ai.assertActive(s, 'link_summary');
+    const page = linkCache.take(uid, pageToken);
+    if (!page) {
+      return res.status(410).json({ error: 'Der zwischengespeicherte Seiteninhalt ist abgelaufen.', code: 'page_token_expired' });
+    }
+    const r = await ai.summarizeLink({
+      db, userId: uid, settings: s, encryptionKey,
+      page, length,
+      confirmed: req.query.confirm === 'true',
+    });
+    res.json(r);
+  } catch (e) { aiErr(res, e); }
 });
 
 // ── Stack-Layer routes (Erweiterung v1.1, Phase 2) ───────────

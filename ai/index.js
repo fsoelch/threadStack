@@ -30,6 +30,7 @@ function uid() {
 const DEFAULT_FEATURES = {
   brief: true, capture: true, result_draft: true, reentry: true,
   theme_tagging: false, digest: false, cross_meeting: false, drift: false,
+  link_summary: false,
 };
 
 function loadSettings(db, userId) {
@@ -385,6 +386,55 @@ async function draftResult({ db, userId, settings, encryptionKey, refType, refId
 
   const draft = String(raw.content || '').trim();
   return { draft, cost_cents };
+}
+
+// ── Feature: Link-Summary (KI-Zusammenfassung beim Einfügen) ─
+// Längen-Mapping ist Teil des Schnittstellenvertrags (nicht änderbar ohne
+// Rücksprache mit anderen Paketen, die auf `length` bauen).
+const LINK_SUMMARY_LENGTHS = {
+  short:  { wordTarget: 'höchstens 2 Sätze, ca. 40 Wörter',                 maxTokens: 200 },
+  medium: { wordTarget: '3 bis 5 Sätze, ca. 80–120 Wörter',                 maxTokens: 400 },
+  long:   { wordTarget: 'ca. 150–250 Wörter, gern in 2–3 Absätzen',         maxTokens: 800 },
+};
+
+async function summarizeLink({ db, userId, settings, encryptionKey, page, length, confirmed }) {
+  assertActive(settings, 'link_summary');
+
+  const lengthCfg = LINK_SUMMARY_LENGTHS[length];
+  if (!lengthCfg) throw httpErr(400, 'Ungültige Länge');
+  if (!page || !page.text) throw httpErr(400, 'Kein Seiteninhalt vorhanden');
+
+  const lang = (page.lang === 'de' || page.lang === 'en') ? page.lang : 'de';
+
+  const tpl = loadPrompt('link-summary');
+  const userText = interpolate(tpl.user, {
+    title:       page.title || '(ohne Titel)',
+    url:         page.finalUrl || '',
+    lang,
+    lengthLabel: length,
+    wordTarget:  lengthCfg.wordTarget,
+    content:     page.text,
+    truncated:   !!page.truncated,
+  });
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'link_summary', confirmed };
+  const { raw, cost_cents } = await dispatchCall({
+    ...ctx, system: tpl.system, user: userText,
+    maxTokens: lengthCfg.maxTokens, json: false,
+  });
+
+  let summary = stripHtml(String(raw.content || ''));
+  // eslint-disable-next-line no-control-regex
+  summary = summary.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  summary = summary.slice(0, 4000).trim();
+
+  if (!summary) {
+    const err = httpErr(422, 'Die Zusammenfassung ist leer ausgefallen.');
+    err.code = 'empty_summary';
+    throw err;
+  }
+
+  return { summary, length, truncated: !!page.truncated, cost_cents };
 }
 
 // ── Feature: Re-Entry Briefing (W-AI03, Phase 2) ─────────────
@@ -824,6 +874,7 @@ module.exports = {
   loadSettings, saveSettings, clearApiKey, publicSettings, DEFAULT_FEATURES,
   // features
   briefMeeting, captureMeeting, draftResult, summarizeReentry, applyCapture, testConnection,
+  summarizeLink, assertActive,
   suggestThemes, weeklyDigest, listDigestArchive,
   crossMeetingInsight, loadCrossMeeting, deleteCrossMeeting,
   driftDetection,
