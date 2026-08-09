@@ -75,7 +75,7 @@ struct TodoFormView: View {
         description = stripHTML(t.description)   // show plain text in editor
         isPrivate = t.isPrivate
         if let s = t.snoozedUntil, !s.isEmpty {
-            if s.count > 10, let d = Self.parseDateTime(s) {
+            if s.count > 10, let d = parseFlexDate(s) {
                 hasSnooze = true; snoozeDate = d; snoozeHasTime = true
             } else if let d = Self.parseDate(s) {
                 hasSnooze = true; snoozeDate = d
@@ -98,10 +98,6 @@ struct TodoFormView: View {
         return f.string(from: d)
     }
 
-    private static func parseDateTime(_ s: String) -> Date? {
-        ISO8601DateFormatter().date(from: s)
-    }
-
     private func save() {
         loading = true
         let snooze: String? = hasSnooze
@@ -118,12 +114,12 @@ struct TodoFormView: View {
                         done: t.done, result: t.result, resultDate: t.resultDate,
                         snoozedUntil: snooze, dueDate: due, isPrivate: isPrivate
                     )
-                    NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: notificationTitle, fireAt: fireAt)
+                    NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate)
                 } else {
                     let created = try await state.createTodoReturning(title: title, description: description,
                                                snoozedUntil: snooze, dueDate: due,
                                                isPrivate: isPrivate)
-                    NotificationScheduler.shared.reschedule(id: "todo-\(created.id)", title: notificationTitle, fireAt: fireAt)
+                    NotificationScheduler.shared.reschedule(id: "todo-\(created.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate)
                 }
                 dismiss()
             } catch {

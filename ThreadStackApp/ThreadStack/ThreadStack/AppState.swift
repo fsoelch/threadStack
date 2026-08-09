@@ -198,6 +198,10 @@ final class AppState: ObservableObject {
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]
         clearGraphStateOnLogout()
+        // Geplante/zugestellte Notifications gehören dem vorherigen Nutzer und dürfen
+        // den Logout nicht überleben (gleiche Anforderung wie clearGraphStateOnLogout).
+        // resyncSnoozeNotifications() plant beim nächsten Login idempotent alles neu.
+        NotificationScheduler.shared.cancelAll()
         // Beim manuellen Logout: stored credentials behalten wir bewusst — der nächste
         // App-Start fragt dann via Face ID nach.
     }
@@ -890,7 +894,7 @@ final class AppState: ObservableObject {
     private func resyncSnoozeNotifications() {
         for t in todos {
             guard let s = t.snoozedUntil, s.count > 10, let d = parseFlexDate(s), d > Date() else { continue }
-            NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: t.title, fireAt: d)
+            NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: t.title, fireAt: d, isPrivate: t.isPrivate)
         }
         for m in meetings {
             for t in m.topics {

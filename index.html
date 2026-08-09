@@ -3594,6 +3594,17 @@ document.addEventListener('click', e => {
   m.classList.remove('open');
 });
 
+let snoozeWakeupsTimer = null;
+// Idempotent — sicherer Aufruf sowohl vom Session-Restore-Bootstrap als auch
+// von doLogin(), ohne einen zweiten parallelen Timer zu riskieren.
+function startSnoozeWakeupsPolling() {
+  if (snoozeWakeupsTimer) clearInterval(snoozeWakeupsTimer);
+  snoozeWakeupsTimer = setInterval(checkSnoozeWakeups, 30000);
+}
+function stopSnoozeWakeupsPolling() {
+  if (snoozeWakeupsTimer) { clearInterval(snoozeWakeupsTimer); snoozeWakeupsTimer = null; }
+}
+
 async function doLogin() {
   const username = document.getElementById('login-user').value.trim();
   const password = document.getElementById('login-pw').value;
@@ -3606,6 +3617,7 @@ async function doLogin() {
     await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadKnowledgePages(), loadAiSettings(), loadStack()]);
     await loadDrift();
     showApp(); render();
+    startSnoozeWakeupsPolling();
   } catch(e) { errEl.textContent = e.message; errEl.style.display = ''; }
   finally { setBusy('login-btn', false); }
 }
@@ -3617,7 +3629,8 @@ async function doLogout() {
       .filter(k => k.startsWith('ts_kb_draft_'))
       .forEach(k => localStorage.removeItem(k));
   } catch {}
-  currentUser = null; meetings = []; selectedId = null;
+  stopSnoozeWakeupsPolling();
+  currentUser = null; meetings = []; todos = []; selectedId = null;
   showLogin();
 }
 
@@ -4296,22 +4309,42 @@ async function wakeUpTodo(id) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
+// Fragt die Notification-Berechtigung an, falls noch nicht entschieden.
+// Robust gegen Umgebungen ohne Notification-API (unsicherer Kontext, ältere
+// WebViews) — ein bloßer Zugriff auf den Bezeichner `Notification` würde dort
+// einen ReferenceError werfen und (weil vor dem try-Block in saveTodoModal/
+// saveTopicModal aufgerufen) das Speichern komplett verhindern.
+function requestNotificationPermissionIfNeeded() {
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  } catch { /* Berechtigungsanfrage ist best-effort, darf das Speichern nie blockieren */ }
+}
+
 // Prüft alle zeitbasiert schlafenden Todos/Themen und feuert eine Browser-
 // Notification, sobald die Weckzeit erreicht ist (nur solange der Tab offen
 // ist — kein Web Push). notifiedSnoozes verhindert Doppel-Benachrichtigung
 // nach einem Reload; der Key enthält snoozedUntil, sodass eine NEUE
 // Snooze-Zeit für dieselbe ID erneut benachrichtigt.
+function notifiedSnoozesKey() {
+  return currentUser ? `notifiedSnoozes:${currentUser.id}` : null;
+}
+
 function checkSnoozeWakeups() {
+  if (!currentUser) return;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const storageKey = notifiedSnoozesKey();
   let notified;
-  try { notified = JSON.parse(localStorage.getItem('notifiedSnoozes') || '{}'); } catch { notified = {}; }
+  try { notified = JSON.parse(localStorage.getItem(storageKey) || '{}'); } catch { notified = {}; }
   let changed = false;
   const consider = (item, kind, label) => {
     if (!item.snoozedUntil || item.snoozedUntil.length <= 10) return; // nur bei Uhrzeit
     const dueAt = new Date(item.snoozedUntil).getTime();
     const key = `${kind}:${item.id}:${item.snoozedUntil}`;
     if (dueAt <= Date.now() && !notified[key]) {
-      new Notification('ThreadStack — aufgewacht', { body: `${label}: ${item.title}` });
+      const body = (kind === 'todo' && item.isPrivate) ? 'Ein privates Todo ist aufgewacht' : `${label}: ${item.title}`;
+      new Notification('ThreadStack — aufgewacht', { body });
       notified[key] = true; changed = true;
     }
   };
@@ -4320,7 +4353,7 @@ function checkSnoozeWakeups() {
   if (changed) {
     const keys = Object.keys(notified);
     if (keys.length > 500) keys.slice(0, keys.length - 500).forEach(k => delete notified[k]);
-    localStorage.setItem('notifiedSnoozes', JSON.stringify(notified));
+    localStorage.setItem(storageKey, JSON.stringify(notified));
   }
 }
 
@@ -4572,7 +4605,7 @@ async function saveTodoModal() {
   if (!title) { document.getElementById('todo-title').focus(); return; }
   const isDone = editTodoId ? document.getElementById('todo-done').checked : false;
   const todoSnoozeHasTimeSave = document.getElementById('todo-snooze-has-time').checked;
-  if (todoSnoozeHasTimeSave && Notification?.permission === 'default') Notification.requestPermission();
+  if (todoSnoozeHasTimeSave) requestNotificationPermissionIfNeeded();
   const data = { title, description: getRT('todo-desc'),
     isPrivate: document.getElementById('todo-private').checked,
     snoozedUntil: (() => {
@@ -4953,7 +4986,7 @@ async function saveTopicModal() {
   const title = document.getElementById('t-title').value.trim();
   if (!title) { document.getElementById('t-title').focus(); return; }
   const topicSnoozeHasTimeSave = document.getElementById('t-snooze-has-time').checked;
-  if (topicSnoozeHasTimeSave && Notification?.permission === 'default') Notification.requestPermission();
+  if (topicSnoozeHasTimeSave) requestNotificationPermissionIfNeeded();
   const data = {
     title,
     description: getRT('t-desc'),
@@ -7648,7 +7681,7 @@ initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });
     await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadKnowledgePages(), loadAiSettings(), loadStack()]);
     await loadDrift();
     showApp(); render();
-    setInterval(checkSnoozeWakeups, 30000);
+    startSnoozeWakeupsPolling();
   } catch { showLogin(); }
 })();
 

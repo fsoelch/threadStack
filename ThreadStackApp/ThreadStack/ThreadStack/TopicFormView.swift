@@ -62,7 +62,7 @@ struct TopicFormView: View {
         description = stripHTML(t.description)
         isTodo = t.isTodo
         if let s = t.snoozedUntil, !s.isEmpty {
-            if s.count > 10, let d = Self.parseDateTime(s) {
+            if s.count > 10, let d = parseFlexDate(s) {
                 hasSnooze = true; snoozeDate = d; snoozeHasTime = true
             } else if let d = Self.parseDate(s) {
                 hasSnooze = true; snoozeDate = d
@@ -72,18 +72,18 @@ struct TopicFormView: View {
 
     private static func parseDate(_ s: String) -> Date? {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f.date(from: String(s.prefix(10)))
     }
 
     private static func formatDate(_ d: Date) -> String {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: d)
-    }
-
-    private static func parseDateTime(_ s: String) -> Date? {
-        ISO8601DateFormatter().date(from: s)
     }
 
     private func save() {
