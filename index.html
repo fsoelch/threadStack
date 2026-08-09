@@ -3342,6 +3342,7 @@ function openLinkModal(triggerEl) {
   _rtLinkState = {
     savedSel: _rtSel,
     savedRange: _rtRange ? _rtRange.cloneRange() : null,
+    selectedText: _rtRange ? _rtRange.toString().trim() : '',
     opId: 0,
     controller: null,
     loadingTimer: null,
@@ -3685,7 +3686,7 @@ function submitLinkOnly() {
   }
   hideLinkUrlError();
   const finalUrl = st.finalUrl || url;
-  const linkText = st.title || finalUrl;
+  const linkText = st.selectedText || st.title || finalUrl;
   const html = buildLinkOnlyHtml(finalUrl, linkText);
 
   st.opId += 1; // spätere Ergebnisse eines laufenden AI-Aufrufs nicht mehr einfügen

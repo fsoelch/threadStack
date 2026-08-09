@@ -13,6 +13,13 @@ func linkInsertLinkOnlyText(_ link: String) -> String {
     "🔗 \(link)"
 }
 
+/// Ergänzt bei schemaloser Eingabe `https://`, analog zu `normalizeLinkUrl()` im Web-Client.
+func linkInsertNormalizeUrl(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+    return trimmed.contains("://") ? trimmed : "https://\(trimmed)"
+}
+
 /// Klartext-Format "Link + Zusammenfassung" gemäß Schnittstellenvertrag:
 /// `🔗 FINAL_URL\n\n✨ KI-Zusammenfassung: SUMMARY_TEXT`.
 func linkInsertSummaryText(link: String, summary: String) -> String {
@@ -107,7 +114,7 @@ struct LinkInsertSheet: View {
                         Text(error).foregroundStyle(.red).font(.footnote)
                         if !trimmedURL.isEmpty {
                             Button("Nur Link einfügen") {
-                                onInsert(linkInsertLinkOnlyText(finalUrl ?? trimmedURL))
+                                onInsert(linkInsertLinkOnlyText(finalUrl ?? linkInsertNormalizeUrl(trimmedURL)))
                                 dismiss()
                             }
                         }
@@ -201,7 +208,7 @@ struct LinkInsertSheet: View {
     private func primaryAction() {
         error = nil
         if mode == .link {
-            onInsert(linkInsertLinkOnlyText(trimmedURL))
+            onInsert(linkInsertLinkOnlyText(linkInsertNormalizeUrl(trimmedURL)))
             dismiss()
         } else {
             task = Task { await generateSummary() }
@@ -223,7 +230,7 @@ struct LinkInsertSheet: View {
         do {
             var token = pageToken
             if token == nil {
-                let f = try await state.aiLinkFetch(url: trimmedURL)
+                let f = try await state.aiLinkFetch(url: linkInsertNormalizeUrl(trimmedURL))
                 if Task.isCancelled { return }
                 pageToken = f.page_token
                 finalUrl = f.final_url
