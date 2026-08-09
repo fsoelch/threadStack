@@ -570,8 +570,14 @@ function isValidHexColor(c) { return /^#[0-9a-fA-F]{6}$/.test(c); }
 function isValidDate(s) {
   if (!s) return true;
   if (typeof s !== 'string') return false;
-  if (!/^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]{1,30})?$/.test(s)) return false;
-  return !Number.isNaN(Date.parse(s));
+  const m = /^(\d{4})-(\d{2})-(\d{2})(T[\d:.Z+-]{1,30})?$/.exec(s);
+  if (!m) return false;
+  if (Number.isNaN(Date.parse(s))) return false;
+  // Kalendertag-Plausibilität unabhängig von Uhrzeit/Zeitzone prüfen (z.B. 30. Februar
+  // wird von Date.parse() sonst stillschweigend auf den 2. März "korrigiert").
+  const [, y, mo, d] = m.map(Number);
+  const asUtc = new Date(Date.UTC(y, mo - 1, d));
+  return asUtc.getUTCFullYear() === y && asUtc.getUTCMonth() === mo - 1 && asUtc.getUTCDate() === d;
 }
 
 const MAX_TITLE = 300;
@@ -807,15 +813,16 @@ function ownsMeeting(uid, mid) {
 
 app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
-  const { title, description='', snoozedUntil } = req.body;
+  const { title, description='', snoozedUntil, isTodo } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
+  const cleanDesc = stripUnsafeHtml(description);
   const id = uid();
   const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(req.params.id).m;
-  db.prepare(`INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,snoozed_until,created_at,sort_order) VALUES (?,?,?,?,0,'','',?,?,?)`)
-    .run(id, req.params.id, title.trim(), description, snoozedUntil || '', new Date().toISOString(), maxOrder + 1);
+  db.prepare(`INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,is_todo,snoozed_until,created_at,sort_order) VALUES (?,?,?,?,0,'','',?,?,?,?)`)
+    .run(id, req.params.id, title.trim(), cleanDesc, isTodo ? 1 : 0, snoozedUntil || '', new Date().toISOString(), maxOrder + 1);
   res.status(201).json(parseTopic(db.prepare('SELECT * FROM topics WHERE id=?').get(id)));
 });
 
@@ -984,7 +991,7 @@ app.post(`${A}/todos`, requireAuth, (req, res) => {
   if (dueDate !== undefined && !isValidDate(dueDate)) return res.status(400).json({ error: 'Ungültiges Fälligkeitsdatum' });
   const id = uid();
   const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
-  db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,snoozed_until,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), description, dueDate || '', isPrivate ? 1 : 0, snoozedUntil || '', mx+1, new Date().toISOString());
+  db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,snoozed_until,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), dueDate || '', isPrivate ? 1 : 0, snoozedUntil || '', mx+1, new Date().toISOString());
   res.status(201).json(parseTodo(db.prepare('SELECT * FROM todos WHERE id=?').get(id)));
 });
 

@@ -88,12 +88,16 @@ struct TodoFormView: View {
 
     private static func parseDate(_ s: String) -> Date? {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f.date(from: String(s.prefix(10)))
     }
 
     private static func formatDate(_ d: Date) -> String {
         let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
         f.dateFormat = "yyyy-MM-dd"
         return f.string(from: d)
     }

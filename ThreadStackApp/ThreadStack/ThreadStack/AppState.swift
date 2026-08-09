@@ -193,7 +193,10 @@ final class AppState: ObservableObject {
 
     func logout() async throws {
         stopAutoRefresh()
-        try await requestOK("POST", "/logout")
+        // Server-Logout ist best-effort: der lokale Zustand (inkl. Notifications,
+        // siehe unten) muss auch bei Netzwerkausfall vollständig abgeräumt werden, sonst
+        // wirkt die App abgemeldet, während Vorgänger-Daten/-Notifications noch aktiv sind.
+        _ = try? await requestOK("POST", "/logout")
         currentUser = nil; meetings = []; todos = []; themes = []; knowledgePages = []; contacts = []
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]

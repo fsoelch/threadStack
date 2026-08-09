@@ -2996,7 +2996,7 @@ async function api(method, path, body) {
   const opts = { method, credentials: 'same-origin' };
   if (body !== undefined) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
   const res  = await fetch(API + path, opts);
-  if (res.status === 401) { showLogin(); throw new Error('Sitzung abgelaufen'); }
+  if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.error || 'Fehler');
@@ -3622,6 +3622,17 @@ async function doLogin() {
   finally { setBusy('login-btn', false); }
 }
 
+// Räumt allen nutzergebundenen Client-Zustand ab — muss bei JEDEM Verlassen
+// der Sitzung laufen (expliziter Logout UND abgelaufene/ungültige Session
+// über den 401-Pfad in api()), sonst überleben In-Memory-Daten und der
+// Notification-Timer den Nutzerwechsel auf einem geteilten Gerät.
+function clearClientSessionState() {
+  stopSnoozeWakeupsPolling();
+  const uidForCleanup = currentUser?.id;
+  if (uidForCleanup) { try { localStorage.removeItem(`notifiedSnoozes:${uidForCleanup}`); } catch {} }
+  currentUser = null; meetings = []; todos = []; selectedId = null;
+}
+
 async function doLogout() {
   try { await api('POST', '/logout'); } catch {}
   try {
@@ -3629,8 +3640,7 @@ async function doLogout() {
       .filter(k => k.startsWith('ts_kb_draft_'))
       .forEach(k => localStorage.removeItem(k));
   } catch {}
-  stopSnoozeWakeupsPolling();
-  currentUser = null; meetings = []; todos = []; selectedId = null;
+  clearClientSessionState();
   showLogin();
 }
 
@@ -6550,7 +6560,7 @@ async function runExport() {
   setBusy('export-run-btn', true);
   try {
     const res = await fetch(`${API}/export?${params.toString()}`, { method: 'GET', credentials: 'same-origin' });
-    if (res.status === 401) { showLogin(); throw new Error('Sitzung abgelaufen'); }
+    if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || 'Export fehlgeschlagen');

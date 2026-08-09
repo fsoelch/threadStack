@@ -196,7 +196,10 @@ func parseFlexDate(_ s: String) -> Date? {
     guard !s.isEmpty else { return nil }
     for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSSZ", "yyyy-MM-dd'T'HH:mm:ssZ",
                 "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd"] {
-        let f = DateFormatter(); f.dateFormat = fmt
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.calendar = Calendar(identifier: .gregorian)
+        f.dateFormat = fmt
         if let d = f.date(from: s) { return d }
     }
     return nil
@@ -213,6 +216,8 @@ func formatDateOnly(_ s: String) -> String {
 
 func toAPIDate(_ date: Date, dateOnly: Bool = false) -> String {
     let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.calendar = Calendar(identifier: .gregorian)
     f.dateFormat = dateOnly ? "yyyy-MM-dd" : "yyyy-MM-dd'T'HH:mm"
     return f.string(from: date)
 }
