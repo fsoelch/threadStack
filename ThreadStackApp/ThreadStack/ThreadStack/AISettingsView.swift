@@ -80,6 +80,10 @@ struct AISettingsView: View {
                     Toggle("Wochen-Digest",        isOn: $features.digest)
                     Toggle("Cross-Meeting-Insight",isOn: $features.cross_meeting)
                     Toggle("Drift-Detection",      isOn: $features.drift)
+                    Toggle("Link-Zusammenfassung",  isOn: Binding(
+                        get: { features.linkSummaryOn },
+                        set: { features.link_summary = $0 }
+                    ))
                 }
 
                 Section("Budget & Bestätigung") {
@@ -175,6 +179,7 @@ struct AISettingsView: View {
                 "digest":        features.digest,
                 "cross_meeting": features.cross_meeting,
                 "drift":         features.drift,
+                "link_summary":  features.linkSummaryOn,
             ],
             "drift_days": driftDays,
             "theme_tag_threshold": themeThreshold,

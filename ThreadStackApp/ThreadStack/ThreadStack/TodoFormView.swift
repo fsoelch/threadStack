@@ -14,6 +14,7 @@ struct TodoFormView: View {
     @State private var isPrivate = false
     @State private var loading = false
     @State private var error: String?
+    @State private var showLinkSheet = false
 
     var body: some View {
         NavigationStack {
@@ -24,6 +25,13 @@ struct TodoFormView: View {
                 Section("Beschreibung") {
                     TextField("Optional", text: $description, axis: .vertical)
                         .lineLimit(3...)
+                    Button {
+                        showLinkSheet = true
+                    } label: {
+                        Label("Link mit KI-Zusammenfassung einfügen", systemImage: "link")
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Öffnet einen Dialog zum Einfügen eines Links, optional mit KI-Zusammenfassung.")
                 }
                 Section {
                     Toggle("📅 Fälligkeitsdatum", isOn: $hasDueDate)
@@ -66,6 +74,11 @@ struct TodoFormView: View {
                 }
             }
             .onAppear { populate() }
+            .sheet(isPresented: $showLinkSheet) {
+                LinkInsertSheet(onInsert: { text in
+                    description += (description.isEmpty ? "" : "\n\n") + text
+                })
+            }
         }
     }
 

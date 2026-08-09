@@ -266,9 +266,13 @@ struct StackHistoryResponse: Codable { let frames: [StackFrame]; let count: Int 
 struct AIFeatures: Codable, Equatable {
     var brief: Bool; var capture: Bool; var result_draft: Bool; var reentry: Bool
     var theme_tagging: Bool; var digest: Bool; var cross_meeting: Bool; var drift: Bool
+    // Optional (nicht non-optional!): ältere Server-Stände kennen dieses Feld noch nicht —
+    // ein non-optionales Feld würde die Dekodierung der gesamten AISettings-Response brechen.
+    var link_summary: Bool?
+    var linkSummaryOn: Bool { link_summary ?? false }
     static let defaults = AIFeatures(brief: true, capture: true, result_draft: true,
                                      reentry: true, theme_tagging: false, digest: false,
-                                     cross_meeting: false, drift: false)
+                                     cross_meeting: false, drift: false, link_summary: false)
 }
 
 struct AISettings: Codable, Equatable {
@@ -379,6 +383,23 @@ struct AIUsageEntry: Codable, Identifiable {
 struct AIUsageResponse: Codable {
     let period: String; let since: String?
     let total_cost_cents: Int; let entries: [AIUsageEntry]
+}
+
+// MARK: - v1.1: AI link summary
+
+struct LinkFetchResponse: Codable {
+    let page_token: String
+    let title: String?
+    let final_url: String
+    let lang: String?
+    let text_chars: Int?
+    let truncated: Bool?
+}
+struct LinkSummaryResponse: Codable {
+    let summary: String
+    let length: String
+    let truncated: Bool
+    let cost_cents: Int
 }
 
 struct AIErrorDetail: Codable {
