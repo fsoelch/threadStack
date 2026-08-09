@@ -8,7 +8,9 @@ struct TopicFormView: View {
     @State private var title = ""
     @State private var description = ""
     @State private var isTodo = false
-    @State private var snoozeDate = ""
+    @State private var hasSnooze = false
+    @State private var snoozeDate = Date()
+    @State private var snoozeHasTime = false
     @State private var loading = false
     @State private var error: String?
 
@@ -25,12 +27,17 @@ struct TopicFormView: View {
                 Section {
                     Toggle("Als Todo markieren", isOn: $isTodo)
                 }
-                Section("Schlafen bis (optional)") {
-                    TextField("JJJJ-MM-TT", text: $snoozeDate)
-                        .numberKeyboard()
-                    if !snoozeDate.isEmpty {
-                        Button("Snooze entfernen", role: .destructive) { snoozeDate = "" }
+                Section {
+                    Toggle("😴 Schlafen bis", isOn: $hasSnooze)
+                    if hasSnooze {
+                        DatePicker("Wacht auf am", selection: $snoozeDate, displayedComponents: .date)
+                        Toggle("🕐 zu bestimmter Uhrzeit", isOn: $snoozeHasTime)
+                        if snoozeHasTime {
+                            DatePicker("Uhrzeit", selection: $snoozeDate, displayedComponents: .hourAndMinute)
+                        }
                     }
+                } footer: {
+                    Text(snoozeHasTime ? "Wacht exakt zu dieser Uhrzeit auf — mit Benachrichtigung." : "Bis zu diesem Datum ausblenden.")
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
@@ -54,12 +61,38 @@ struct TopicFormView: View {
         title = t.title
         description = stripHTML(t.description)
         isTodo = t.isTodo
-        snoozeDate = t.snoozedUntil ?? ""
+        if let s = t.snoozedUntil, !s.isEmpty {
+            if s.count > 10, let d = Self.parseDateTime(s) {
+                hasSnooze = true; snoozeDate = d; snoozeHasTime = true
+            } else if let d = Self.parseDate(s) {
+                hasSnooze = true; snoozeDate = d
+            }
+        }
+    }
+
+    private static func parseDate(_ s: String) -> Date? {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.date(from: String(s.prefix(10)))
+    }
+
+    private static func formatDate(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: d)
+    }
+
+    private static func parseDateTime(_ s: String) -> Date? {
+        ISO8601DateFormatter().date(from: s)
     }
 
     private func save() {
         loading = true
-        let snooze: String? = snoozeDate.isEmpty ? nil : snoozeDate
+        let snooze: String? = hasSnooze
+            ? (snoozeHasTime ? ISO8601DateFormatter().string(from: snoozeDate) : Self.formatDate(snoozeDate))
+            : nil
+        let notificationTitle = title
+        let fireAt: Date? = (hasSnooze && snoozeHasTime) ? snoozeDate : nil
         Task {
             do {
                 if let t = topic {
@@ -69,12 +102,14 @@ struct TopicFormView: View {
                         done: t.done, result: t.result, resultDate: t.resultDate,
                         isTodo: isTodo, snoozedUntil: snooze
                     )
+                    NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(t.id)", title: notificationTitle, fireAt: fireAt)
                 } else {
-                    try await state.createTopic(
+                    let created = try await state.createTopicReturning(
                         meetingId: meetingId, title: title,
                         description: description, isTodo: isTodo,
                         snoozedUntil: snooze
                     )
+                    NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(created.id)", title: notificationTitle, fireAt: fireAt)
                 }
                 dismiss()
             } catch {

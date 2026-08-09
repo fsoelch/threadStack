@@ -51,7 +51,10 @@ struct RootView: View {
         // 1. Versuche die alte Session zu reaktivieren (Cookie noch da, weniger als 12h Inaktivität)
         if !state.serverURL.isEmpty {
             try? await state.checkSession()
-            if state.currentUser != nil { try? await state.loadAll() }
+            if state.currentUser != nil {
+                try? await state.loadAll()
+                NotificationScheduler.shared.requestPermissionIfNeeded()
+            }
         }
         // 2. Wenn nicht eingeloggt UND Credentials in Keychain → Lock-Screen mit Auto-Biometrie
         if state.currentUser == nil && state.hasStoredCredentials {

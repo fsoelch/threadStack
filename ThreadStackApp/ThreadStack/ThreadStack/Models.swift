@@ -46,11 +46,16 @@ struct Topic: Identifiable, Codable, Equatable {
 
     var isSnoozed: Bool {
         guard let s = snoozedUntil, !s.isEmpty else { return false }
+        if s.count > 10, let d = parseFlexDate(s) { return d > Date() }
         return s.prefix(10) > todayString()
     }
 
     var snoozeWakeFormatted: String? {
         guard isSnoozed, let s = snoozedUntil else { return nil }
+        if s.count > 10, let d = parseFlexDate(s) {
+            let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short; f.locale = Locale(identifier: "de_DE")
+            return f.string(from: d)
+        }
         return formatDateOnly(String(s.prefix(10)))
     }
 
@@ -77,11 +82,16 @@ struct TodoItem: Identifiable, Codable, Equatable {
 
     var isSnoozed: Bool {
         guard let s = snoozedUntil, !s.isEmpty else { return false }
+        if s.count > 10, let d = parseFlexDate(s) { return d > Date() }
         return s.prefix(10) > todayString()
     }
 
     var snoozeWakeFormatted: String? {
         guard isSnoozed, let s = snoozedUntil else { return nil }
+        if s.count > 10, let d = parseFlexDate(s) {
+            let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short; f.locale = Locale(identifier: "de_DE")
+            return f.string(from: d)
+        }
         return formatDateOnly(String(s.prefix(10)))
     }
 

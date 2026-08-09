@@ -315,10 +315,18 @@ final class AppState: ObservableObject {
 
     func createTopic(meetingId: String, title: String, description: String,
                      isTodo: Bool = false, snoozedUntil: String? = nil) async throws {
+        _ = try await createTopicReturning(meetingId: meetingId, title: title, description: description,
+                                            isTodo: isTodo, snoozedUntil: snoozedUntil)
+    }
+
+    @discardableResult
+    func createTopicReturning(meetingId: String, title: String, description: String,
+                     isTodo: Bool = false, snoozedUntil: String? = nil) async throws -> Topic {
         var body: [String: Any] = ["title": title, "description": description, "isTodo": isTodo]
         if let s = snoozedUntil { body["snoozedUntil"] = s }
         let t: Topic = try await request("POST", "/meetings/\(meetingId)/topics", body: body)
         if let i = meetings.firstIndex(where: { $0.id == meetingId }) { meetings[i].topics.append(t) }
+        return t
     }
 
     func updateTopic(meetingId: String, id: String,
@@ -341,6 +349,7 @@ final class AppState: ObservableObject {
         try await requestOK("DELETE", "/meetings/\(meetingId)/topics/\(id)")
         let fresh: [Meeting] = try await request("GET", "/meetings")
         meetings = fresh
+        NotificationScheduler.shared.cancel(id: "topic-\(meetingId)-\(id)")
     }
 
     func completeTopic(meetingId: String, id: String, result: String, resultDate: String) async throws {
@@ -383,6 +392,7 @@ final class AppState: ObservableObject {
         try await requestOK("PUT", "/meetings/\(meetingId)/topics/\(id)",
                             body: ["snoozedUntil": Self.nullable(until)])
         updateTopicInState(meetingId: meetingId, id: id) { $0.snoozedUntil = until }
+        if until == nil { NotificationScheduler.shared.cancel(id: "topic-\(meetingId)-\(id)") }
     }
 
     func reorderTopics(meetingId: String, ids: [String]) async throws {
@@ -440,6 +450,7 @@ final class AppState: ObservableObject {
     func deleteTodo(id: String) async throws {
         try await requestOK("DELETE", "/todos/\(id)")
         todos.removeAll { $0.id == id }
+        NotificationScheduler.shared.cancel(id: "todo-\(id)")
     }
 
     func moveTodo(id: String, targetMeetingId: String) async throws {
@@ -452,6 +463,7 @@ final class AppState: ObservableObject {
     func snoozeTodo(id: String, until: String?) async throws {
         try await requestOK("PUT", "/todos/\(id)", body: ["snoozedUntil": Self.nullable(until)])
         if let i = todos.firstIndex(where: { $0.id == id }) { todos[i].snoozedUntil = until }
+        if until == nil { NotificationScheduler.shared.cancel(id: "todo-\(id)") }
     }
 
     func reorderTodos(ids: [String]) async throws {
@@ -867,8 +879,25 @@ final class AppState: ObservableObject {
         do { try await loadAll() } catch { /* still */ }
         await loadStack()
         await aiLoadDrift()
+        resyncSnoozeNotifications()
         lastRefreshAt = Date()
         if showSpinner { isRefreshing = false }
+    }
+
+    /// Plant lokale Notifications für alle zeitbasiert schlafenden Todos/Themen
+    /// erneut ein — idempotent dank fester Identifier, sichert Re-Sync nach
+    /// Neuinstallation, anderem Gerät oder verpassten Terminen bei App-Start.
+    private func resyncSnoozeNotifications() {
+        for t in todos {
+            guard let s = t.snoozedUntil, s.count > 10, let d = parseFlexDate(s), d > Date() else { continue }
+            NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: t.title, fireAt: d)
+        }
+        for m in meetings {
+            for t in m.topics {
+                guard let s = t.snoozedUntil, s.count > 10, let d = parseFlexDate(s), d > Date() else { continue }
+                NotificationScheduler.shared.reschedule(id: "topic-\(m.id)-\(t.id)", title: t.title, fireAt: d)
+            }
+        }
     }
 
     /// Startet einen wiederkehrenden Auto-Refresh. Idempotent — vorhandener Timer wird ersetzt.

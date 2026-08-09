@@ -907,6 +907,7 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   const { title=t.title, description=t.description, done, result, resultDate, isTodo, snoozedUntil } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
+  if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   const cleanDesc = stripUnsafeHtml(description);
   const nowIso = new Date().toISOString();
   db.prepare('UPDATE topics SET title=?,description=?,done=?,result=?,result_date=?,is_todo=?,snoozed_until=?,updated_at=? WHERE id=?').run(
@@ -991,6 +992,7 @@ app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate, isPrivate } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
+  if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,due_date=?,is_private=?,updated_at=? WHERE id=?').run(
     title, stripUnsafeHtml(description), done !== undefined ? (done?1:0) : t.done,
     stripUnsafeHtml(result ?? t.result), resultDate ?? t.result_date,

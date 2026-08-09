@@ -1884,8 +1884,13 @@ body.ai-disabled .ai-action { display: none !important; }
       </div>
       <div class="form-group">
         <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Schlafen bis <span class="opt">(optional)</span></label>
-        <input type="date" class="form-control" id="t-snooze">
-        <div class="form-hint">Bis zu diesem Datum ausblenden — danach automatisch wieder als offen angezeigt.</div>
+        <input type="date" class="form-control" id="t-snooze" onchange="onTopicSnoozeChange()">
+        <div class="toggle-row" style="margin-top:.5rem">
+          <span style="font-size:.8125rem;color:var(--text-muted)">🕐 zu einer bestimmten Uhrzeit aufwecken</span>
+          <label class="toggle"><input type="checkbox" id="t-snooze-has-time" onchange="onTopicSnoozeChange()"><span class="toggle-slider"></span></label>
+        </div>
+        <input type="time" class="form-control" id="t-snooze-time" style="display:none;margin-top:.5rem">
+        <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
       </div>
       <div id="topic-attach-slot"></div>
       <div id="t-result-section" style="display:none">
@@ -2079,8 +2084,13 @@ body.ai-disabled .ai-action { display: none !important; }
       </div>
       <div class="form-group">
         <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Schlafen bis <span class="opt">(optional)</span></label>
-        <input type="date" class="form-control" id="todo-snooze">
-        <div class="form-hint">Bis zu diesem Datum ausblenden — danach automatisch wieder als offen angezeigt.</div>
+        <input type="date" class="form-control" id="todo-snooze" onchange="onTodoSnoozeChange()">
+        <div class="toggle-row" style="margin-top:.5rem">
+          <span style="font-size:.8125rem;color:var(--text-muted)">🕐 zu einer bestimmten Uhrzeit aufwecken</span>
+          <label class="toggle"><input type="checkbox" id="todo-snooze-has-time" onchange="onTodoSnoozeChange()"><span class="toggle-slider"></span></label>
+        </div>
+        <input type="time" class="form-control" id="todo-snooze-time" style="display:none;margin-top:.5rem">
+        <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
       </div>
       <div id="todo-attach-slot"></div>
       <div id="todo-done-row" style="display:none">
@@ -3037,6 +3047,10 @@ function fmtDateOnly(s) {
   const [y, m, d] = s.slice(0, 10).split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('de-DE', { weekday:'short', day:'2-digit', month:'2-digit', year:'numeric' });
 }
+function fmtSnoozeLabel(s) {
+  if (!s) return '';
+  return s.length > 10 ? fmtDateTime(s) : fmtDateOnly(s);
+}
 // ── Paste-Bereinigung ─────────────────────────────────────────
 // Behält: b/strong, i/em, u, a, ul/ol/li, p, br, table/tr/th/td, h1-h6
 // Entfernt: style-Attribute, class-Attribute, MS-Office-Tags, Scripts usw.
@@ -3123,6 +3137,7 @@ function fmtLastActive(s) {
 
 function isSnoozed(t) {
   if (!t.snoozedUntil) return false;
+  if (t.snoozedUntil.length > 10) return new Date(t.snoozedUntil).getTime() > Date.now();
   return t.snoozedUntil.slice(0, 10) > new Date().toISOString().slice(0, 10);
 }
 function dueDateClass(s) {
@@ -4052,7 +4067,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
         </div>` : ''}
       ${sleeping ? `
         <div class="snooze-info">
-          ${SVG.moon} Wacht auf am ${fmtDateOnly(t.snoozedUntil)}
+          ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
           <button class="snooze-wake-btn" onclick="wakeUpTodo('${t.id}')">🔔 Jetzt wecken</button>
         </div>` : ''}
       ${themeEntries.length > 0 ? `
@@ -4123,7 +4138,7 @@ function renderMeetingTopicTodo(m, t, themeMap) {
       ${t.description ? `<div class="topic-description rt-display">${displayHtml(t.description)}</div>` : ''}
       ${sleeping ? `
         <div class="snooze-info">
-          ${SVG.moon} Wacht auf am ${fmtDateOnly(t.snoozedUntil)}
+          ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
           <button class="snooze-wake-btn" onclick="wakeUpTopic('${m.id}','${t.id}')">🔔 Jetzt wecken</button>
         </div>` : ''}
       ${themeEntries.length > 0 ? `
@@ -4197,7 +4212,7 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
       ${t.description ? `<div class="topic-description rt-display">${displayHtml(t.description)}</div>` : ''}
       ${sleeping ? `
         <div class="snooze-info">
-          ${SVG.moon} Wacht auf am ${fmtDateOnly(t.snoozedUntil)}
+          ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
           <button class="snooze-wake-btn" onclick="wakeUpTopic('${mid}','${t.id}')">🔔 Jetzt wecken</button>
         </div>` : ''}
       ${groupMembers.length > 0 ? `
@@ -4279,6 +4294,34 @@ async function wakeUpTodo(id) {
     Object.assign(todos.find(t => t.id === id), { snoozedUntil: null });
     render(); toast('Todo ist wieder aktiv');
   } catch(e) { toast(e.message, 'error'); }
+}
+
+// Prüft alle zeitbasiert schlafenden Todos/Themen und feuert eine Browser-
+// Notification, sobald die Weckzeit erreicht ist (nur solange der Tab offen
+// ist — kein Web Push). notifiedSnoozes verhindert Doppel-Benachrichtigung
+// nach einem Reload; der Key enthält snoozedUntil, sodass eine NEUE
+// Snooze-Zeit für dieselbe ID erneut benachrichtigt.
+function checkSnoozeWakeups() {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  let notified;
+  try { notified = JSON.parse(localStorage.getItem('notifiedSnoozes') || '{}'); } catch { notified = {}; }
+  let changed = false;
+  const consider = (item, kind, label) => {
+    if (!item.snoozedUntil || item.snoozedUntil.length <= 10) return; // nur bei Uhrzeit
+    const dueAt = new Date(item.snoozedUntil).getTime();
+    const key = `${kind}:${item.id}:${item.snoozedUntil}`;
+    if (dueAt <= Date.now() && !notified[key]) {
+      new Notification('ThreadStack — aufgewacht', { body: `${label}: ${item.title}` });
+      notified[key] = true; changed = true;
+    }
+  };
+  todos.forEach(t => consider(t, 'todo', 'Todo'));
+  meetings.forEach(m => (m.topics || []).forEach(t => consider(t, 'topic', 'Thema')));
+  if (changed) {
+    const keys = Object.keys(notified);
+    if (keys.length > 500) keys.slice(0, keys.length - 500).forEach(k => delete notified[k]);
+    localStorage.setItem('notifiedSnoozes', JSON.stringify(notified));
+  }
 }
 
 // ── Move Modal ───────────────────────────────────────────────
@@ -4494,6 +4537,10 @@ function openTodoModal(id) {
   document.getElementById('todo-title').value = t?.title || '';
   setRT('todo-desc', t?.description || '');
   document.getElementById('todo-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
+  const todoSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
+  document.getElementById('todo-snooze-has-time').checked = todoSnoozeHasTime;
+  document.getElementById('todo-snooze-time').value = todoSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
+  onTodoSnoozeChange();
   document.getElementById('todo-due').value = t?.dueDate?.slice(0, 10) || '';
   document.getElementById('todo-private').checked = !!t?.isPrivate;
   const dr = document.getElementById('todo-done-row');
@@ -4524,9 +4571,19 @@ async function saveTodoModal() {
   const title = document.getElementById('todo-title').value.trim();
   if (!title) { document.getElementById('todo-title').focus(); return; }
   const isDone = editTodoId ? document.getElementById('todo-done').checked : false;
+  const todoSnoozeHasTimeSave = document.getElementById('todo-snooze-has-time').checked;
+  if (todoSnoozeHasTimeSave && Notification?.permission === 'default') Notification.requestPermission();
   const data = { title, description: getRT('todo-desc'),
     isPrivate: document.getElementById('todo-private').checked,
-    snoozedUntil: document.getElementById('todo-snooze').value || null,
+    snoozedUntil: (() => {
+      const d = document.getElementById('todo-snooze').value;
+      if (!d) return null;
+      if (todoSnoozeHasTimeSave) {
+        const time = document.getElementById('todo-snooze-time').value || '00:00';
+        return new Date(`${d}T${time}`).toISOString();
+      }
+      return d;
+    })(),
     dueDate: document.getElementById('todo-due').value || null,
     ...(editTodoId ? {
       done: isDone,
@@ -4867,6 +4924,10 @@ function openTopicModal(mid, tid) {
   document.getElementById('t-title').value = t?.title || '';
   setRT('t-desc', t?.description || '');
   document.getElementById('t-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
+  const topicSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
+  document.getElementById('t-snooze-has-time').checked = topicSnoozeHasTime;
+  document.getElementById('t-snooze-time').value = topicSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
+  onTopicSnoozeChange();
   const rs = document.getElementById('t-result-section');
   if (t) {
     rs.style.display = '';
@@ -4891,10 +4952,20 @@ function closeTopicModal() { document.getElementById('topic-modal').style.displa
 async function saveTopicModal() {
   const title = document.getElementById('t-title').value.trim();
   if (!title) { document.getElementById('t-title').focus(); return; }
+  const topicSnoozeHasTimeSave = document.getElementById('t-snooze-has-time').checked;
+  if (topicSnoozeHasTimeSave && Notification?.permission === 'default') Notification.requestPermission();
   const data = {
     title,
     description: getRT('t-desc'),
-    snoozedUntil: document.getElementById('t-snooze').value || null,
+    snoozedUntil: (() => {
+      const d = document.getElementById('t-snooze').value;
+      if (!d) return null;
+      if (topicSnoozeHasTimeSave) {
+        const time = document.getElementById('t-snooze-time').value || '00:00';
+        return new Date(`${d}T${time}`).toISOString();
+      }
+      return d;
+    })(),
     ...(editTopicId ? {
       result:     getRT('t-result'),
       resultDate: document.getElementById('t-result-date').value,
@@ -7004,6 +7075,21 @@ function openStackPopModalFor(frameId) {
   document.getElementById('stack-pop-modal').style.display = 'flex';
 }
 
+function onTodoSnoozeChange() {
+  const hasDate = !!document.getElementById('todo-snooze').value;
+  const cb = document.getElementById('todo-snooze-has-time');
+  cb.disabled = !hasDate;
+  if (!hasDate) cb.checked = false;
+  document.getElementById('todo-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
+}
+function onTopicSnoozeChange() {
+  const hasDate = !!document.getElementById('t-snooze').value;
+  const cb = document.getElementById('t-snooze-has-time');
+  cb.disabled = !hasDate;
+  if (!hasDate) cb.checked = false;
+  document.getElementById('t-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
+}
+
 function onPopResolutionChange() {
   const v = document.querySelector('input[name=pop-res]:checked')?.value || 'done';
   document.getElementById('pop-result-fields').style.display = (v === 'done')    ? '' : 'none';
@@ -7562,6 +7648,7 @@ initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });
     await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadKnowledgePages(), loadAiSettings(), loadStack()]);
     await loadDrift();
     showApp(); render();
+    setInterval(checkSnoozeWakeups, 30000);
   } catch { showLogin(); }
 })();
 
