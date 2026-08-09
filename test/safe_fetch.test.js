@@ -364,3 +364,12 @@ test('isBlockedAddress: oeffentliche Adressen bleiben unberuehrt', () => {
   assert.equal(isBlockedAddress('8.8.8.8', 4), false);
   assert.equal(isBlockedAddress('2001:4860:4860::8888', 6), false);
 });
+
+test('isBlockedAddress: weitere gueltige Zwischenformen von IPv4-mapped IPv6 werden erkannt', () => {
+  // Regression aus dem zweiten Security-Re-Review: nur die komprimierte
+  // ("::ffff:...") und die voll ausgeschriebene Form wurden zunaechst
+  // erkannt, nicht beliebige weitere gueltige Textvarianten derselben Adresse.
+  assert.equal(isBlockedAddress('::0:ffff:7f00:1', 6), true);
+  assert.equal(isBlockedAddress('0::ffff:127.0.0.1', 6), true);
+  assert.equal(isBlockedAddress('0:0::ffff:127.0.0.1', 6), true);
+});

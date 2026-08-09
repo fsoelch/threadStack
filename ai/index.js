@@ -412,23 +412,35 @@ async function summarizeLink({ db, userId, settings, encryptionKey, page, length
   // sei zu Ende - ein pro Anfrage neu erzeugter Nonce ist dafür nicht
   // vorhersagbar (Security-Review-Fund, Prompt-Injection-Härtung).
   const nonce = crypto.randomBytes(8).toString('hex');
-  // Zusätzliche Defense-in-Depth: falls der Seiteninhalt zufällig denselben
-  // Nonce enthalten sollte (astronomisch unwahrscheinlich) oder generische
-  // Marker-Fragmente, werden diese im übergebenen Text neutralisiert.
-  const safeContent = page.text.replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
+  // Zusätzliche Defense-in-Depth: falls Titel/URL/Inhalt der Zielseite
+  // zufällig denselben Nonce enthalten sollten (astronomisch unwahrscheinlich)
+  // oder generische Marker-Fragmente, werden diese neutralisiert. Gilt für
+  // alle drei Werte, da Titel und finale URL ebenso wie der Inhalt von der
+  // nicht vertrauenswürdigen Zielseite stammen (title aus <title>/og:title) -
+  // Security-Review-Fund: unbehandelt wären Titel/URL eine schmale,
+  // außerhalb des Nonce-Blocks liegende Injection-Fläche.
+  const neutralizeMarkers = (s) => String(s || '').replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
+  const safeContent = neutralizeMarkers(page.text);
+  const safeTitle = neutralizeMarkers(page.title || '(ohne Titel)');
+  const safeUrl = neutralizeMarkers(page.finalUrl || '');
 
   const tpl = loadPrompt('link-summary');
-  const userText = interpolate(tpl.user, {
-    title:       page.title || '(ohne Titel)',
-    url:         page.finalUrl || '',
+  const templateVars = {
+    title:       safeTitle,
+    url:         safeUrl,
     lang,
     lengthLabel: length,
     wordTarget:  lengthCfg.wordTarget,
     content:     safeContent,
     truncated:   !!page.truncated,
     nonce,
-  });
-  const systemText = interpolate(tpl.system, { nonce });
+  };
+  const userText = interpolate(tpl.user, templateVars);
+  // WICHTIG: dieselben Variablen auch für den SYSTEM-Prompt verwenden -
+  // dessen Platzhalter ({{lang}}, {{wordTarget}}, {{nonce}}) wurden vorher
+  // versehentlich nicht interpoliert (Regression aus einer vorherigen
+  // Nachbesserung, im Security-Re-Review gefunden).
+  const systemText = interpolate(tpl.system, templateVars);
 
   const ctx = { db, userId, settings, encryptionKey, feature: 'link_summary', confirmed };
   const { raw, cost_cents } = await dispatchCall({
