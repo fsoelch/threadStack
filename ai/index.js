@@ -406,6 +406,17 @@ async function summarizeLink({ db, userId, settings, encryptionKey, page, length
 
   const lang = (page.lang === 'de' || page.lang === 'en') ? page.lang : 'de';
 
+  // Zufälliger Nonce pro Aufruf statt fester Marker: eine präparierte
+  // Zielseite kann einen im Repo öffentlich einsehbaren, festen Delimiter
+  // (z.B. "INHALT>>>") selbst enthalten und so vortäuschen, der Datenblock
+  // sei zu Ende - ein pro Anfrage neu erzeugter Nonce ist dafür nicht
+  // vorhersagbar (Security-Review-Fund, Prompt-Injection-Härtung).
+  const nonce = crypto.randomBytes(8).toString('hex');
+  // Zusätzliche Defense-in-Depth: falls der Seiteninhalt zufällig denselben
+  // Nonce enthalten sollte (astronomisch unwahrscheinlich) oder generische
+  // Marker-Fragmente, werden diese im übergebenen Text neutralisiert.
+  const safeContent = page.text.replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
+
   const tpl = loadPrompt('link-summary');
   const userText = interpolate(tpl.user, {
     title:       page.title || '(ohne Titel)',
@@ -413,13 +424,15 @@ async function summarizeLink({ db, userId, settings, encryptionKey, page, length
     lang,
     lengthLabel: length,
     wordTarget:  lengthCfg.wordTarget,
-    content:     page.text,
+    content:     safeContent,
     truncated:   !!page.truncated,
+    nonce,
   });
+  const systemText = interpolate(tpl.system, { nonce });
 
   const ctx = { db, userId, settings, encryptionKey, feature: 'link_summary', confirmed };
   const { raw, cost_cents } = await dispatchCall({
-    ...ctx, system: tpl.system, user: userText,
+    ...ctx, system: systemText, user: userText,
     maxTokens: lengthCfg.maxTokens, json: false,
   });
 

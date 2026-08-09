@@ -334,3 +334,33 @@ test('SafeFetchError: exportiert und trägt code/status', () => {
   assert.equal(err.status, 503);
   assert.ok(err instanceof Error);
 });
+
+// ── Nachbesserung nach Security Review: IPv6-Uebersetzungspraefixe ──────
+test('isBlockedAddress: IPv4-kompatible IPv6 (::a.b.c.d) wird geblockt', () => {
+  assert.equal(isBlockedAddress('::7f00:1', 6), true); // ::127.0.0.1
+});
+test('isBlockedAddress: IPv4-translated (::ffff:0:a.b.c.d) wird geblockt', () => {
+  assert.equal(isBlockedAddress('::ffff:0:7f00:1', 6), true);
+});
+test('isBlockedAddress: NAT64 (64:ff9b::/96) wird komplett geblockt', () => {
+  // net.BlockList kann nur den IPv6-Prefix pruefen, nicht die darin
+  // eingebettete IPv4-Adresse semantisch entpacken - der gesamte NAT64-
+  // Bereich wird deshalb bewusst pauschal geblockt (Over-Blocking als
+  // sichere Seite), auch wenn einzelne eingebettete Adressen oeffentlich
+  // waeren.
+  assert.equal(isBlockedAddress('64:ff9b::7f00:1', 6), true); // eingebettet: 127.0.0.1
+  assert.equal(isBlockedAddress('64:ff9b::0808:0808', 6), true); // eingebettet: 8.8.8.8 - dennoch geblockt (ganzer Bereich)
+});
+test('isBlockedAddress: 6to4 (2002::/16) wird geblockt', () => {
+  assert.equal(isBlockedAddress('2002:7f00:1::', 6), true);
+});
+test('isBlockedAddress: 6to4-Relay-Anycast (192.88.99.0/24) wird geblockt', () => {
+  assert.equal(isBlockedAddress('192.88.99.5', 4), true);
+});
+test('isBlockedAddress: vollstaendig ausgeschriebene IPv4-mapped-Form wird erkannt', () => {
+  assert.equal(isBlockedAddress('0:0:0:0:0:ffff:127.0.0.1', 6), true);
+});
+test('isBlockedAddress: oeffentliche Adressen bleiben unberuehrt', () => {
+  assert.equal(isBlockedAddress('8.8.8.8', 4), false);
+  assert.equal(isBlockedAddress('2001:4860:4860::8888', 6), false);
+});

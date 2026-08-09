@@ -13,6 +13,7 @@ function setupEnv() {
   process.env.PORT = '0';
   process.env.BASE_PATH = '/';  // trailing slash gets stripped → BASE=''
   process.env.AI_PROVIDER_OVERRIDE = 'mock';
+  process.env.NODE_ENV = 'test'; // gate für ALLOW_LOOPBACK_FETCH_FOR_TEST (server.js) - siehe safe-fetch SSRF-Testausnahme
   // Force a fresh require cache so each test gets its own DB connection
   // (better-sqlite3 holds a process-wide file handle otherwise).
   for (const k of Object.keys(require.cache)) {

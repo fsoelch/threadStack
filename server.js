@@ -1749,6 +1749,23 @@ app.get(`${A}/ai/insights/drift`, requireAuth, (req, res) => {
 // pro Prozess — kein Persistenzbedarf, TTL nicht nötig, da der Eintrag in
 // jedem Abschlusspfad (finally) wieder entfernt wird.
 const linkFetchInProgress = new Set();
+const linkSummarizeInProgress = new Set();
+
+// Zeitfenster-Rate-Limit pro Nutzer für aufeinanderfolgende (nicht nur
+// gleichzeitige) Seitenabrufe — Security-Review-Fund: linkFetchInProgress
+// allein verhindert nur Parallelität, nicht Serien-Missbrauch als externer
+// Abruf-Proxy/Scanner. Rein In-Memory, absichtlich einfach.
+const LINK_FETCH_WINDOW_MS = 10 * 60 * 1000;
+const LINK_FETCH_MAX_PER_WINDOW = 10;
+const linkFetchTimestamps = new Map(); // uid -> number[]
+function checkLinkFetchRate(uid) {
+  const now = Date.now();
+  const arr = (linkFetchTimestamps.get(uid) || []).filter(t => now - t < LINK_FETCH_WINDOW_MS);
+  if (arr.length >= LINK_FETCH_MAX_PER_WINDOW) { linkFetchTimestamps.set(uid, arr); return false; }
+  arr.push(now);
+  linkFetchTimestamps.set(uid, arr);
+  return true;
+}
 
 // Bewusst nur EIN Test-only-Bypass für die SSRF-Loopback-Sperre von
 // lib/safe-fetch.js: `safeFetchPage()` unterstützt laut lib/safe-fetch.js
@@ -1758,10 +1775,19 @@ const linkFetchInProgress = new Set();
 // unverändert aktiv. Damit die Testsuite dieses Pakets einen echten
 // lokalen http.createServer() abrufen kann, wird dieser Schalter über eine
 // Umgebungsvariable freigeschaltet, die außerhalb von Tests nicht gesetzt
-// wird (Default: aus). Siehe Abschlussbericht: Abweichung, da der
-// Schnittstellenvertrag zu Paket 1 diese Option nicht erwähnt.
+// wird (Default: aus). Bewusst zusätzlich an NODE_ENV=test gebunden (nicht
+// nur an die Variable selbst), damit eine versehentlich gesetzte Variable in
+// einer Produktionsumgebung (falscher NODE_ENV) wirkungslos bleibt -
+// Security-Review-Fund: reines Fail-open ohne diese zweite Bedingung würde
+// den SSRF-Loopback-Schutz (inkl. Port-Beschränkung) deaktivieren.
 function allowLoopbackForTest() {
-  return process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST === 'true';
+  return process.env.NODE_ENV === 'test' && process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST === 'true';
+}
+if (process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST === 'true' && process.env.NODE_ENV !== 'test') {
+  console.warn('[link-summary] ALLOW_LOOPBACK_FETCH_FOR_TEST ist gesetzt, aber NODE_ENV != "test" - SSRF-Testausnahme bleibt inaktiv.');
+}
+if (process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST === 'true' && process.env.NODE_ENV === 'production') {
+  throw new Error('ALLOW_LOOPBACK_FETCH_FOR_TEST darf niemals zusammen mit NODE_ENV=production gesetzt sein.');
 }
 
 // Zentrale Fehler-Mapping-Funktion: SafeFetchError/ExtractError -> HTTP.
@@ -1774,7 +1800,7 @@ function mapLinkFetchError(e) {
       case 'blocked_target':          return { status: 403, code: e.code, message: 'Diese Adresse kann nicht abgerufen werden.' };
       case 'too_large':               return { status: 413, code: e.code, message: 'Die Seite ist zu groß.' };
       case 'unsupported_content_type':return { status: 415, code: e.code, message: 'Dieser Inhaltstyp lässt sich nicht zusammenfassen.' };
-      case 'fetch_http_error':        return { status: 502, code: e.code, message: `Die Seite hat mit Status ${e.status || '?'} geantwortet.` };
+      case 'fetch_http_error':        return { status: 502, code: e.code, message: 'Die Seite hat mit einem Fehler geantwortet und kann nicht zusammengefasst werden.' };
       case 'too_many_redirects':      return { status: 502, code: e.code, message: 'Zu viele Weiterleitungen.' };
       case 'fetch_timeout':           return { status: 504, code: e.code, message: 'Die Seite hat nicht rechtzeitig geantwortet.' };
       case 'fetch_failed':
@@ -1806,6 +1832,9 @@ app.post(`${A}/ai/link/fetch`, requireAuth, async (req, res) => {
   if (linkFetchInProgress.has(uid)) {
     return res.status(409).json({ error: 'Ein Seitenabruf läuft bereits.', code: 'fetch_in_progress' });
   }
+  if (!checkLinkFetchRate(uid)) {
+    return res.status(429).json({ error: 'Zu viele Seitenabrufe. Bitte kurz warten.', code: 'rate_limited' });
+  }
   linkFetchInProgress.add(uid);
 
   try {
@@ -1819,7 +1848,13 @@ app.post(`${A}/ai/link/fetch`, requireAuth, async (req, res) => {
       });
     } catch (e) {
       const mapped = mapLinkFetchError(e);
-      console.warn('[link-summary] fetch failed', { code: mapped.code, durationMs: Date.now() - startedAt });
+      // Bei blocked_target zusätzlich die (interne, nicht personenbezogene)
+      // User-ID mitloggen, damit wiederholte SSRF-Sondierungsversuche einem
+      // Konto zuordenbar sind (Security-Review-Fund) — die URL selbst bleibt
+      // weiterhin ungeloggt.
+      const logCtx = { code: mapped.code, durationMs: Date.now() - startedAt };
+      if (mapped.code === 'blocked_target') logCtx.uid = uid;
+      console.warn('[link-summary] fetch failed', logCtx);
       return res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
     }
 
@@ -1866,6 +1901,15 @@ app.post(`${A}/ai/link/summarize`, requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Ungültige Länge.', code: 'invalid_length' });
   }
 
+  // Gleicher Concurrency-Guard wie beim Fetch (Security-Review-Fund): ohne
+  // ihn koennten mehrere parallele Anfragen mit demselben page_token alle
+  // die Budgetpruefung passieren, bevor der erste Aufruf verbucht ist
+  // (Budget-Race), und so das Monatslimit ueberschreiten.
+  if (linkSummarizeInProgress.has(uid)) {
+    return res.status(409).json({ error: 'Es laeuft bereits eine Zusammenfassung.', code: 'summarize_in_progress' });
+  }
+  linkSummarizeInProgress.add(uid);
+
   try {
     const s = ai.loadSettings(db, uid);
     ai.assertActive(s, 'link_summary');
@@ -1880,6 +1924,7 @@ app.post(`${A}/ai/link/summarize`, requireAuth, async (req, res) => {
     });
     res.json(r);
   } catch (e) { aiErr(res, e); }
+  finally { linkSummarizeInProgress.delete(uid); }
 });
 
 // ── Stack-Layer routes (Erweiterung v1.1, Phase 2) ───────────

@@ -315,3 +315,47 @@ test('AI Link-Summary: blockierte Zieladresse liefert generischen Text ohne Netz
   assert.equal(r.body.error, 'Diese Adresse kann nicht abgerufen werden.');
   assert.ok(!/127\.0\.0\.1/.test(JSON.stringify(r.body)));
 });
+
+// ── Nachbesserung nach Security Review ──────────────────────────────────
+
+test('AI Link-Summary: ALLOW_LOOPBACK_FETCH_FOR_TEST ohne NODE_ENV=test bleibt wirkungslos', async (t) => {
+  const dir = setupEnv();
+  process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST = 'true';
+  const prevNodeEnv = process.env.NODE_ENV;
+  delete process.env.NODE_ENV; // setupEnv() setzt es normalerweise auf 'test'
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => { cleanup(dir); delete process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST; process.env.NODE_ENV = prevNodeEnv; });
+  const { agent } = await setupAdminWithLinkSummary(app, db);
+
+  const r = await agent.post('/api/ai/link/fetch').send({ url: 'http://127.0.0.1/irrelevant' });
+  assert.equal(r.status, 403, 'Loopback muss trotz gesetzter Bypass-Variable geblockt bleiben, da NODE_ENV != "test"');
+  assert.equal(r.body.code, 'blocked_target');
+});
+
+// Hinweis: ein Test für den Concurrency-Guard von /summarize (analog dem
+// bereits vorhandenen, ebenfalls ungetesteten linkFetchInProgress-Guard)
+// wurde bewusst NICHT ergänzt - supertest sendet über denselben Agent
+// (persistente Verbindung) keine wirklich gleichzeitigen Requests, ein
+// Promise.all zweier agent.post()-Aufrufe reproduziert die Race-Bedingung
+// daher nicht zuverlässig und würde nur einen flaky Test erzeugen. Die
+// Guard-Logik ist strukturell identisch zu linkFetchInProgress (synchrones
+// Prüfen-dann-Setzen ohne dazwischenliegendes await) und per Code-Review
+// verifiziert.
+
+test('AI Link-Summary: Zeitfenster-Rate-Limit greift nach zu vielen Fetches', async (t) => {
+  const dir = setupEnv();
+  process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST = 'true';
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => { cleanup(dir); delete process.env.ALLOW_LOOPBACK_FETCH_FOR_TEST; });
+  const { agent } = await setupAdminWithLinkSummary(app, db);
+
+  const srv = await startServer((req, res) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(HTML_PAGE); });
+  t.after(() => srv.close());
+
+  let last;
+  for (let i = 0; i < 11; i++) {
+    last = await agent.post('/api/ai/link/fetch').send({ url: srv.url });
+  }
+  assert.equal(last.status, 429);
+  assert.equal(last.body.code, 'rate_limited');
+});

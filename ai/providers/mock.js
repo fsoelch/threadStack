@@ -41,7 +41,12 @@ function getLastCall() { return lastCall; }
 
 async function callModel({ feature, json = false, maxTokens = 1024, system, user }) {
   const f = feature || 'test';
-  lastCall = { feature: f, json, maxTokens, system, user };
+  // system/user (kann Nutzer-/Seiteninhalt enthalten, z.B. bei link_summary)
+  // nur in Testumgebungen aufzeichnen, sonst laenger im Prozessspeicher als
+  // noetig (Security-Review-Fund) - der Mock-Provider ist ueber die
+  // Nutzereinstellung auch produktiv waehlbar.
+  const recordContent = process.env.NODE_ENV === 'test';
+  lastCall = { feature: f, json, maxTokens, system: recordContent ? system : undefined, user: recordContent ? user : undefined };
   let content = FIXTURES[f] != null ? FIXTURES[f] : 'OK';
   if (json && typeof content !== 'string') content = JSON.stringify(content);
   if (!json && typeof content !== 'string') content = String(content);
