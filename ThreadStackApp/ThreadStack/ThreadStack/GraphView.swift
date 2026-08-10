@@ -5,7 +5,9 @@ import SwiftUI
 /// Scope (verbindlich, siehe Architektur): Navigieren, Zoomen/Schwenken,
 /// Filtern, Suchen, Knoten verschieben inkl. Positions-Persistenz,
 /// Topic-Umhängen per Drag mit Zyklus-Schutz und Rollback. KEINE Kanten-
-/// Erstellung/-Löschung, KEINE Wissenstext-Bearbeitung.
+/// Erstellung/-Löschung im Graph selbst. Wissens-Knoten können über den
+/// Knoten-Detail-Dialog im nativen Editor (`KnowledgeEditorView`, Paket 6)
+/// bearbeitet werden (Paket 7 „knowledge-entrypoints“).
 struct GraphView: View {
     @EnvironmentObject var state: AppState
 
@@ -19,6 +21,7 @@ struct GraphView: View {
     @State private var error: String?
     @State private var showLegendSheet = false
     @State private var lastNodeCount = 0
+    @State private var editingKnowledgePage: KnowledgePage?
 
     private static let visibleTypesDefaultsKey = "graph.visibleTypes"
 
@@ -61,6 +64,9 @@ struct GraphView: View {
                 GraphNodeDetailSheet(node: node) {
                     openNode(node)
                 }
+            }
+            .sheet(item: $editingKnowledgePage) { page in
+                KnowledgeEditorView(mode: .edit(page))
             }
             .popover(item: $selectedEdge) { edge in
                 GraphEdgeInfoView(edge: edge, nodesByKey: nodesByKey)
@@ -257,7 +263,12 @@ struct GraphView: View {
         selectedNode = nil
         switch node.nodeType {
         case .knowledge:
-            break // handled inline in the detail sheet's fallback view
+            if let page = state.knowledgePages.first(where: { $0.id == node.id }) {
+                editingKnowledgePage = page
+            } else {
+                error = "Objekt existiert nicht mehr."
+                Task { await state.loadGraph() }
+            }
         case .todo:
             state.graphNavigationRequest = .todos
         case .theme:
@@ -387,12 +398,8 @@ private struct GraphNodeDetailSheet: View {
 
             metaSection
 
-            if node.nodeType == .knowledge {
-                knowledgeReadOnlyNotice
-            } else {
-                Button("Öffnen", action: onOpen)
-                    .buttonStyle(.borderedProminent)
-            }
+            Button(node.nodeType == .knowledge ? "Bearbeiten" : "Öffnen", action: onOpen)
+                .buttonStyle(.borderedProminent)
             Spacer()
         }
         .padding()
@@ -427,25 +434,6 @@ private struct GraphNodeDetailSheet: View {
                     Text("\(count) Verknüpfungen").font(.caption2).foregroundStyle(.secondary)
                 }
             }
-        }
-    }
-
-    /// Read-only fallback for knowledge nodes. Deviation: the actual
-    /// `KnowledgeDetailView` (owned by the Wissensmanagement-Paket) does not
-    /// exist yet in this codebase — see final report.
-    private var knowledgeReadOnlyNotice: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "lock.fill").font(.caption2)
-                Text("Nur lesbar").font(.caption2).fontWeight(.semibold)
-            }
-            .padding(.horizontal, 8).padding(.vertical, 3)
-            .background(.secondary.opacity(0.15))
-            .clipShape(Capsule())
-            // Rendered via the hardened HTMLContentView (JS disabled, CSP,
-            // external-link handling) — the actual page content endpoint is
-            // owned by the Wissensmanagement backend package (see report).
-            HTMLContentView(html: "<p><em>Wissensinhalt wird angezeigt, sobald das Wissensmanagement-Paket integriert ist.</em></p>")
         }
     }
 }

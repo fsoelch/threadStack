@@ -197,6 +197,7 @@ struct ThemeDetailScreen: View {
     @State private var todosScoped: [TodoItem] = []
     @State private var loading = false
     @State private var error: String?
+    @State private var showNewKnowledge = false
 
     private var theme: Theme? { state.themes.first(where: { $0.id == themeId }) }
     private var path: [Theme] { state.themeAncestorsPath(themeId) }
@@ -289,6 +290,9 @@ struct ThemeDetailScreen: View {
                         NavigationLink { KnowledgeDetailView(page: k) } label: { KnowledgeRowView(page: k) }
                     }
                 }
+                Button { showNewKnowledge = true } label: {
+                    Label("Wissen hinzufügen", systemImage: "plus.circle").foregroundStyle(.secondary)
+                }.buttonStyle(.plain)
             } header: { Text("📚 Wissen").scaledFont(.caption).fontWeight(.semibold) }
 
             Section {
@@ -320,6 +324,11 @@ struct ThemeDetailScreen: View {
         .sheet(isPresented: $showEdit)   { ThemeFormView(theme: theme) }
         .sheet(isPresented: $showNewSub) { ThemeFormView(parentId: theme.id) }
         .sheet(isPresented: $showMove)   { ThemeMoveView(themeId: theme.id) }
+        .sheet(isPresented: $showNewKnowledge) {
+            KnowledgeEditorView(mode: .create(presetThemeId: theme.id)) { _ in
+                Task { await load() }
+            }
+        }
         .confirmationDialog(
             "Topic mit Unter-Topics löschen",
             isPresented: $showDeleteChoice,
@@ -425,11 +434,16 @@ struct ThemeMoveView: View {
     }
 }
 
-// MARK: - Wissen: Detailansicht (read-only — Bearbeitung nur im Web)
+// MARK: - Wissen: Detailansicht (Bearbeiten & Löschen direkt in der App)
 
 struct KnowledgeDetailView: View {
-    let page: KnowledgePage
+    @State var page: KnowledgePage
     @EnvironmentObject var state: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showEdit = false
+    @State private var showDeleteConfirm = false
+    @State private var error: String?
 
     private var themeTitles: [String] {
         page.themeIds.compactMap { id in state.themes.first(where: { $0.id == id })?.title }
@@ -439,11 +453,7 @@ struct KnowledgeDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack(alignment: .top) {
-                        Text(page.title).font(.title2).fontWeight(.bold)
-                        Spacer()
-                        readOnlyBadge
-                    }
+                    Text(page.title).font(.title2).fontWeight(.bold)
                     if !themeTitles.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
@@ -472,17 +482,43 @@ struct KnowledgeDetailView: View {
         .background(DS.groupedBg)
         .navigationTitle(page.title)
         .inlineTitle()
+        .toolbar {
+            ToolbarItem {
+                Menu {
+                    Button { showEdit = true } label: { Label("Bearbeiten", systemImage: "pencil") }
+                    Button(role: .destructive) { showDeleteConfirm = true } label: { Label("Löschen", systemImage: "trash") }
+                } label: { Image(systemName: "ellipsis.circle") }
+            }
+        }
+        .sheet(isPresented: $showEdit) {
+            KnowledgeEditorView(mode: .edit(page)) { updated in
+                page = updated
+            }
+        }
+        .confirmationDialog(
+            "Wissensseite löschen?",
+            isPresented: $showDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Löschen", role: .destructive) { performDelete() }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text("„\(page.title)\u{201C} wird endgültig gelöscht. Das kann nicht rückgängig gemacht werden.")
+        }
+        .alert("Fehler", isPresented: Binding(
+            get: { error != nil }, set: { if !$0 { error = nil } }
+        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
     }
 
-    private var readOnlyBadge: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "eye").font(.system(size: 10))
-            Text("Nur lesbar").font(.system(size: 11, weight: .semibold))
+    private func performDelete() {
+        Task {
+            do {
+                try await state.deleteKnowledgePage(id: page.id)
+                dismiss()
+            } catch {
+                self.error = "Löschen fehlgeschlagen. Bitte versuche es erneut."
+            }
         }
-        .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(Color.gray.opacity(0.15))
-        .foregroundStyle(.secondary)
-        .clipShape(Capsule())
     }
 }
 

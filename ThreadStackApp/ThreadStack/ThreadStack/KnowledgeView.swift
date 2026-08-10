@@ -1,11 +1,14 @@
 import SwiftUI
 
-// Globale Wissens-Ansicht — read-only in der App; Erstellen/Bearbeiten nur über die Web-App
-// (kein Rich-Text-Editor auf iOS/macOS, analog zur bestehenden Einschränkung bei anderen Feldern).
+// Globale Wissens-Ansicht — Wissen kann direkt in der App angelegt, bearbeitet
+// (nativer Rich-Text-Editor, siehe KnowledgeEditorView) und gelöscht werden.
 struct KnowledgeView: View {
     @EnvironmentObject var state: AppState
     @State private var search = ""
     @State private var themeFilter: String? = nil
+    @State private var showNew = false
+    @State private var deleteCandidate: KnowledgePage?
+    @State private var error: String?
 
     private var themeOptions: [Theme] {
         state.themes.sorted {
@@ -43,11 +46,16 @@ struct KnowledgeView: View {
 
             if state.knowledgePages.isEmpty {
                 Section {
-                    Text("Noch kein Wissen hinterlegt. Wissensseiten werden in der Web-App erstellt und mit Topics verknüpft.")
-                        .foregroundStyle(.secondary).font(.subheadline)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .listRowBackground(Color.clear)
+                    VStack(spacing: 10) {
+                        Text("Noch kein Wissen hinterlegt.")
+                            .foregroundStyle(.secondary).font(.subheadline)
+                            .multilineTextAlignment(.center)
+                        Button { showNew = true } label: {
+                            Label("Neues Wissen", systemImage: "plus.circle")
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .listRowBackground(Color.clear)
                 }
             } else if filtered.isEmpty {
                 Section {
@@ -60,12 +68,28 @@ struct KnowledgeView: View {
                 ForEach(filtered) { k in
                     NavigationLink { KnowledgeDetailView(page: k) } label: { KnowledgeRowView(page: k) }
                 }
+                #if os(iOS)
+                .onDelete { offsets in
+                    if let first = offsets.first { deleteCandidate = filtered[first] }
+                }
+                #endif
             }
+
+            #if os(macOS)
+            Section {
+                Button { showNew = true } label: {
+                    Label("Neues Wissen", systemImage: "plus.circle").foregroundStyle(.secondary)
+                }.buttonStyle(.plain)
+            }
+            #endif
         }
         .navigationTitle("Wissen")
         #if os(iOS)
         .searchable(text: $search, prompt: "Wissen suchen")
         .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { showNew = true } label: { Image(systemName: "plus") }
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Button("Alle Topics") { themeFilter = nil }
@@ -78,6 +102,36 @@ struct KnowledgeView: View {
             }
         }
         #endif
+        .sheet(isPresented: $showNew) {
+            KnowledgeEditorView(mode: .create(presetThemeId: nil))
+        }
+        .confirmationDialog(
+            "Wissensseite löschen?",
+            isPresented: Binding(get: { deleteCandidate != nil }, set: { if !$0 { deleteCandidate = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Löschen", role: .destructive) { performDelete() }
+            Button("Abbrechen", role: .cancel) { deleteCandidate = nil }
+        } message: {
+            if let c = deleteCandidate {
+                Text("„\(c.title)\u{201C} wird endgültig gelöscht. Das kann nicht rückgängig gemacht werden.")
+            }
+        }
+        .alert("Fehler", isPresented: Binding(
+            get: { error != nil }, set: { if !$0 { error = nil } }
+        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+    }
+
+    private func performDelete() {
+        guard let candidate = deleteCandidate else { return }
+        deleteCandidate = nil
+        Task {
+            do {
+                try await state.deleteKnowledgePage(id: candidate.id)
+            } catch {
+                self.error = "Löschen fehlgeschlagen. Bitte versuche es erneut."
+            }
+        }
     }
 
 }
