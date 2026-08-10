@@ -686,12 +686,6 @@ final class AppState: ObservableObject {
         }
     }
 
-    struct KnowledgeSearchHit: Identifiable, Decodable, Equatable {
-        let id: String
-        let title: String
-        let snippet: String?
-    }
-
     private struct KnowledgeSearchResponse: Decodable {
         let query: String
         let results: [KnowledgeSearchHit]
@@ -1089,4 +1083,10 @@ final class AppState: ObservableObject {
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
+}
+
+struct KnowledgeSearchHit: Identifiable, Decodable, Equatable {
+    let id: String
+    let title: String
+    let snippet: String?
 }
