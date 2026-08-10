@@ -45,6 +45,7 @@ final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
 /// ausschließlich die initiale `file://`-Navigation auf
 /// `knowledge-editor.html`; jede weitere Navigation wird abgebrochen.
 /// http(s)-Links werden extern geöffnet, niemals in der WebView selbst.
+@MainActor
 final class KnowledgeEditorCoordinator: NSObject {
     static let messageHandlerName = "tsEditor"
 
