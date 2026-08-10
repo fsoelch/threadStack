@@ -245,7 +245,15 @@ struct KnowledgeEditorView: View {
             // injiziert werden, sonst bliebe der Editor nach dem Crash leer.
             // `contentToLoad` wird dafuer bei jedem erfolgreichen content()-Lesen
             // (Autosave/Speichern) aktuell gehalten, siehe unten.
-            guard ready else { return }
+            guard ready else {
+                // Zustand "kein bestaetigt injizierter Inhalt" waehrend des
+                // Reload-Fensters — verhindert, dass autoSaveDraftNow()/doSave()
+                // in genau diesem Zeitraum den (noch) leeren Editor als
+                // gueltigen Inhalt lesen und damit den echten Inhalt
+                // ueberschreiben (siehe contentLoaded-Guards dort).
+                contentLoaded = false
+                return
+            }
             Task {
                 await controller.setContent(contentToLoad)
                 contentLoaded = true
@@ -413,7 +421,7 @@ struct KnowledgeEditorView: View {
     }
 
     private func autoSaveDraftNow() async {
-        guard isDirty, !isSaving, controller.isReady else { return }
+        guard isDirty, !isSaving, controller.isReady, contentLoaded else { return }
         guard let contentHTML = try? await controller.content() else { return }
         contentToLoad = contentHTML
         let draft = KnowledgeDraft(
@@ -466,7 +474,7 @@ struct KnowledgeEditorView: View {
         // erfolgreich einen LEEREN String liefern. Ohne diese Pruefung wuerde
         // ein Speichern-Aufruf in genau diesem Moment den Editorinhalt still
         // durch nichts ersetzen.
-        guard controller.isReady else {
+        guard controller.isReady, contentLoaded else {
             errorBanner = .bridgeUnavailable
             return
         }

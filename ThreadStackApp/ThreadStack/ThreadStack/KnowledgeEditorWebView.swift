@@ -69,6 +69,13 @@ final class KnowledgeEditorCoordinator: NSObject {
     #endif
 
     func makeWebView() -> WKWebView {
+        // Falls diese Coordinator-Instanz je eine neue WebView aufbaut,
+        // waehrend der Controller (als @StateObject von aussen gehalten)
+        // ueberlebt: isReady muss fuer die neue, noch leere WebView erst
+        // wieder ueber ein echtes "ready"-Ereignis wahr werden, sonst wuerde
+        // ein "ready == true, aber leerer Editor"-Zustand entstehen.
+        controller.handleWebContentProcessTerminated()
+
         let config = WKWebViewConfiguration()
         // Kein Cache/localStorage mit Wissensinhalten auf Platte.
         config.websiteDataStore = .nonPersistent()
