@@ -156,6 +156,38 @@ struct KnowledgePage: Identifiable, Codable, Equatable {
     var themeIds: [String]
     var originThemeId: String?
     var originThemeTitle: String?
+    /// IDs anderer Wissensseiten, die mit dieser (ungerichtet) verknüpft sind.
+    /// Rückwärtskompatibel dekodiert: ältere Endpoints (z.B. GET /themes/:id/knowledge)
+    /// liefern dieses Feld nicht — dann leeres Array statt Decode-Fehler.
+    var relatedPageIds: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, content, sortOrder, createdAt, updatedAt, themeIds
+        case originThemeId, originThemeTitle, relatedPageIds
+    }
+
+    init(id: String, title: String, content: String, sortOrder: Int?, createdAt: String,
+         updatedAt: String, themeIds: [String], originThemeId: String? = nil,
+         originThemeTitle: String? = nil, relatedPageIds: [String] = []) {
+        self.id = id; self.title = title; self.content = content; self.sortOrder = sortOrder
+        self.createdAt = createdAt; self.updatedAt = updatedAt; self.themeIds = themeIds
+        self.originThemeId = originThemeId; self.originThemeTitle = originThemeTitle
+        self.relatedPageIds = relatedPageIds
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        content = try c.decode(String.self, forKey: .content)
+        sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        updatedAt = try c.decode(String.self, forKey: .updatedAt)
+        themeIds = try c.decodeIfPresent([String].self, forKey: .themeIds) ?? []
+        originThemeId = try c.decodeIfPresent(String.self, forKey: .originThemeId)
+        originThemeTitle = try c.decodeIfPresent(String.self, forKey: .originThemeTitle)
+        relatedPageIds = try c.decodeIfPresent([String].self, forKey: .relatedPageIds) ?? []
+    }
 }
 
 // MARK: - Contact (Ansprechpartner)
