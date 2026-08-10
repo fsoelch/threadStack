@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--
+  Statische CSP (keine Laufzeit-Interpolation). Konsequenz: img-src erlaubt
+  nur data:/blob: — https:-Bilder aus rundreisendem Web-Content werden NICHT
+  geladen, das <img>-Element bleibt aber im DOM erhalten (siehe
+  knowledge-editor.js: markBlockedImages / knowledge-editor.css: .ts-img-blocked).
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data: blob:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'; media-src 'none'">
+<link rel="stylesheet" href="knowledge-editor.css">
+</head>
+<body>
+<div id="editor"
+     class="ts-editor"
+     contenteditable="true"
+     role="textbox"
+     aria-multiline="true"
+     autocorrect="on"
+     autocapitalize="sentences"
+     spellcheck="true"></div>
+<script src="knowledge-editor.js"></script>
+</body>
+</html>
