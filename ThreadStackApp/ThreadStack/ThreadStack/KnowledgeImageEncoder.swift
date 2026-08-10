@@ -37,6 +37,11 @@ enum KnowledgeImageEncoder {
     /// Bei Überschreitung wird die Qualität stufenweise reduziert (0.6, dann 0.4);
     /// danach wird ein Fehler geworfen.
     static let maxEncodedBytes = 300_000
+    /// Obergrenze fuer die Rohgroesse der Quelldatei, bevor ueberhaupt decodiert
+    /// wird — verhindert, dass eine manipulierte/exotische Datei (z. B. ohne
+    /// auslesbare Pixel-Properties) als Dekompressionsbombe den Prozess per
+    /// Speicherdruck beendet.
+    static let maxSourceBytes = 40_000_000
 
     /// Downscaled ein Quellbild (beliebiges von ImageIO lesbares Format) auf maximal
     /// `maxPixel` an der längsten Kante, re-encodiert es verlustbehaftet als JPEG
@@ -52,19 +57,19 @@ enum KnowledgeImageEncoder {
     ///   gelesen werden können; `KnowledgeImageError.tooLarge`, wenn das Bild auch
     ///   nach Qualitätsreduktion die Größengrenze überschreitet.
     static func dataURL(from data: Data, filename: String) throws -> KnowledgeImageResult {
-        guard !data.isEmpty,
+        guard !data.isEmpty, data.count <= maxSourceBytes,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetCount(source) > 0
         else {
             throw KnowledgeImageError.unreadable
         }
 
-        let image: CGImage
-        if let downscaled = downscaledImage(source: source) {
-            image = downscaled
-        } else if let full = CGImageSourceCreateImageAtIndex(source, 0, nil) {
-            image = full
-        } else {
+        // Immer ueber den Thumbnail-Pfad decodieren (mit erzwungener
+        // Erzeugung, auch wenn die Quell-Properties keine Pixelmasse liefern)
+        // statt bei fehlenden Properties auf ein volles, unbegrenztes Decode
+        // zurueckzufallen — das begrenzt den Speicherbedarf unabhaengig davon,
+        // ob die Quelldatei verlaessliche Metadaten mitliefert.
+        guard let image = boundedImage(source: source) else {
             throw KnowledgeImageError.unreadable
         }
 
@@ -82,22 +87,17 @@ enum KnowledgeImageEncoder {
         throw KnowledgeImageError.tooLarge
     }
 
-    /// Erzeugt ein auf `maxPixel` verkleinertes `CGImage`, sofern die längste Kante
-    /// des Quellbilds größer als `maxPixel` ist. Kleinere Bilder werden NICHT
-    /// hochskaliert – in diesem Fall liefert diese Funktion `nil`, der Aufrufer
-    /// fällt dann auf das unveränderte Originalbild zurück (das trotzdem als JPEG
-    /// ohne Metadaten neu kodiert wird).
+    /// Erzeugt immer ueber den Thumbnail-Pfad ein auf maximal `maxPixel`
+    /// begrenztes `CGImage` — unabhaengig davon, ob die Quell-Properties
+    /// auslesbare Pixelmasse liefern. `kCGImageSourceCreateThumbnailFromImageAlways`
+    /// erzwingt dabei die Erzeugung auch fuer Bilder ohne eingebettetes
+    /// Thumbnail, und `kCGImageSourceThumbnailMaxPixelSize` begrenzt den
+    /// Speicherbedarf des Decodings selbst bei sehr grossen/manipulierten
+    /// Quellbildern (Schutz vor Dekompressionsbomben).
     ///
     /// Es werden bewusst keine Properties-/Metadaten-Optionen genutzt, die
     /// Quell-Metadaten (insbesondere EXIF/GPS) in das Ergebnis übernehmen würden.
-    private static func downscaledImage(source: CGImageSource) -> CGImage? {
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
-            return nil
-        }
-        let width = (properties[kCGImagePropertyPixelWidth] as? CGFloat) ?? 0
-        let height = (properties[kCGImagePropertyPixelHeight] as? CGFloat) ?? 0
-        guard max(width, height) > maxPixel else { return nil }
-
+    private static func boundedImage(source: CGImageSource) -> CGImage? {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceThumbnailMaxPixelSize: Int(maxPixel),

@@ -16,6 +16,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 #if os(macOS)
 import AppKit
@@ -336,7 +337,7 @@ struct KnowledgeEditorView: View {
                 .accessibilityLabel(banner.message)
             if case .pageGone = banner {
                 HStack {
-                    Button("Text kopieren") { copyContentToClipboard() }
+                    Button("Text kopieren") { Task { await copyContentToClipboard() } }
                     Spacer()
                     Button("Als neue Seite anlegen") { convertToNewPage() }
                 }
@@ -475,6 +476,13 @@ struct KnowledgeEditorView: View {
 
             partialFailureBanner = nil
             if let page = await appState.reloadKnowledgePage(id: outcome.pageId) {
+                // Der Entwurf wurde waehrend der gesamten Bearbeitung unter dem
+                // urspruenglichen Schluessel autosaved (bei Neuanlage: nil/"new",
+                // da currentPageId erst nach Erfolg auf outcome.pageId wechselt) —
+                // beide Schluessel loeschen, sonst bleibt ein "new.json"-Entwurf
+                // mit dem vollen Inhalt liegen und wird der naechsten neuen Seite
+                // faelschlich als wiederherstellbarer Entwurf angeboten.
+                KnowledgeDraftStore.delete(pageId: draftLookupPageId, userId: userId)
                 KnowledgeDraftStore.delete(pageId: outcome.pageId, userId: userId)
                 isDirty = false
                 onSaved?(page)
@@ -533,13 +541,22 @@ struct KnowledgeEditorView: View {
 
     // MARK: - KNOWLEDGE_PAGE_GONE-Aktionen
 
-    private func copyContentToClipboard() {
-        let plainText = title + "\n\n" + stripHTML(contentToLoad)
+    @MainActor
+    private func copyContentToClipboard() async {
+        // Der aktuelle Editorinhalt (nicht der beim Öffnen geladene Stand) ist
+        // die eigentliche Rettungsaktion hier — fällt der Bridge-Aufruf aus,
+        // wird ersatzweise der zuletzt geladene/wiederhergestellte Stand
+        // verwendet, statt gar nichts zu kopieren.
+        let liveContent = try? await controller.content()
+        let plainText = title + "\n\n" + stripHTML(liveContent ?? contentToLoad)
         #if os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(plainText, forType: .string)
         #else
-        UIPasteboard.general.string = plainText
+        UIPasteboard.general.setItems(
+            [[UTType.utf8PlainText.identifier: plainText]],
+            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
+        )
         #endif
     }
 

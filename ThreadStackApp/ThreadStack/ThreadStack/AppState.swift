@@ -692,9 +692,13 @@ final class AppState: ObservableObject {
     }
 
     func searchKnowledge(query: String) async throws -> [KnowledgeSearchHit] {
-        let allowed = CharacterSet.urlQueryAllowed
-        let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
-        let r: KnowledgeSearchResponse = try await knowledgeRequest("GET", "/knowledge/search?q=\(encoded)")
+        // URLQueryItem-based encoding (statt CharacterSet.urlQueryAllowed) haelt
+        // "&", "=", "+" korrekt escaped, sodass Nutzereingaben keine weiteren
+        // Query-Parameter an den Aufruf anhaengen koennen.
+        var comps = URLComponents()
+        comps.queryItems = [URLQueryItem(name: "q", value: query)]
+        let encodedQuery = comps.percentEncodedQuery ?? ""
+        let r: KnowledgeSearchResponse = try await knowledgeRequest("GET", "/knowledge/search?\(encodedQuery)")
         return r.results
     }
 

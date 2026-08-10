@@ -55,7 +55,7 @@ final class KnowledgeEditorCoordinator: NSObject {
     #endif
 
     private weak var webView: WKWebView?
-    private var didAllowInitialLoad = false
+    private var expectedInitialURL: URL?
 
     #if os(iOS)
     init(controller: KnowledgeEditorController, heightBinding: Binding<CGFloat>?) {
@@ -106,9 +106,17 @@ final class KnowledgeEditorCoordinator: NSObject {
         controller.webView = webView
 
         if let htmlURL = KnowledgeEditorAssets.htmlURL() {
+            expectedInitialURL = htmlURL.standardizedFileURL
             webView.loadFileURL(htmlURL, allowingReadAccessTo: htmlURL.deletingLastPathComponent())
         }
         return webView
+    }
+
+    /// Laedt den Editor neu, falls der Web-Content-Prozess beendet wurde
+    /// (z. B. durch Speicherdruck) — sonst bliebe die WebView dauerhaft leer.
+    private func reloadInitialPage() {
+        guard let webView, let expectedInitialURL else { return }
+        webView.loadFileURL(expectedInitialURL, allowingReadAccessTo: expectedInitialURL.deletingLastPathComponent())
     }
 
     func tearDown() {
@@ -130,8 +138,8 @@ extension KnowledgeEditorCoordinator: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        if !didAllowInitialLoad {
-            didAllowInitialLoad = true
+        if let url = navigationAction.request.url,
+           url.isFileURL, url.standardizedFileURL == expectedInitialURL {
             decisionHandler(.allow)
             return
         }
@@ -143,6 +151,10 @@ extension KnowledgeEditorCoordinator: WKNavigationDelegate {
             #endif
         }
         decisionHandler(.cancel)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        reloadInitialPage()
     }
 }
 

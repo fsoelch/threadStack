@@ -235,8 +235,8 @@ struct KnowledgeLinkInsertSheet: View {
     /// "Nur Link einfügen"-Fallback nach einem Fehler ist — es darf niemals eine
     /// unzulässige (z. B. `javascript:`-)URL an `onInsert` gelangen.
     private func insertLinkOnly() {
-        let href = finalUrl ?? linkInsertNormalizeUrl(trimmedURL)
-        guard knowledgeLinkIsValidHttpURL(finalUrl ?? trimmedURL) else {
+        let href = linkInsertNormalizeUrl(finalUrl ?? trimmedURL)
+        guard knowledgeLinkIsValidHttpURL(href) else {
             error = trimmedURL.isEmpty
                 ? "Bitte eine Adresse eingeben."
                 : "Bitte eine gültige URL eingeben (z. B. https://example.com)."
@@ -247,8 +247,8 @@ struct KnowledgeLinkInsertSheet: View {
     }
 
     private func insertSummary(_ summary: String) {
-        let href = finalUrl ?? linkInsertNormalizeUrl(trimmedURL)
-        guard knowledgeLinkIsValidHttpURL(finalUrl ?? trimmedURL) else {
+        let href = linkInsertNormalizeUrl(finalUrl ?? trimmedURL)
+        guard knowledgeLinkIsValidHttpURL(href) else {
             error = "Bitte eine gültige URL eingeben (z. B. https://example.com)."
             return
         }
