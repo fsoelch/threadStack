@@ -1,0 +1,111 @@
+/*
+ * knowledge-editor.css — eigenständiges, minimales Stylesheet für den
+ * nativen Wissens-Editor (Paket 2: knowledge-editor-bridge).
+ *
+ * WICHTIG (CSP-Konformität): Die Skalierung der Schriftgröße erfolgt NICHT
+ * über ein "style"-HTML-Attribut oder direkte Inline-Style-Zuweisung
+ * (element.style.xyz), da beides unter `style-src` fällt und ohne
+ * 'unsafe-inline' vom Browser blockiert würde. Stattdessen mutiert
+ * knowledge-editor.js die CSSOM-Regel für ":root" DIESES bereits über
+ * `style-src 'self'` erlaubten Stylesheets (CSSStyleRule.style.setProperty),
+ * was keine neue Inline-Deklaration einführt und daher zulässig ist.
+ */
+
+:root {
+  --ts-font-scale: 1;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  color: #1c1c1e;
+}
+
+html.ts-dark body {
+  color: #f2f2f7;
+}
+
+.ts-editor {
+  outline: none;
+  border: none;
+  box-sizing: border-box;
+  min-height: 120px;
+  padding: 12px;
+  font-size: calc(16px * var(--ts-font-scale));
+  line-height: 1.5;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.ts-editor:empty:before {
+  content: attr(data-placeholder);
+  color: #8e8e93;
+  pointer-events: none;
+}
+
+.ts-editor a {
+  color: #1D6FE8;
+  text-decoration: underline;
+}
+
+html.ts-dark .ts-editor a {
+  color: #6ea8fe;
+}
+
+.ts-editor ul {
+  padding-left: 1.4em;
+  margin: 0.4em 0;
+}
+
+.ts-editor p {
+  margin: 0.4em 0;
+}
+
+.ts-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+/*
+ * Rundreise-Erhalt: <img>-Elemente mit einer nicht-data:/blob:-Quelle
+ * (z. B. aus Web-Attachments) werden durch die CSP (img-src data: blob:)
+ * nicht geladen. Das Element bleibt im DOM erhalten, bekommt aber diese
+ * Platzhalter-Optik statt eines rohen "kaputtes Bild"-Icons.
+ */
+.ts-editor img.ts-img-blocked {
+  display: inline-block;
+  min-width: 48px;
+  min-height: 48px;
+  border: 1px dashed #c7c7cc;
+  background-color: #f2f2f7;
+}
+
+html.ts-dark .ts-editor img.ts-img-blocked {
+  border-color: #48484a;
+  background-color: #2c2c2e;
+}
+
+.ts-editor table {
+  border-collapse: collapse;
+  max-width: 100%;
+}
+
+.ts-editor table td,
+.ts-editor table th {
+  border: 1px solid #c7c7cc;
+  padding: 4px 8px;
+}
+
+html.ts-dark .ts-editor table td,
+html.ts-dark .ts-editor table th {
+  border-color: #48484a;
+}
