@@ -93,6 +93,12 @@ final class KnowledgeSaveCoordinator {
         /// `true`, wenn mindestens eine Links-Diff-Operation (`addKnowledgeLink`/
         /// `removeKnowledgeLink`) fehlgeschlagen ist.
         let linksFailed: Bool
+        /// Anzahl der vom Server beim Themes-Sync stillschweigend verworfenen
+        /// Topic-IDs (z. B. zwischenzeitlich auf einem anderen Gerät gelöscht).
+        /// 0, wenn kein Themes-Sync stattfand oder nichts verworfen wurde. Kein
+        /// Fehlerfall (der Themes-Sync selbst war erfolgreich) — daher separat
+        /// von `themesFailed`/`isFullSuccess` gehalten, rein informativ.
+        let droppedThemeCount: Int
 
         var isFullSuccess: Bool { !themesFailed && !linksFailed }
     }
@@ -186,10 +192,12 @@ final class KnowledgeSaveCoordinator {
         }
 
         var themesFailed = false
+        var droppedThemeCount = 0
         if appliedThemeIds != desiredThemeIds {
             do {
                 let result = try await operations.setKnowledgeThemes(resolvedPageId, themeIds)
                 appliedThemeIds = Set(result.appliedThemeIds)
+                droppedThemeCount = result.droppedCount
             } catch {
                 themesFailed = true
             }
@@ -222,7 +230,8 @@ final class KnowledgeSaveCoordinator {
             pageId: resolvedPageId,
             createdPage: createdPage,
             themesFailed: themesFailed,
-            linksFailed: linksFailed
+            linksFailed: linksFailed,
+            droppedThemeCount: droppedThemeCount
         )
     }
 }

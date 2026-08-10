@@ -65,6 +65,7 @@ struct KnowledgeEditorView: View {
     @State private var titleErrorText: String?
     @State private var errorBanner: ErrorBanner?
     @State private var partialFailureBanner: PartialFailureBanner?
+    @State private var droppedThemeHint: Int?
 
     // MARK: - Draft state
 
@@ -143,6 +144,9 @@ struct KnowledgeEditorView: View {
                 }
                 if let partialFailureBanner {
                     partialFailureSection(partialFailureBanner)
+                }
+                if let droppedThemeHint {
+                    droppedThemeSection(droppedThemeHint)
                 }
 
                 Section {
@@ -372,6 +376,23 @@ struct KnowledgeEditorView: View {
         }
     }
 
+    @ViewBuilder
+    private func droppedThemeSection(_ count: Int) -> some View {
+        Section {
+            let message = count == 1
+                ? "1 Topic konnte nicht zugeordnet werden (nicht mehr vorhanden)."
+                : "\(count) Topics konnten nicht zugeordnet werden (nicht mehr vorhanden)."
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.orange)
+                .accessibilityLabel(message)
+            Button("Schließen") {
+                droppedThemeHint = nil
+                dismiss()
+            }
+        }
+    }
+
     // MARK: - Appear / draft
 
     private func onAppear() async {
@@ -524,7 +545,17 @@ struct KnowledgeEditorView: View {
                 KnowledgeDraftStore.delete(pageId: outcome.pageId, userId: userId)
                 isDirty = false
                 onSaved?(page)
-                dismiss()
+                if outcome.droppedThemeCount > 0 {
+                    // Inhalt und Themes-Sync selbst waren erfolgreich, aber der
+                    // Server hat serverseitig nicht mehr existierende Topic-IDs
+                    // verworfen (z. B. auf einem anderen Geraet geloescht,
+                    // waehrend die Auswahl hier noch offen war) — dem Nutzer
+                    // sichtbar machen statt den Sheet-Dismiss stillschweigend
+                    // durchzuwinken.
+                    droppedThemeHint = outcome.droppedThemeCount
+                } else {
+                    dismiss()
+                }
             } else {
                 // Konnte die eben gespeicherte Seite nicht neu laden (Netzwerk
                 // oder — selten — Löschung durch ein anderes Gerät im selben
