@@ -697,7 +697,10 @@ final class AppState: ObservableObject {
         // Query-Parameter an den Aufruf anhaengen koennen.
         var comps = URLComponents()
         comps.queryItems = [URLQueryItem(name: "q", value: query)]
-        let encodedQuery = comps.percentEncodedQuery ?? ""
+        // percentEncodedQuery laesst "+" unkodiert, das serverseitig aber
+        // ueblicherweise als Leerzeichen interpretiert wird — explizit escapen,
+        // damit z. B. "C++" nicht verfaelscht wird.
+        let encodedQuery = (comps.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B")
         let r: KnowledgeSearchResponse = try await knowledgeRequest("GET", "/knowledge/search?\(encodedQuery)")
         return r.results
     }

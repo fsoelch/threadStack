@@ -238,7 +238,14 @@ struct KnowledgeEditorView: View {
         .task { await onAppear() }
         .task { await autoSaveDraftLoop() }
         .onChange(of: controller.isReady) { _, ready in
-            guard ready, !contentLoaded else { return }
+            // Feuert nicht nur beim ersten Laden, sondern auch erneut nach
+            // einem Web-Content-Prozess-Crash (handleWebContentProcessTerminated()
+            // setzt isReady zurueck, der automatische Reload setzt es wieder auf
+            // true) — in dem Fall MUSS der zuletzt bekannte Inhalt erneut
+            // injiziert werden, sonst bliebe der Editor nach dem Crash leer.
+            // `contentToLoad` wird dafuer bei jedem erfolgreichen content()-Lesen
+            // (Autosave/Speichern) aktuell gehalten, siehe unten.
+            guard ready else { return }
             Task {
                 await controller.setContent(contentToLoad)
                 contentLoaded = true
@@ -408,6 +415,7 @@ struct KnowledgeEditorView: View {
     private func autoSaveDraftNow() async {
         guard isDirty, !isSaving, controller.isReady else { return }
         guard let contentHTML = try? await controller.content() else { return }
+        contentToLoad = contentHTML
         let draft = KnowledgeDraft(
             pageId: currentPageId,
             title: title,
@@ -451,13 +459,33 @@ struct KnowledgeEditorView: View {
         defer { isSaving = false }
         errorBanner = nil
 
+        // Nach einer Terminierung des Web-Content-Prozesses laedt die WebView
+        // still neu und ist dann kurzzeitig nicht "ready" (siehe
+        // handleWebContentProcessTerminated()) — content() selbst prueft nur,
+        // ob ueberhaupt eine WebView existiert, wuerde in diesem Fenster also
+        // erfolgreich einen LEEREN String liefern. Ohne diese Pruefung wuerde
+        // ein Speichern-Aufruf in genau diesem Moment den Editorinhalt still
+        // durch nichts ersetzen.
+        guard controller.isReady else {
+            errorBanner = .bridgeUnavailable
+            return
+        }
+
         let contentHTML: String
         do {
             contentHTML = try await controller.content()
+            contentToLoad = contentHTML
         } catch {
             errorBanner = .bridgeUnavailable
             return
         }
+
+        // Der Autosave-Schluessel folgt currentPageId, das sich durch
+        // convertToNewPage() (KNOWLEDGE_PAGE_GONE-Fluss) vom unveraenderlichen
+        // draftLookupPageId (folgt `mode`) loesen kann — vor der Mutation
+        // unten sichern, damit nach Erfolg wirklich der Schluessel geloescht
+        // wird, unter dem zuletzt tatsaechlich autosaved wurde.
+        let draftKeyBeforeSave = currentPageId
 
         do {
             let outcome = try await coordinator.save(
@@ -476,13 +504,15 @@ struct KnowledgeEditorView: View {
 
             partialFailureBanner = nil
             if let page = await appState.reloadKnowledgePage(id: outcome.pageId) {
-                // Der Entwurf wurde waehrend der gesamten Bearbeitung unter dem
-                // urspruenglichen Schluessel autosaved (bei Neuanlage: nil/"new",
-                // da currentPageId erst nach Erfolg auf outcome.pageId wechselt) —
-                // beide Schluessel loeschen, sonst bleibt ein "new.json"-Entwurf
-                // mit dem vollen Inhalt liegen und wird der naechsten neuen Seite
-                // faelschlich als wiederherstellbarer Entwurf angeboten.
+                // Drei moegliche Autosave-Schluessel raeumen: der urspruengliche
+                // (draftLookupPageId, aus `mode` abgeleitet), der zuletzt aktive
+                // vor diesem Save (draftKeyBeforeSave, kann durch
+                // convertToNewPage() abweichen) und der neue Server-Schluessel —
+                // sonst bleibt ein Entwurf mit vollem Inhalt liegen und wird der
+                // naechsten neuen Seite faelschlich als wiederherstellbar
+                // angeboten.
                 KnowledgeDraftStore.delete(pageId: draftLookupPageId, userId: userId)
+                KnowledgeDraftStore.delete(pageId: draftKeyBeforeSave, userId: userId)
                 KnowledgeDraftStore.delete(pageId: outcome.pageId, userId: userId)
                 isDirty = false
                 onSaved?(page)
@@ -550,7 +580,9 @@ struct KnowledgeEditorView: View {
         let liveContent = try? await controller.content()
         let plainText = title + "\n\n" + stripHTML(liveContent ?? contentToLoad)
         #if os(macOS)
-        NSPasteboard.general.clearContents()
+        // .currentHostOnly haelt den Wissensinhalt vom geraeteuebergreifenden
+        // Universal-Clipboard fern (analog .localOnly auf iOS).
+        NSPasteboard.general.prepareForNewContents(with: .currentHostOnly)
         NSPasteboard.general.setString(plainText, forType: .string)
         #else
         UIPasteboard.general.setItems(

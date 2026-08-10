@@ -256,6 +256,16 @@ final class KnowledgeEditorController: ObservableObject {
         _ = try? await callBridgeNoArg("focus")
     }
 
+    /// Wird bei Terminierung des Web-Content-Prozesses aufgerufen, BEVOR die
+    /// Seite neu geladen wird. Setzt `isReady` zurueck, damit ein erneutes
+    /// "ready" nach dem Reload wieder als Zustandswechsel erkannt wird (der
+    /// zuletzt bekannte Inhalt muss dann von aussen erneut injiziert werden —
+    /// sonst wuerde ein Speichern-Aufruf in der Zwischenzeit den leeren
+    /// Editorinhalt fuer echt halten und persistieren).
+    func handleWebContentProcessTerminated() {
+        isReady = false
+    }
+
     // MARK: - JS -> Nativ (WKScriptMessageHandler-Weiterleitung)
 
     /// Verarbeitet eine rohe `WKScriptMessage.body`. Wird vom

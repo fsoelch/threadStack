@@ -138,8 +138,9 @@ extension KnowledgeEditorCoordinator: WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
-        if let url = navigationAction.request.url,
-           url.isFileURL, url.standardizedFileURL == expectedInitialURL {
+        if let url = navigationAction.request.url, url.isFileURL,
+           let expectedInitialURL,
+           url.resolvingSymlinksInPath().standardizedFileURL == expectedInitialURL.resolvingSymlinksInPath().standardizedFileURL {
             decisionHandler(.allow)
             return
         }
@@ -154,6 +155,11 @@ extension KnowledgeEditorCoordinator: WKNavigationDelegate {
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        // Reihenfolge bindend: erst isReady zuruecksetzen, dann neu laden —
+        // sonst haelt der Controller den alten (jetzt ungueltigen) "ready"-
+        // Zustand, und ein zwischenzeitlicher Speichern-Aufruf wuerde den nach
+        // dem Reload leeren Editorinhalt faelschlich als aktuellen Stand lesen.
+        controller.handleWebContentProcessTerminated()
         reloadInitialPage()
     }
 }
