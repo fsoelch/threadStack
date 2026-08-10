@@ -126,14 +126,17 @@ final class KnowledgeEditorCoordinator: NSObject {
         webView.loadFileURL(expectedInitialURL, allowingReadAccessTo: expectedInitialURL.deletingLastPathComponent())
     }
 
+    /// Aufgerufen von dismantleUIView/dismantleNSView, wenn SwiftUI die
+    /// zugehoerige Repraesentation abbaut. Kein deinit-Pendant noetig: der
+    /// WKUserContentController haelt nur den WeakScriptMessageHandler-Proxy
+    /// stark (der self nur schwach referenziert), es entsteht also kein
+    /// Retain-Cycle, der ueber deinit aufgeloest werden muesste — und deinit
+    /// waere hier ohnehin nonisolated und koennte diese MainActor-isolierten
+    /// Properties unter Swift 6 strict concurrency nicht sicher lesen.
     func tearDown() {
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.messageHandlerName)
         controller.webView = nil
         webView = nil
-    }
-
-    deinit {
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.messageHandlerName)
     }
 }
 
