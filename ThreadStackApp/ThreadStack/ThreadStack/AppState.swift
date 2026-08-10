@@ -111,6 +111,15 @@ final class AppState: ObservableObject {
         session = URLSession(configuration: cfg)
     }
 
+    /// Test-only seam: allows injecting a `URLSession` (e.g. backed by a
+    /// custom `URLProtocol` stub) so unit tests can exercise the real
+    /// request/error-mapping code paths without hitting the network. Not
+    /// used by production call sites, which continue to use `init()`.
+    init(session: URLSession) {
+        serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
+        self.session = session
+    }
+
     // MARK: - Core request
     // Body values: use NSNull() to send JSON null; nil entries are excluded.
 
@@ -201,6 +210,10 @@ final class AppState: ObservableObject {
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]
         clearGraphStateOnLogout()
+        // Security requirement (analog zu clearGraphStateOnLogout): lokale
+        // Wissens-Entwürfe (unsynced, ggf. sensible Notizinhalte) gehören dem
+        // vorherigen Nutzer und dürfen den Logout nicht überleben.
+        KnowledgeDraftStore.clearAll()
         // Geplante/zugestellte Notifications gehören dem vorherigen Nutzer und dürfen
         // den Logout nicht überleben (gleiche Anforderung wie clearGraphStateOnLogout).
         // resyncSnoozeNotifications() plant beim nächsten Login idempotent alles neu.
@@ -540,7 +553,7 @@ final class AppState: ObservableObject {
         return out
     }
 
-    // MARK: - Knowledge (Wissensseiten, read-only in der App — Bearbeitung nur im Web)
+    // MARK: - Knowledge (Wissensseiten)
 
     func loadKnowledgePages() async {
         knowledgePages = (try? await request("GET", "/knowledge")) ?? knowledgePages
@@ -554,6 +567,152 @@ final class AppState: ObservableObject {
     /// Todos zu einem Topic, optional inkl. Unter-Topics (mit originThemeId/-Title für Herkunfts-Badges).
     func themeTodos(id: String, includeDescendants: Bool) async -> [TodoItem] {
         (try? await request("GET", "/themes/\(id)/todos?includeDescendants=\(includeDescendants)")) ?? []
+    }
+
+    // MARK: - Knowledge (native Rich-Text-Editor, Wissensmanagement v2.1)
+
+    /// Server error body shape produced by `fail(res, status, code, msg, extra)`
+    /// in server.js: `{ error, code, ...extra }` where `extra` may add `limit`.
+    private struct KnowledgeErrorBody: Decodable {
+        let error: String
+        let code: String?
+        let limit: Int?
+    }
+
+    /// Like `request(_:_:body:)`, but preserves the server's structured error
+    /// (`code`, `limit`) as `KnowledgeAPIError` instead of collapsing every
+    /// 4xx/5xx into `APIError.server(String)`. 401 still surfaces as
+    /// `APIError.unauthorized`, matching the existing `request` contract, so
+    /// shared session-expiry handling elsewhere in the app keeps working.
+    private func knowledgeRequest<T: Decodable>(_ method: String, _ path: String,
+                                                 body: [String: Any]? = nil) async throws -> T {
+        var req = URLRequest(url: try url(path))
+        req.httpMethod = method
+        if let body, !body.isEmpty {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw APIError.network }
+        if http.statusCode == 401 { throw APIError.unauthorized }
+        if http.statusCode >= 400 {
+            if let body = try? decoder.decode(KnowledgeErrorBody.self, from: data) {
+                throw KnowledgeAPIError(status: http.statusCode, code: body.code ?? "",
+                                        message: body.error, limit: body.limit)
+            }
+            throw KnowledgeAPIError(status: http.statusCode, code: "",
+                                    message: "HTTP \(http.statusCode)", limit: nil)
+        }
+        return try decoder.decode(T.self, from: data)
+    }
+
+    func createKnowledgePage(title: String, content: String, themeIds: [String]) async throws -> KnowledgePage {
+        try await knowledgeRequest("POST", "/knowledge", body: [
+            "title": title, "content": content, "themeIds": themeIds
+        ])
+    }
+
+    private struct KnowledgeUpdateResponse: Decodable { let ok: Bool; let updatedAt: String }
+
+    /// Aufrufer lädt die Seite danach selbst neu (z.B. via `reloadKnowledgePage`),
+    /// da PUT /api/knowledge/:id keine vollständige Seite zurückliefert.
+    @discardableResult
+    func updateKnowledgePage(id: String, title: String, content: String) async throws -> String {
+        let r: KnowledgeUpdateResponse = try await knowledgeRequest("PUT", "/knowledge/\(id)", body: [
+            "title": title, "content": content
+        ])
+        return r.updatedAt
+    }
+
+    struct KnowledgeThemesResult: Decodable, Equatable {
+        let appliedThemeIds: [String]
+        let droppedCount: Int
+    }
+
+    func setKnowledgeThemes(id: String, themeIds: [String]) async throws -> KnowledgeThemesResult {
+        try await knowledgeRequest("PUT", "/knowledge/\(id)/themes", body: ["themeIds": themeIds])
+    }
+
+    /// DELETE /api/knowledge/:id. A 404 (page already gone) is treated as a
+    /// successful outcome from the caller's point of view — the desired end
+    /// state (page no longer exists) is reached either way — and is not
+    /// thrown, matching the documented contract.
+    func deleteKnowledgePage(id: String) async throws {
+        do {
+            let _: OKResponse = try await knowledgeRequest("DELETE", "/knowledge/\(id)")
+        } catch let e as KnowledgeAPIError where e.isGone {
+            // already gone — treated as success
+        }
+        knowledgePages.removeAll { $0.id == id }
+    }
+
+    struct KnowledgeLink: Identifiable, Decodable, Equatable {
+        struct Page: Decodable, Equatable { let id: String; let title: String; let updatedAt: String? }
+        let linkId: String
+        let page: Page
+        var id: String { linkId }
+    }
+
+    func knowledgeLinks(pageId: String) async throws -> [KnowledgeLink] {
+        try await knowledgeRequest("GET", "/knowledge/\(pageId)/links")
+    }
+
+    /// POST /api/knowledge/:id/links — server responds 200 with `created:false`
+    /// on a duplicate link (idempotent re-add) instead of an error; that case
+    /// is surfaced to the caller as a normal (non-throwing) result here too.
+    private struct KnowledgeLinkCreateResponse: Decodable {
+        let linkId: String
+        let created: Bool
+        let page: KnowledgeLink.Page
+    }
+
+    @discardableResult
+    func addKnowledgeLink(pageId: String, targetId: String) async throws -> KnowledgeLink {
+        let r: KnowledgeLinkCreateResponse = try await knowledgeRequest(
+            "POST", "/knowledge/\(pageId)/links", body: ["targetId": targetId])
+        return KnowledgeLink(linkId: r.linkId, page: r.page)
+    }
+
+    /// DELETE /api/knowledge/:id/links/:linkId — idempotent: the server
+    /// returns `{ ok: true }` even if the link was already removed, so no
+    /// special-casing of 404 is needed here (the endpoint never returns one
+    /// for an already-gone link per the documented contract; a defensive
+    /// catch is kept in case of an unowned/foreign id which does 404).
+    func removeKnowledgeLink(pageId: String, linkId: String) async throws {
+        do {
+            let _: OKResponse = try await knowledgeRequest("DELETE", "/knowledge/\(pageId)/links/\(linkId)")
+        } catch let e as KnowledgeAPIError where e.isGone {
+            // already gone — idempotent success
+        }
+    }
+
+    struct KnowledgeSearchHit: Identifiable, Decodable, Equatable {
+        let id: String
+        let title: String
+        let snippet: String?
+    }
+
+    private struct KnowledgeSearchResponse: Decodable {
+        let query: String
+        let results: [KnowledgeSearchHit]
+    }
+
+    func searchKnowledge(query: String) async throws -> [KnowledgeSearchHit] {
+        let allowed = CharacterSet.urlQueryAllowed
+        let encoded = query.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+        let r: KnowledgeSearchResponse = try await knowledgeRequest("GET", "/knowledge/search?q=\(encoded)")
+        return r.results
+    }
+
+    /// There is no `GET /api/knowledge/:id` — reloading a single page after
+    /// an edit goes through the list endpoint. Updates `knowledgePages` in
+    /// place and returns the (possibly updated) page, or `nil` if it no
+    /// longer exists (e.g. deleted concurrently on another device).
+    @discardableResult
+    func reloadKnowledgePage(id: String) async -> KnowledgePage? {
+        guard let fresh: [KnowledgePage] = try? await request("GET", "/knowledge") else { return nil }
+        knowledgePages = fresh
+        return fresh.first { $0.id == id }
     }
 
     // MARK: - Contacts (Ansprechpartner)
