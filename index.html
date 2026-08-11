@@ -2073,6 +2073,7 @@ body.ai-disabled .ai-action { display: none !important; }
       <button class="modal-close" onclick="closeTodoModal()">×</button>
     </div>
     <div class="modal-body">
+      <div id="todo-modal-context-hint" class="form-hint" style="display:none"></div>
       <div class="form-group">
         <label class="form-label">Titel</label>
         <input type="text" class="form-control" id="todo-title" placeholder="Was muss erledigt werden?">
@@ -5053,9 +5054,18 @@ function toggleTodoDoneFields(checked) {
     document.getElementById('todo-result-date').value = nowLocal();
 }
 
-function openTodoModal(id) {
+function openTodoModal(id, presetThemeId) {
   editTodoId = id || null;
   const t = id ? todos.find(x => x.id === id) : null;
+  todoModalPresetThemeId = id ? null : (presetThemeId || null);
+  const hint = document.getElementById('todo-modal-context-hint');
+  if (todoModalPresetThemeId) {
+    const th = themeById(todoModalPresetThemeId);
+    hint.textContent = th ? `Wird mit Topic „${th.title}" verknüpft.` : '';
+    hint.style.display = th ? 'block' : 'none';
+  } else {
+    hint.style.display = 'none';
+  }
   document.getElementById('todo-modal-title').textContent = t ? 'Todo bearbeiten' : 'Neues Todo';
   document.getElementById('todo-title').value = t?.title || '';
   setRT('todo-desc', t?.description || '');
@@ -5124,8 +5134,19 @@ async function saveTodoModal() {
       const t = await api('POST', '/todos', data);
       todos.push(t);
       savedTodoId = t.id;
+      if (todoModalPresetThemeId) {
+        try {
+          const link = await api('POST', `/themes/${todoModalPresetThemeId}/links`, {
+            refType: 'todo', refId: savedTodoId
+          });
+          const th = themeById(todoModalPresetThemeId);
+          if (th) th.links.push(link);
+        } catch (e) { toast(e.message, 'error'); }
+      }
     }
+    todoModalPresetThemeId = null;
     closeTodoModal(); render();
+    await loadThemeDetail(); render();
     toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
     if (savedTodoId && !data.done) triggerThemeSuggestions('todo', savedTodoId);
   } catch(e) { toast(e.message, 'error'); }
@@ -5145,6 +5166,7 @@ function confirmDeleteTodo(id, name) {
     try {
       await api('DELETE', `/todos/${id}`);
       todos = todos.filter(t => t.id !== id);
+      await loadThemeDetail();
       render(); toast(`Todo „${name}" gelöscht`);
     } catch(e) { toast(e.message, 'error'); }
   };
@@ -5773,9 +5795,10 @@ function renderThemeDetailPanel() {
       <div class="theme-section">
         <div class="theme-section-head">
           <span class="theme-section-title">✅ Todos${themeDetailTodos.length ? ` (${themeDetailTodos.length})` : ''}</span>
+          <button class="btn btn-primary btn-sm" style="background:#7c3aed;border-color:#7c3aed" onclick="openTodoModal(null,'${theme.id}')">+ Todo</button>
         </div>
         ${themeDetailLoading ? `<p class="theme-empty-items">Lädt …</p>` :
-          themeDetailTodos.length === 0 ? `<p class="theme-empty-items">Keine Todos verknüpft. Weisen Sie in der Todos-Ansicht über 🏷️ dieses Topic zu.</p>` :
+          themeDetailTodos.length === 0 ? `<p class="theme-empty-items">Noch keine Todos verknüpft.</p>` :
           themeDetailTodos.map(t => renderThemeTodoRow(t)).join('')}
       </div>
     </div>`;
@@ -5808,11 +5831,12 @@ function renderThemeTodoRow(t) {
       <div class="knowledge-card-head">
         <div style="display:flex;align-items:center;gap:.5rem;min-width:0;flex:1">
           <span style="flex-shrink:0">${t.done ? '✅' : '🔲'}</span>
-          <span class="knowledge-card-title" onclick="selectView('__todos__')"
+          <span class="knowledge-card-title" onclick="openTodoModal('${t.id}')"
             style="${t.done ? 'color:var(--text-muted);text-decoration:line-through;text-decoration-thickness:1.5px' : ''}">${escHtml(t.title)}</span>
         </div>
         <div style="display:flex;align-items:center;gap:.375rem;flex-shrink:0">
           ${t.originThemeTitle ? `<span class="origin-badge" title="Geerbt von Unter-Topic">${escHtml(t.originThemeTitle)}</span>` : ''}
+          <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteTodo('${t.id}','${escJsAttr(t.title)}')" title="Löschen">🗑️</button>
         </div>
       </div>
       ${t.description ? `<div class="knowledge-card-body">${displayHtml(t.description)}</div>` : ''}
@@ -6121,6 +6145,9 @@ function closeKnowledgeModal() {
 
 // ── Quick-Capture: Wissen ohne Umweg über den vollen Editor ─
 let kqContextThemeId = null;
+// Beim Anlegen eines Todos aus einem Topic-Kontext: automatische Verknüpfung
+// nach dem Speichern (analog kqContextThemeId bei Wissen).
+let todoModalPresetThemeId = null;
 
 function openQuickKnowledge(presetThemeId) {
   kqContextThemeId = presetThemeId || (selectedThemeId || null);
