@@ -79,7 +79,7 @@ struct DigestView: View {
             Text("Zusammenfassung").font(.subheadline).fontWeight(.semibold)
             Text(c.summary).font(.callout)
         }
-        .padding(12).background(Color(hex: "#f8fafc"))
+        .padding(12).background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: 8))
 
         if let h = c.highlights, !h.isEmpty {
@@ -92,7 +92,7 @@ struct DigestView: View {
                     }
                 }
             }
-            .padding(12).background(Color(hex: "#f8fafc"))
+            .padding(12).background(DS.cardBg)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         if let f = c.focus_next, !f.isEmpty {
@@ -105,7 +105,7 @@ struct DigestView: View {
                     }
                 }
             }
-            .padding(12).background(Color(hex: "#f8fafc"))
+            .padding(12).background(DS.cardBg)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }

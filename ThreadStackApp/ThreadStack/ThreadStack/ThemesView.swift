@@ -20,7 +20,7 @@ private func themeNodes(_ state: AppState, parentId: String?) -> [ThemeNode] {
 // Beide Karten teilen sich Icon-links / Titel+Vorschau / Herkunfts-Badge-rechts, analog zum Web-Redesign.
 
 // Farbe für Karten vererbter Einträge (aus Unter-Topics) — gedämpft statt Weiß.
-let themeInheritedRowBg = Color(hex: "#F7F7F9")
+let themeInheritedRowBg = DS.cardBg
 
 func themeOriginBadge(_ topicName: String) -> some View {
     HStack(spacing: 4) {
@@ -469,7 +469,7 @@ struct KnowledgeDetailView: View {
                     }
                 }
                 .padding()
-                .background(.white)
+                .background(DS.cardBg)
                 .clipShape(RoundedRectangle(cornerRadius: DS.cardRadius))
                 .shadow(color: DS.cardShadow, radius: 2, y: 1)
                 .padding(.bottom, 14)

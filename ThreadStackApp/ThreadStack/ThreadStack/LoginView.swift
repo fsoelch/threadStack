@@ -97,7 +97,7 @@ struct LoginView: View {
                 .padding(.bottom, 20)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(hex: "#f2f2f7"))
+        .background(DS.groupedBg)
         .sheet(isPresented: $showSettings) { SettingsURLView() }
     }
 

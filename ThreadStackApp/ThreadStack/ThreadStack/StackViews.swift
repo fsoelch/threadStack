@@ -170,7 +170,7 @@ struct StackPanelView: View {
         .padding(8)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isActive ? DS.accent.opacity(0.10) : Color(hex: "#f8fafc"))
+                .fill(isActive ? DS.accent.opacity(0.10) : DS.cardBg)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)

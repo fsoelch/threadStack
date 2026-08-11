@@ -49,7 +49,7 @@ struct LockScreenView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(hex: "#f2f2f7"))
+        .background(DS.groupedBg)
         .task {
             // Genau einmal beim Erscheinen automatisch Face ID auslösen
             if !didAutoAttempt {

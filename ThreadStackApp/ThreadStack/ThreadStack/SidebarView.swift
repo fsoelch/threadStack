@@ -208,7 +208,7 @@ struct SidebarView: View {
             }
             .padding(12)
             .frame(width: 92, alignment: .leading)
-            .background(.white)
+            .background(DS.cardBg)
             .clipShape(RoundedRectangle(cornerRadius: DS.cardRadius))
             .shadow(color: DS.cardShadow, radius: 1, x: 0, y: 1)
         }
@@ -346,7 +346,7 @@ struct MeetingCardView: View {
             }
         }
         .padding(12)
-        .background(.white)
+        .background(DS.cardBg)
         .clipShape(RoundedRectangle(cornerRadius: DS.cardRadius))
         .overlay(
             RoundedRectangle(cornerRadius: DS.cardRadius)

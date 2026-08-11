@@ -11,7 +11,17 @@ enum DS {
     static let purple       = Color(hex: "#9B5FE8")
     static let pink         = Color(hex: "#E8479B")
     static let cyan         = Color(hex: "#06B6D4")
-    static let groupedBg    = Color(hex: "#F2F2F7")
+    // Adaptive Hintergruende (hell/dunkel), statt frueher hart auf hellgrau
+    // kodiert (#F2F2F7) — das liess den Hintergrund im Dark Mode faelschlich
+    // hell, waehrend Text ueber .primary/.secondary korrekt auf hell umschaltete
+    // und dadurch praktisch unsichtbar wurde.
+    #if os(iOS)
+    static let groupedBg    = Color(uiColor: .systemGroupedBackground)
+    static let cardBg       = Color(uiColor: .secondarySystemGroupedBackground)
+    #else
+    static let groupedBg    = Color(nsColor: .windowBackgroundColor)
+    static let cardBg       = Color(nsColor: .controlBackgroundColor)
+    #endif
     static let cardRadius: CGFloat = 16
     static let cardShadow   = Color.black.opacity(0.05)
 }
