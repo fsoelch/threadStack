@@ -198,6 +198,8 @@ struct ThemeDetailScreen: View {
     @State private var loading = false
     @State private var error: String?
     @State private var showNewKnowledge = false
+    @State private var showNewTodo = false
+    @State private var editingTodo: TodoItem?
 
     private var theme: Theme? { state.themes.first(where: { $0.id == themeId }) }
     private var path: [Theme] { state.themeAncestorsPath(themeId) }
@@ -299,11 +301,16 @@ struct ThemeDetailScreen: View {
                 if loading {
                     ProgressView()
                 } else if todosScoped.isEmpty {
-                    Text("Keine Todos verknüpft. Weisen Sie in der Todos-Ansicht über 🏷️ dieses Topic zu.")
-                        .foregroundStyle(.secondary).font(.footnote)
+                    Text("Noch keine Todos verknüpft.").foregroundStyle(.secondary).font(.footnote)
                 } else {
-                    ForEach(todosScoped) { t in ThemeTodoRowView(todo: t) }
+                    ForEach(todosScoped) { t in
+                        Button { editingTodo = t } label: { ThemeTodoRowView(todo: t) }
+                            .buttonStyle(.plain)
+                    }
                 }
+                Button { showNewTodo = true } label: {
+                    Label("Todo hinzufügen", systemImage: "plus.circle").foregroundStyle(.secondary)
+                }.buttonStyle(.plain)
             } header: { Text("✅ Todos").scaledFont(.caption).fontWeight(.semibold) }
         }
         #if os(macOS)
@@ -328,6 +335,12 @@ struct ThemeDetailScreen: View {
             KnowledgeEditorView(mode: .create(presetThemeId: theme.id)) { _ in
                 Task { await load() }
             }
+        }
+        .sheet(isPresented: $showNewTodo) {
+            TodoFormView(presetThemeId: theme.id, onSaved: { Task { await load() } })
+        }
+        .sheet(item: $editingTodo) { t in
+            TodoFormView(todo: t, onSaved: { Task { await load() } })
         }
         .confirmationDialog(
             "Topic mit Unter-Topics löschen",

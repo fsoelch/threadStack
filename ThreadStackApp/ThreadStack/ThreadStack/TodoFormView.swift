@@ -2,6 +2,14 @@ import SwiftUI
 
 struct TodoFormView: View {
     var todo: TodoItem? = nil
+    /// Nur im Anlegen-Modus wirksam: verknüpft das neu erstellte Todo nach
+    /// erfolgreichem Speichern automatisch mit diesem Topic (analog zum
+    /// presetThemeId-Muster von KnowledgeEditorView).
+    var presetThemeId: String? = nil
+    /// Wird nach erfolgreichem Anlegen/Bearbeiten aufgerufen, bevor das Sheet
+    /// schliesst — Aufrufer nutzen das zum gezielten Nachladen (z. B. der
+    /// Themen-gescopten Todo-Liste in ThemeDetailScreen).
+    var onSaved: (() -> Void)? = nil
     @EnvironmentObject var state: AppState
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
@@ -137,7 +145,11 @@ struct TodoFormView: View {
                                                snoozedUntil: snooze, dueDate: due,
                                                isPrivate: isPrivate)
                     NotificationScheduler.shared.reschedule(id: "todo-\(created.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate)
+                    if let presetThemeId {
+                        try? await state.addThemeLink(themeId: presetThemeId, refType: "todo", refId: created.id)
+                    }
                 }
+                onSaved?()
                 dismiss()
             } catch {
                 self.error = error.localizedDescription
