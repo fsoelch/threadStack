@@ -9,7 +9,7 @@ struct ThemeNode: Identifiable {
 }
 
 @MainActor
-private func themeNodes(_ state: AppState, parentId: String?) -> [ThemeNode] {
+func themeNodes(_ state: AppState, parentId: String?) -> [ThemeNode] {
     state.themeChildren(of: parentId).map { t in
         let kids = themeNodes(state, parentId: t.id)
         return ThemeNode(theme: t, children: kids.isEmpty ? nil : kids)
