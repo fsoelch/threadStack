@@ -5726,6 +5726,16 @@ function renderThemeDetailPanel() {
     }
     return null;
   }).filter(Boolean);
+  const todoThemeMap = buildThemeMap();
+  // themeDetailTodos ist ein separat geladener Snapshot (GET /themes/:id/todos);
+  // Aktionen wie Erledigen/Wiedereröffnen/Wecken/Verschieben aendern nur das
+  // globale todos-Array. Vor dem Rendern die bereits geladenen Eintraege mit
+  // dem aktuellen globalen Stand abgleichen, damit z.B. "Erledigt" sofort
+  // sichtbar wird, ohne auf den naechsten loadThemeDetail()-Roundtrip zu warten.
+  themeDetailTodos = themeDetailTodos.map(t => {
+    const g = todos.find(x => x.id === t.id);
+    return g ? { ...t, ...g } : t;
+  });
 
   return `
     <div class="theme-detail-panel">
@@ -5799,7 +5809,7 @@ function renderThemeDetailPanel() {
         </div>
         ${themeDetailLoading ? `<p class="theme-empty-items">Lädt …</p>` :
           themeDetailTodos.length === 0 ? `<p class="theme-empty-items">Noch keine Todos verknüpft.</p>` :
-          themeDetailTodos.map(t => renderThemeTodoRow(t)).join('')}
+          themeDetailTodos.map(t => renderPersonalTodoCard(t, t.done, todoThemeMap)).join('')}
       </div>
     </div>`;
 }
@@ -5822,24 +5832,6 @@ function renderKnowledgeCard(k) {
       </div>
       ${paths.length ? `<div class="knowledge-card-path">${paths.map(p => `🏷️ ${escHtml(p)}`).join('&nbsp;&nbsp;·&nbsp;&nbsp;')}</div>` : ''}
       ${k.content ? `<div class="knowledge-card-body">${displayHtml(k.content)}</div>` : ''}
-    </div>`;
-}
-
-function renderThemeTodoRow(t) {
-  return `
-    <div class="knowledge-card${t.originThemeTitle ? ' knowledge-card--inherited' : ''}">
-      <div class="knowledge-card-head">
-        <div style="display:flex;align-items:center;gap:.5rem;min-width:0;flex:1">
-          <span style="flex-shrink:0">${t.done ? '✅' : '🔲'}</span>
-          <span class="knowledge-card-title" onclick="openTodoModal('${t.id}')"
-            style="${t.done ? 'color:var(--text-muted);text-decoration:line-through;text-decoration-thickness:1.5px' : ''}">${escHtml(t.title)}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:.375rem;flex-shrink:0">
-          ${t.originThemeTitle ? `<span class="origin-badge" title="Geerbt von Unter-Topic">${escHtml(t.originThemeTitle)}</span>` : ''}
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteTodo('${t.id}','${escJsAttr(t.title)}')" title="Löschen">🗑️</button>
-        </div>
-      </div>
-      ${t.description ? `<div class="knowledge-card-body">${displayHtml(t.description)}</div>` : ''}
     </div>`;
 }
 
@@ -6713,7 +6705,8 @@ async function doAddThemeLink(themeId) {
     });
     const th = themes.find(x => x.id === themeId);
     if (th) th.links.push(link);
-    renderThemeLinkList(); render();
+    renderThemeLinkList();
+    await loadThemeDetail(); render();
     toast('Topic zugewiesen');
   } catch(e) { toast(e.message, 'error'); }
 }
@@ -6723,7 +6716,8 @@ async function doRemoveThemeLink(linkId, themeId) {
     await api('DELETE', `/themes/${themeId}/links/${linkId}`);
     const th = themes.find(x => x.id === themeId);
     if (th) th.links = th.links.filter(l => l.id !== linkId);
-    renderThemeLinkList(); render();
+    renderThemeLinkList();
+    await loadThemeDetail(); render();
     toast('Verknüpfung entfernt');
   } catch(e) { toast(e.message, 'error'); }
 }
