@@ -49,6 +49,25 @@ function collectExportData(db, userId, { scope, includeGraph, openOnly }) {
   return result;
 }
 
+// Security-Review-Fund: der Export ist durch die Formatierungstreue (Bild-
+// Dekodierung, Tabellen-Matrix, docx-Packer) deutlich rechen-/speicher-
+// intensiver geworden. Ohne Begrenzung koennten wenige parallele/serielle
+// Aufrufe eines einzelnen angemeldeten Nutzers den Single-Process-Server
+// fuer alle Nutzer auslasten. Rein In-Memory, analog zum bestehenden
+// Link-Fetch-Rate-Limit in server.js.
+const exportInProgress = new Set();
+const EXPORT_WINDOW_MS = 60 * 1000;
+const EXPORT_MAX_PER_WINDOW = 5;
+const exportTimestamps = new Map(); // uid -> number[]
+function checkExportRate(uid) {
+  const now = Date.now();
+  const arr = (exportTimestamps.get(uid) || []).filter(t => now - t < EXPORT_WINDOW_MS);
+  if (arr.length >= EXPORT_MAX_PER_WINDOW) { exportTimestamps.set(uid, arr); return false; }
+  arr.push(now);
+  exportTimestamps.set(uid, arr);
+  return true;
+}
+
 module.exports = function exportRoutes(app, ctx) {
   const { db, requireAuth, fail, apiBase } = ctx;
 
@@ -61,6 +80,14 @@ module.exports = function exportRoutes(app, ctx) {
 
     if (!VALID_SCOPES.has(scope))   return fail(res, 400, 'VALIDATION_FAILED', 'Ungültiger Scope');
     if (!VALID_FORMATS.has(format)) return fail(res, 400, 'VALIDATION_FAILED', 'Ungültiges Format');
+
+    if (exportInProgress.has(userId)) {
+      return fail(res, 409, 'EXPORT_IN_PROGRESS', 'Ein Export läuft bereits.');
+    }
+    if (!checkExportRate(userId)) {
+      return fail(res, 429, 'RATE_LIMITED', 'Zu viele Exporte. Bitte kurz warten.');
+    }
+    exportInProgress.add(userId);
 
     try {
       const data = collectExportData(db, userId, { scope, includeGraph, openOnly });
@@ -83,6 +110,8 @@ module.exports = function exportRoutes(app, ctx) {
       // und damit Nutzerinhalte mitfuehren.
       console.error('[export] Fehler:', e && e.message, e && e.stack);
       return fail(res, 500, 'EXPORT_FAILED', 'Export fehlgeschlagen');
+    } finally {
+      exportInProgress.delete(userId);
     }
   });
 };
