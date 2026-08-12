@@ -27,9 +27,52 @@ test('sanitizeKnowledgeHtml: Allowlist-Sanitizing (Unit)', async (t) => {
     assert.ok(out.includes('Rest'));
   });
 
-  await t.test('style-Attribut wird nicht durchgelassen (nicht in Allowlist)', () => {
+  // Arbeitspaket 7 (Farb-Persistenz): `style` ist seit Paket 7 NICHT mehr
+  // grundsaetzlich verboten, sondern fuer eine eng begrenzte Menge an Tags
+  // NUR fuer die Deklaration `color` (Hex/rgb) erlaubt - siehe lib/colors.js
+  // sanitizeStyleAttribute()/allowedStyles in diesem Modul. Ein style-Attribut
+  // OHNE gueltige `color`-Deklaration (z.B. nur `background:url(...)`) wird
+  // weiterhin vollstaendig entfernt, siehe Test unten.
+  await t.test('style-Attribut ohne gueltige color-Deklaration wird komplett entfernt', () => {
     const out = sanitizeKnowledgeHtml('<p style="background:url(javascript:alert(1))">x</p>');
     assert.ok(!out.includes('style='));
+    assert.ok(!out.toLowerCase().includes('javascript'));
+    assert.ok(out.includes('x'));
+  });
+
+  await t.test('style="color:#hex" wird fuer erlaubte Tags durchgelassen', () => {
+    const out = sanitizeKnowledgeHtml('<p style="color:#dc2626">x</p>');
+    assert.ok(out.includes('style="color:#dc2626"'));
+  });
+
+  await t.test('style mit color + verbotener Zusatzdeklaration: nur color bleibt', () => {
+    const out = sanitizeKnowledgeHtml('<p style="color:#dc2626;background-color:red">x</p>');
+    assert.ok(out.includes('color:#dc2626'));
+    assert.ok(!out.toLowerCase().includes('background-color'));
+  });
+
+  await t.test('benannte CSS-Farben (kein Hex/rgb) werden verworfen', () => {
+    const out = sanitizeKnowledgeHtml('<p style="color:red">x</p>');
+    assert.ok(!out.includes('color:red'));
+    assert.ok(!/style\s*=/.test(out) || !/color/i.test(out));
+    assert.ok(out.includes('x'));
+  });
+
+  await t.test('style="expression(alert(1))" wird vollstaendig entfernt', () => {
+    const out = sanitizeKnowledgeHtml('<p style="expression(alert(1))">x</p>');
+    assert.ok(!out.includes('style='));
+    assert.ok(!out.toLowerCase().includes('expression'));
+  });
+
+  await t.test('style="position:fixed;top:0" wird vollstaendig entfernt', () => {
+    const out = sanitizeKnowledgeHtml('<p style="position:fixed;top:0">x</p>');
+    assert.ok(!out.includes('style='));
+    assert.ok(!out.toLowerCase().includes('position'));
+  });
+
+  await t.test('Tags ohne style in STYLE_ALLOWED_TAGS behalten kein style-Attribut', () => {
+    const out = sanitizeKnowledgeHtml('<ul style="color:#dc2626"><li>x</li></ul>');
+    assert.ok(!out.includes('<ul style'));
   });
 
   await t.test('iframe/object/embed/form werden inkl. Inhalt entfernt', () => {

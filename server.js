@@ -7,6 +7,7 @@ const crypto   = require('crypto');
 const path     = require('path');
 const fs       = require('fs');
 const { sanitizeKnowledgeHtml, htmlToText, MAX_KNOWLEDGE_CONTENT } = require('./lib/sanitize');
+const { normalizeInlineColorsInHtml } = require('./lib/colors');
 const { knowledgeThemeIds, knowledgeRelatedIds } = require('./lib/knowledge-queries');
 const { safeFetchPage, SafeFetchError } = require('./lib/safe-fetch');
 const { extractReadableText, ExtractError } = require('./lib/html-extract');
@@ -595,7 +596,7 @@ function fail(res, status, code, msg, extra) {
 
 function stripUnsafeHtml(s) {
   if (!s || typeof s !== 'string') return s;
-  return s
+  const cleaned = s
     .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
     .replace(/<iframe\b[\s\S]*?(?:<\/iframe\s*>|$)/gi, '')
     .replace(/<object\b[\s\S]*?(?:<\/object\s*>|$)/gi, '')
@@ -606,6 +607,12 @@ function stripUnsafeHtml(s) {
     .replace(/\bon\w{1,30}\s*=/gi, 'data-x=')
     .replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript|data)\s*:/gi, '$1="#"')
     .replace(/expression\s*\(/gi, '(');
+  // Arbeitspaket 7 (Farb-Persistenz): dieselbe Farb-Allowlist wie beim
+  // Wissensmanagement (sanitizeKnowledgeHtml) auch fuer Todos/Themes -
+  // wandelt Legacy-<font color> in <span style="color:...">, verwirft dabei
+  // jede Nicht-Farb-Deklaration im style-Attribut. Betrifft ausschliesslich
+  // die Farbmenge, keine sonstige Lockerung dieser Blacklist.
+  return normalizeInlineColorsInHtml(cleaned);
 }
 
 // ── Middleware ───────────────────────────────────────────────

@@ -3821,12 +3821,15 @@ function downscaleImageToDataUrl(file, maxWidth = 1200, quality = 0.8) {
 let _rtColorPickerEl = null;
 function _rtShowColorPicker(anchor) {
   if (_rtColorPickerEl) { _rtColorPickerEl.remove(); _rtColorPickerEl = null; return; }
+  // Kanonische Quelle dieser Hex-Werte: lib/colors.js PALETTE. index.html
+  // laeuft im Browser (kein require von Server-Code), deshalb hier dupliziert -
+  // bei Aenderungen an der Palette IMMER beide Stellen synchron halten.
   const SWATCHES = [
     { color: null,      bg:'#fff',     border:'1.5px solid #ccc', text:'✕', label:'Farbe entfernen' },
     { color: '#dc2626', bg:'#dc2626',  label:'Rot' },
-    { color: '#ea580c', bg:'#ea580c',  label:'Orange' },
-    { color: '#ca8a04', bg:'#ca8a04',  label:'Gelb' },
-    { color: '#16a34a', bg:'#16a34a',  label:'Grün' },
+    { color: '#c2410c', bg:'#c2410c',  label:'Orange' },
+    { color: '#a16207', bg:'#a16207',  label:'Gelb' },
+    { color: '#15803d', bg:'#15803d',  label:'Grün' },
     { color: '#2563eb', bg:'#2563eb',  label:'Blau' },
     { color: '#7c3aed', bg:'#7c3aed',  label:'Violett' },
     { color: '#6b7280', bg:'#6b7280',  label:'Grau' },
@@ -3842,6 +3845,10 @@ function _rtShowColorPicker(anchor) {
     sw.onmousedown = e => e.preventDefault();
     sw.onclick = () => {
       _restoreSelection();
+      // Erzeugt <span style="color:..."> statt <font color="...">, damit die
+      // Farbe den Allowlist-Sanitizer (lib/sanitize.js) beim Speichern
+      // uebersteht - siehe Arbeitspaket 7.
+      document.execCommand('styleWithCSS', false, true);
       document.execCommand('foreColor', false, color || '#1A1918');
       pop.remove(); _rtColorPickerEl = null;
     };
