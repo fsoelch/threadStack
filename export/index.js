@@ -78,7 +78,10 @@ module.exports = function exportRoutes(app, ctx) {
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       return res.send(buffer);
     } catch (e) {
-      console.error('[export] Fehler:', e);
+      // Nur Message + Stacktrace loggen (Code-Pfade), nie das rohe Error-
+      // Objekt: bei DB-Fehlern (better-sqlite3) kann dieses Query-Parameter
+      // und damit Nutzerinhalte mitfuehren.
+      console.error('[export] Fehler:', e && e.message, e && e.stack);
       return fail(res, 500, 'EXPORT_FAILED', 'Export fehlgeschlagen');
     }
   });
