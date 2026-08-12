@@ -606,14 +606,21 @@ function stripUnsafeHtml(s) {
   // herstellen. Reihenfolge spiegelt jetzt den bereits korrekten
   // Allowlist-Pfad in lib/sanitize.js (Vorpass vor sanitizeHtml).
   const normalized = normalizeInlineColorsInHtml(s);
+  // Security-Nachbesserung (2. Re-Review): Tag-Entfernungen ersetzen durch
+  // ' ' statt '' -- ein ersatzloses '' kann Zeichen davor/danach im String
+  // wieder zu einem neuen Tag/Token verschmelzen lassen (z.B. "<scr" +
+  // "ipt>" -> "<script>" wenn ein dazwischenliegendes <iframe> entfernt
+  // wird, oder "sty" + "le=" -> "style=" wenn ein dazwischenliegendes
+  // <script> entfernt wird). Ein Leerzeichen haelt die Tokens getrennt,
+  // ohne sichtbaren Text zu veraendern.
   return normalized
-    .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
-    .replace(/<iframe\b[\s\S]*?(?:<\/iframe\s*>|$)/gi, '')
-    .replace(/<object\b[\s\S]*?(?:<\/object\s*>|$)/gi, '')
-    .replace(/<embed\b[^>]*>/gi, '')
-    .replace(/<base\b[^>]*>/gi, '')
-    .replace(/<meta\b[^>]*>/gi, '')
-    .replace(/<form\b[\s\S]*?(?:<\/form\s*>|$)/gi, '')
+    .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, ' ')
+    .replace(/<iframe\b[\s\S]*?(?:<\/iframe\s*>|$)/gi, ' ')
+    .replace(/<object\b[\s\S]*?(?:<\/object\s*>|$)/gi, ' ')
+    .replace(/<embed\b[^>]*>/gi, ' ')
+    .replace(/<base\b[^>]*>/gi, ' ')
+    .replace(/<meta\b[^>]*>/gi, ' ')
+    .replace(/<form\b[\s\S]*?(?:<\/form\s*>|$)/gi, ' ')
     .replace(/\bon\w{1,30}\s*=/gi, 'data-x=')
     .replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript|data)\s*:/gi, '$1="#"')
     .replace(/expression\s*\(/gi, '(');
