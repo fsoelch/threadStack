@@ -28,6 +28,16 @@ const { COLOR, PAGE } = require('../docxTheme');
 const MIN_SPAN = 1;
 const MAX_SPAN = 64;
 const BORDER_SIZE = 4;
+// Security-Nachbesserung (Security Review): MAX_SPAN klemmt nur den
+// Einzelwert eines colspan/rowspan-Attributs, nicht die SUMME ueber eine
+// Zeile. Ohne Obergrenze fuer die Gesamt-Spaltenzahl (und das daraus
+// abgeleitete Zellen-Budget ueber alle Zeilen) kann eine wenige KB grosse,
+// bereits sanitisierte Tabelle (z.B. viele <td colspan="64">-Zellen) den
+// Node-Prozess mit "JavaScript heap out of memory" abstuerzen lassen, da
+// buildRows() jede Zeile bis zur vollen Spaltenzahl auffuellt (quadratischer
+// Aufwand). MAX_COLUMNS/MAX_CELL_BUDGET begrenzen das hart.
+const MAX_COLUMNS = 64;
+const MAX_CELL_BUDGET = 20000;
 
 /**
  * Klemmt einen colspan/rowspan-Rohwert auf sinnvolle Grenzen (1..64).
@@ -328,8 +338,19 @@ function buildTableBlocks(node, ctx) {
       cells: extractCells(r.node, ctx.warn),
     }));
 
-    const columnCount = computeColumnCount(rowsInfo);
+    let columnCount = computeColumnCount(rowsInfo);
     if (columnCount <= 0) return [];
+    if (columnCount > MAX_COLUMNS) {
+      columnCount = MAX_COLUMNS;
+      ctx.warn('TABLE_MALFORMED');
+    }
+    if (columnCount * rowsInfo.length > MAX_CELL_BUDGET) {
+      // Gesamt-Zellenbudget ueberschritten (z.B. sehr viele Zeilen bei
+      // gleichzeitig hoher Spaltenzahl) — Tabelle wird nicht gerendert,
+      // Export bricht dafuer nicht mit Speicher-Erschoepfung ab.
+      ctx.warn('TABLE_MALFORMED');
+      return [];
+    }
 
     const tableRows = buildRows(rowsInfo, columnCount, ctx);
     if (!tableRows.length) return [];

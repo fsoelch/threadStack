@@ -596,7 +596,17 @@ function fail(res, status, code, msg, extra) {
 
 function stripUnsafeHtml(s) {
   if (!s || typeof s !== 'string') return s;
-  const cleaned = s
+  // Arbeitspaket 7 (Farb-Persistenz), Security-Nachbesserung: die
+  // Farb-Normalisierung MUSS vor der Blacklist laufen, nicht danach.
+  // normalizeInlineColorsInHtml entfernt <font>-Tags mit nicht
+  // normalisierbarer Farbe und kann dadurch zuvor durch ein eingeschobenes
+  // "<...>" zerrissene Payload-Tokens (z.B. "on<font ...>error=") wieder
+  // zusammenwachsen lassen. Liefe das NACH der Blacklist, wuerde genau das
+  // die bereits entschaerften Tokens (script/onerror/javascript:) wieder
+  // herstellen. Reihenfolge spiegelt jetzt den bereits korrekten
+  // Allowlist-Pfad in lib/sanitize.js (Vorpass vor sanitizeHtml).
+  const normalized = normalizeInlineColorsInHtml(s);
+  return normalized
     .replace(/<script\b[\s\S]*?(?:<\/script\s*>|$)/gi, '')
     .replace(/<iframe\b[\s\S]*?(?:<\/iframe\s*>|$)/gi, '')
     .replace(/<object\b[\s\S]*?(?:<\/object\s*>|$)/gi, '')
@@ -607,12 +617,6 @@ function stripUnsafeHtml(s) {
     .replace(/\bon\w{1,30}\s*=/gi, 'data-x=')
     .replace(/(href|src|action)\s*=\s*["']?\s*(?:javascript|vbscript|data)\s*:/gi, '$1="#"')
     .replace(/expression\s*\(/gi, '(');
-  // Arbeitspaket 7 (Farb-Persistenz): dieselbe Farb-Allowlist wie beim
-  // Wissensmanagement (sanitizeKnowledgeHtml) auch fuer Todos/Themes -
-  // wandelt Legacy-<font color> in <span style="color:...">, verwirft dabei
-  // jede Nicht-Farb-Deklaration im style-Attribut. Betrifft ausschliesslich
-  // die Farbmenge, keine sonstige Lockerung dieser Blacklist.
-  return normalizeInlineColorsInHtml(cleaned);
 }
 
 // ── Middleware ───────────────────────────────────────────────
