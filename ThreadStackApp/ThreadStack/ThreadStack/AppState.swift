@@ -98,12 +98,13 @@ final class AppState: ObservableObject {
     @Published var serverURL: String {
         didSet { UserDefaults.standard.set(serverURL, forKey: "serverURL") }
     }
+    static let defaultServerURL = "https://soelch.com/threadStack"
 
     private let session: URLSession
     private let decoder = JSONDecoder()
 
     init() {
-        serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
+        serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? Self.defaultServerURL
         let cfg = URLSessionConfiguration.default
         cfg.httpCookieStorage = .shared
         cfg.httpShouldSetCookies = true

@@ -8,6 +8,7 @@ struct LockScreenView: View {
     @State private var attempting = false
     @State private var didAutoAttempt = false
     @State private var showForgetConfirm = false
+    @State private var showSettings = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -41,6 +42,14 @@ struct LockScreenView: View {
                 .controlSize(.large)
             }
 
+            Button("Server-URL ändern") { showSettings = true }
+                .font(.caption)
+
+            Text(state.serverURL)
+                .font(.caption2).foregroundStyle(.secondary)
+                .lineLimit(1).truncationMode(.middle)
+                .padding(.horizontal, 32)
+
             Button("Anmeldedaten vergessen", role: .destructive) {
                 showForgetConfirm = true
             }
@@ -57,6 +66,7 @@ struct LockScreenView: View {
                 await unlock()
             }
         }
+        .sheet(isPresented: $showSettings) { SettingsURLView() }
         .alert("Anmeldedaten verwerfen?", isPresented: $showForgetConfirm) {
             Button("Verwerfen", role: .destructive) {
                 state.forgetStoredCredentials()
