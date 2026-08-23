@@ -1691,9 +1691,53 @@ body.ai-disabled .ai-action { display: none !important; }
   border:1px solid var(--border-md); border-radius:3px;
   padding:.05rem .3rem; font-size:.6875rem; font-family:var(--font-mono);
 }
+
+/* ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W1) ──────────
+   Eigene Klassen mit "ts-progress-*"-Präfix, um Kollisionen mit den
+   "progress-*"-Klassen aus public/progress.css (Arbeitspaket W2) zu
+   vermeiden — jenes Modul besitzt die Klassen ohne "ts-"-Präfix. */
+.ts-progress-panel-inner { width:760px; padding:0; display:flex; flex-direction:column; }
+.ts-progress-panel-sticky { position:sticky; top:0; z-index:2; background:#fff; border-radius:16px 16px 0 0; }
+.ts-progress-panel-goal-row {
+  display:flex; align-items:flex-start; gap:.75rem; justify-content:space-between;
+  padding:0 22px 14px; border-bottom:1px solid var(--border);
+}
+.ts-progress-panel-goal-text {
+  flex:1; min-width:0; font-size:.8125rem; color:var(--text); white-space:pre-wrap; word-break:break-word; line-height:1.45;
+}
+.ts-progress-panel-goal-text.is-empty { color:var(--text-muted); font-style:italic; }
+.ts-progress-panel-goal-edit-btn { flex-shrink:0; }
+.ts-progress-panel-reentry-mount:not(:empty) { padding:14px 22px 0; border-bottom:1px solid var(--border); }
+.ts-progress-panel-body { padding:1.375rem 1.5rem; min-height:140px; }
+.ts-progress-entry-context {
+  background:var(--card2); border:1px solid var(--border); border-radius:8px;
+  padding:.5rem .75rem; margin-bottom:.75rem; font-size:.75rem; color:var(--text-muted);
+}
+.ts-progress-entry-context strong { color:var(--text); }
+.ts-progress-entry-context .ts-progress-entry-context-body { margin-top:.25rem; max-height:5.5em; overflow:hidden; }
+.ts-progress-char-hint { font-size:.6875rem; color:var(--text-light); text-align:right; margin-top:.25rem; }
+.ts-progress-panel-btn { }
+.ts-progress-retry-toast { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
+.ts-progress-retry-toast button {
+  background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.45); color:inherit;
+  border-radius:6px; padding:.15rem .55rem; font-size:.75rem; cursor:pointer; font-family:inherit;
+}
+.ts-progress-retry-toast button:hover { background:rgba(255,255,255,.3); }
+.todos-toolbar {
+  display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
+  padding:.625rem .875rem; margin-bottom:.875rem;
+  background:var(--card2); border:1px solid var(--border); border-radius:10px;
+}
+.todos-toolbar .todos-toolbar-field { display:flex; align-items:center; gap:.45rem; }
+.todos-toolbar label { font-size:.75rem; color:var(--text-muted); white-space:nowrap; }
+.todos-toolbar select.form-control { width:auto; min-width:190px; padding:.3rem .5rem; font-size:.8125rem; }
+.todos-toolbar .toggle-row { margin:0; gap:.4rem; }
+.ts-progress-snooze-field { margin-top:.75rem; }
 </style>
 <link rel="stylesheet" href="/assets/graph.css">
 <script defer src="/assets/graph.js"></script>
+<link rel="stylesheet" href="/assets/progress.css">
+<script defer src="/assets/progress.js"></script>
 </head>
 <body>
 
@@ -1905,6 +1949,13 @@ body.ai-disabled .ai-action { display: none !important; }
         </div>
         <input type="time" class="form-control" id="t-snooze-time" style="display:none;margin-top:.5rem">
         <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
+        <div class="ts-progress-snooze-field">
+          <label class="form-label">Wo stehe ich gerade? <span class="opt">(optional, wird beim Schlafenlegen als Zwischenstand gespeichert)</span></label>
+          <div class="rt-wrapper">
+            <div class="rt-toolbar" id="t-progress-snooze-note-tb"></div>
+            <div class="rt-content" id="t-progress-snooze-note" contenteditable="true" data-placeholder="Kurzer Stand, bevor du das Thema schlafen legst …"></div>
+          </div>
+        </div>
       </div>
       <div id="topic-attach-slot"></div>
       <div id="t-result-section" style="display:none">
@@ -2106,6 +2157,13 @@ body.ai-disabled .ai-action { display: none !important; }
         </div>
         <input type="time" class="form-control" id="todo-snooze-time" style="display:none;margin-top:.5rem">
         <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
+        <div class="ts-progress-snooze-field">
+          <label class="form-label">Wo stehe ich gerade? <span class="opt">(optional, wird beim Schlafenlegen als Zwischenstand gespeichert)</span></label>
+          <div class="rt-wrapper">
+            <div class="rt-toolbar" id="todo-progress-snooze-note-tb"></div>
+            <div class="rt-content" id="todo-progress-snooze-note" contenteditable="true" data-placeholder="Kurzer Stand, bevor du das Todo schlafen legst …"></div>
+          </div>
+        </div>
       </div>
       <div id="todo-attach-slot"></div>
       <div id="todo-done-row" style="display:none">
@@ -2727,7 +2785,7 @@ body.ai-disabled .ai-action { display: none !important; }
       </div>
       <div class="form-group" id="sp-target-pick-wrap" style="display:none">
         <label class="form-label">Topic oder Todo wählen</label>
-        <select class="form-control" id="sp-target-pick"></select>
+        <select class="form-control" id="sp-target-pick" onchange="onStackPushTargetPick()"></select>
       </div>
       <div class="form-group">
         <label class="form-label">Was ist der nächste Schritt? <span style="color:var(--red)">*</span></label>
@@ -2798,6 +2856,14 @@ body.ai-disabled .ai-action { display: none !important; }
       <div class="form-group" id="pop-snooze-fields" style="display:none">
         <label class="form-label">Aufwachen am</label>
         <input type="datetime-local" class="form-control" id="pop-snooze-until">
+      </div>
+
+      <div class="form-group" id="pop-progress-fields" style="display:none">
+        <label class="form-label">Wo stehe ich gerade? <span class="opt">(optional, wird als Zwischenstand gespeichert)</span></label>
+        <div class="rt-wrapper">
+          <div class="rt-toolbar" id="pop-progress-note-tb"></div>
+          <div class="rt-content" id="pop-progress-note" contenteditable="true" data-placeholder="Kurzer Stand für den nächsten Wiedereinstieg …"></div>
+        </div>
       </div>
 
       <div id="pop-error" class="form-error" style="display:none"></div>
@@ -2909,6 +2975,82 @@ body.ai-disabled .ai-action { display: none !important; }
   </div>
 </div>
 
+<!-- ── Fortschrittsverlauf: Verlaufs-Panel (Arbeitspaket W1) ─────── -->
+<div id="progress-panel-modal" class="modal-overlay" style="display:none" onclick="progressPanelOverlayClick(event)">
+  <div class="modal modal-wide ts-progress-panel-inner" onclick="event.stopPropagation()">
+    <div class="ts-progress-panel-sticky">
+      <div class="modal-header">
+        <h2 id="progress-panel-title">📈 Fortschritt</h2>
+        <button class="modal-close" onclick="closeProgressPanelModal()">×</button>
+      </div>
+      <div class="ts-progress-panel-goal-row">
+        <div class="ts-progress-panel-goal-text is-empty" id="progress-panel-goal-text">Zielbild wird geladen …</div>
+        <button type="button" class="btn btn-secondary btn-sm ts-progress-panel-goal-edit-btn" id="progress-panel-goal-edit-btn" onclick="openProgressGoalFromPanel()" disabled>🎯 Zielbild</button>
+      </div>
+      <div class="ts-progress-panel-reentry-mount" id="progress-panel-reentry-mount"></div>
+    </div>
+    <div class="ts-progress-panel-body">
+      <div id="progress-panel-timeline-mount"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fortschrittsverlauf: Zielbild bearbeiten ─────────────────── -->
+<div id="progress-goal-modal" class="modal-overlay" style="display:none" onclick="progressGoalOverlayClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>🎯 Zielbild</h2>
+      <button class="modal-close" onclick="closeProgressGoalDialog('cancelled')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Woran arbeitest du hier — was ist das Ziel? <span class="opt">(optional)</span></label>
+        <textarea class="form-control" id="progress-goal-input" rows="3" maxlength="500"
+          placeholder="Kurzer Ankertext, z. B. „Verbindliches Angebot bis Monatsende platzieren“"
+          oninput="document.getElementById('progress-goal-char-hint').textContent = this.value.length + ' / 500 Zeichen'"></textarea>
+        <div class="ts-progress-char-hint" id="progress-goal-char-hint">0 / 500 Zeichen</div>
+      </div>
+      <div id="progress-goal-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeProgressGoalDialog('cancelled')">Abbrechen</button>
+      <button class="btn btn-primary" id="progress-goal-save-btn" onclick="submitProgressGoalDialog()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fortschrittsverlauf: Zwischenstand erfassen/bearbeiten ────── -->
+<div id="progress-entry-modal" class="modal-overlay" style="display:none" onclick="progressEntryOverlayClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2 id="progress-entry-modal-title">Zwischenstand erfassen</h2>
+      <button class="modal-close" onclick="closeProgressEntryDialog('cancelled')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="ts-progress-entry-context" id="progress-entry-goal-context" style="display:none"></div>
+      <div class="ts-progress-entry-context" id="progress-entry-last-context" style="display:none">
+        <strong>Letzter Zwischenstand</strong>
+        <div class="ts-progress-entry-context-body rt-display" id="progress-entry-last-context-body"></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Wo stehst du gerade? <span class="opt">(max. 5.000 Zeichen)</span></label>
+        <div class="rt-wrapper">
+          <div class="rt-toolbar" id="progress-entry-body-tb"></div>
+          <div class="rt-content" id="progress-entry-body" contenteditable="true"
+            data-placeholder="Was ist der aktuelle Stand? Was ist als Nächstes zu tun?"
+            oninput="updateProgressEntryCharHint()"></div>
+        </div>
+        <div class="ts-progress-char-hint" id="progress-entry-char-hint">0 / 5.000 Zeichen (ungefähr)</div>
+      </div>
+      <div id="progress-entry-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeProgressEntryDialog('cancelled')">Abbrechen</button>
+      <button class="btn btn-primary" id="progress-entry-save-btn" onclick="submitProgressEntryDialog()">Speichern</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── AI Capture Modal ────────────────────────────────────────── -->
 <div id="ai-capture-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'ai-capture-modal')">
   <div class="modal modal-wide" onclick="event.stopPropagation()">
@@ -3001,6 +3143,11 @@ let selectedId  = null;
 let showPrivateTodos = true;
 let filterText  = '';
 let topicFilter = '';
+// Fortschrittsverlauf — Sortierung/Filter, sitzungsweit (Arbeitspaket W1, Story 9)
+let todoProgressSortOldest = false;
+let todoProgressFilterUndocumented = false;
+let topicProgressSortOldest = false;
+let topicProgressFilterUndocumented = false;
 
 let editMeetingId   = null;
 let editTopicMid    = null;
@@ -3074,7 +3221,7 @@ function setBusy(btnId, busy) {
 // ── API ──────────────────────────────────────────────────────
 async function api(method, path, body) {
   const opts = { method, credentials: 'same-origin' };
-  if (body !== undefined) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
+  if (body != null) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
   const res  = await fetch(API + path, opts);
   if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
   const data = await res.json().catch(() => ({}));
@@ -3104,6 +3251,20 @@ window.TSHost = {
   },
   confirm: ({ title, message, confirmLabel, cancelLabel }) => genericConfirm(title, message, confirmLabel, cancelLabel),
   reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+};
+
+// ── TSHost.progress — Schnittstelle für das Fortschrittsverlauf-Modul
+//    (public/progress.js, Arbeitspaket W2). Erweitert das obige TSHost-Objekt
+//    um das dedizierte "progress"-Feld, siehe Schnittstellenvertrag W1. Die
+//    einzelnen Handler sind weiter unten im Skript definiert (Function-
+//    Deklarationen werden im Skript-Scope gehoben, daher hier referenzierbar).
+window.TSHost.progress = {
+  openEntryDialog: (ctx) => openProgressEntryDialog(ctx),
+  openGoalDialog: (ctx) => openProgressGoalDialog(ctx),
+  confirmDelete: ({ title, message }) => genericConfirm(title, message, 'Löschen', 'Abbrechen'),
+  aiReentry: (frameId) => runProgressAiReentry(frameId),
+  aiEnabled: () => aiFeatureOn('reentry'),
+  onProgressChanged: (refType, refId) => onProgressChangedHost(refType, refId),
 };
 
 // ── Utils ────────────────────────────────────────────────────
@@ -4355,11 +4516,19 @@ function renderMain() {
   const matchesTopic = t => !topicFilter ||
     t.title.toLowerCase().includes(lct) ||
     (t.description||'').toLowerCase().includes(lct);
-  const open    = (m.topics||[]).filter(t => !t.done && !isSnoozed(t) && matchesTopic(t));
+  let open      = (m.topics||[]).filter(t => !t.done && !isSnoozed(t) && matchesTopic(t));
   const snoozed = (m.topics||[]).filter(t => !t.done &&  isSnoozed(t) && matchesTopic(t));
   const done    = (m.topics||[]).filter(t =>  t.done && matchesTopic(t))
     .sort((a,b) => new Date(b.resultDate||b.createdAt) - new Date(a.resultDate||a.createdAt));
   const past = isPast(m.nextDate);
+  // Fortschritt: Sortierung/Filter analog zur Todo-Übersicht (Story 9)
+  const openBeforeTopicProgressFilter = open.length;
+  if (topicProgressFilterUndocumented && window.TSProgress) {
+    open = open.filter(t => TSProgress.isUndocumented(t));
+  }
+  if (topicProgressSortOldest && window.TSProgress) {
+    open = open.slice().sort(TSProgress.compareByProgress);
+  }
 
   el.innerHTML = `
     <div class="full-width-view">
@@ -4409,6 +4578,22 @@ function renderMain() {
         </div>
         ${(m.topics||[]).length === 0 ? `
           <div class="empty-topics">Noch keine Themen — fügen Sie das erste hinzu.</div>` : ''}
+        ${openBeforeTopicProgressFilter > 0 ? `
+        <div class="todos-toolbar">
+          <div class="todos-toolbar-field">
+            <label for="topic-progress-sort-select">Sortierung</label>
+            <select class="form-control" id="topic-progress-sort-select" onchange="topicProgressSortOldest = (this.value==='oldest'); renderMain()">
+              <option value="default"${!topicProgressSortOldest ? ' selected' : ''}>Standard</option>
+              <option value="oldest"${topicProgressSortOldest ? ' selected' : ''}>Ältester Stand zuerst</option>
+            </select>
+          </div>
+          <div class="toggle-row">
+            <span style="font-size:.8125rem;color:var(--text-muted)">Länger nicht dokumentiert</span>
+            <label class="toggle"><input type="checkbox"${topicProgressFilterUndocumented ? ' checked' : ''} onchange="topicProgressFilterUndocumented = this.checked; renderMain()"><span class="toggle-slider"></span></label>
+          </div>
+        </div>` : ''}
+        ${topicProgressFilterUndocumented && open.length === 0 && openBeforeTopicProgressFilter > 0 ? `
+          <div class="empty-topics">✅ Alles aktuell dokumentiert — kein offenes Thema ohne Zwischenstand.</div>` : ''}
         ${open.length > 0 ? `
           <div class="topic-group-header">
             <span class="topic-group-label-text open-label">Offen</span>
@@ -4446,19 +4631,36 @@ function renderTodosView(el) {
         || new Date(a.createdAt) - new Date(b.createdAt);
   };
   const visibleTodos = showPrivateTodos ? todos : todos.filter(t => !t.isPrivate);
-  const open    = visibleTodos.filter(t => !t.done && !isSnoozed(t)).sort(byDueDate);
+  let open    = visibleTodos.filter(t => !t.done && !isSnoozed(t));
   const snoozedTodos = visibleTodos.filter(t => !t.done &&  isSnoozed(t)).sort(byDueDate);
   const done    = visibleTodos.filter(t =>  t.done)
     .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
   const hasPrivate = todos.some(t => t.isPrivate);
   // Meeting-Topics als Todo: offen + schlafende separat
-  const meetingTodosOpen    = meetings.flatMap(m =>
+  let meetingTodosOpen    = meetings.flatMap(m =>
     (m.topics||[]).filter(t => t.isTodo && !t.done && !isSnoozed(t)).map(t => ({ meeting: m, topic: t }))
-  ).sort((a,b) => (a.topic.sortOrder??0) - (b.topic.sortOrder??0));
+  );
   const meetingTodosSnoozed = meetings.flatMap(m =>
     (m.topics||[]).filter(t => t.isTodo && !t.done &&  isSnoozed(t)).map(t => ({ meeting: m, topic: t }))
   );
+
+  // ── Fortschritt: Sortierung "Ältester Stand zuerst" + Filter "Länger
+  //    nicht dokumentiert" (Story 9). Zählt nur für die offenen Gruppen —
+  //    schlafende/erledigte Todos bleiben von Filter/Sortierung unberührt.
+  const openBeforeProgressFilter = open.length + meetingTodosOpen.length;
+  if (todoProgressFilterUndocumented && window.TSProgress) {
+    open = open.filter(t => TSProgress.isUndocumented(t));
+    meetingTodosOpen = meetingTodosOpen.filter(x => TSProgress.isUndocumented(x.topic));
+  }
+  if (todoProgressSortOldest && window.TSProgress) {
+    open = open.slice().sort(TSProgress.compareByProgress);
+    meetingTodosOpen = meetingTodosOpen.slice().sort((a, b) => TSProgress.compareByProgress(a.topic, b.topic));
+  } else {
+    open = open.slice().sort(byDueDate);
+    meetingTodosOpen = meetingTodosOpen.slice().sort((a,b) => (a.topic.sortOrder??0) - (b.topic.sortOrder??0));
+  }
   const themeMap = buildThemeMap();
+  const showProgressToolbar = openBeforeProgressFilter > 0 || snoozedTodos.length > 0 || meetingTodosSnoozed.length > 0;
 
   el.innerHTML = `
     <div class="full-width-view">
@@ -4479,10 +4681,28 @@ function renderTodosView(el) {
       </div>
 
       <div class="topics-section">
+        ${showProgressToolbar ? `
+        <div class="todos-toolbar">
+          <div class="todos-toolbar-field">
+            <label for="todo-progress-sort-select">Sortierung</label>
+            <select class="form-control" id="todo-progress-sort-select" onchange="todoProgressSortOldest = (this.value==='oldest'); renderMain()">
+              <option value="default"${!todoProgressSortOldest ? ' selected' : ''}>Standard (Fälligkeit)</option>
+              <option value="oldest"${todoProgressSortOldest ? ' selected' : ''}>Ältester Stand zuerst</option>
+            </select>
+          </div>
+          <div class="toggle-row">
+            <span style="font-size:.8125rem;color:var(--text-muted)">Länger nicht dokumentiert</span>
+            <label class="toggle"><input type="checkbox"${todoProgressFilterUndocumented ? ' checked' : ''} onchange="todoProgressFilterUndocumented = this.checked; renderMain()"><span class="toggle-slider"></span></label>
+          </div>
+        </div>` : ''}
+
         ${open.length === 0 && meetingTodosOpen.length === 0 && snoozedTodos.length === 0 && meetingTodosSnoozed.length === 0 ? `
           <div class="empty-topics" style="padding:3rem">
             Keine offenen Todos — alles erledigt! 🎉
-          </div>` : ''}
+          </div>` : (todoProgressFilterUndocumented && open.length === 0 && meetingTodosOpen.length === 0 && openBeforeProgressFilter > 0 ? `
+          <div class="empty-topics" style="padding:3rem">
+            ✅ Alles aktuell dokumentiert — kein offenes Todo ohne Zwischenstand.
+          </div>` : '')}
 
         ${open.length > 0 ? `
           <div class="topic-group-header">
@@ -4527,6 +4747,18 @@ function renderTodosView(el) {
     </div><!-- /full-width-view -->`;
 }
 
+// ── Fortschrittsverlauf: Badge + Panel-Button für Todo-/Themen-Karten
+//    (Arbeitspaket W1) — Badge-Markup liefert ausschließlich TSProgress
+//    (public/progress.js), hier nur defensiv abgesichert für den Fall, dass
+//    das Modul (noch) nicht geladen ist (z. B. sehr frühes render() vor dem
+//    "defer"-Laden des Scripts).
+function progressBadgeHtml(progress) {
+  return (window.TSProgress && typeof TSProgress.badgeHtml === 'function') ? TSProgress.badgeHtml(progress) : '';
+}
+function progressPanelButtonHtml(refType, refId) {
+  return `<button class="btn btn-ghost btn-sm btn-icon ts-progress-panel-btn" onclick="openProgressPanel('${refType}','${refId}')" title="Fortschrittsverlauf ansehen">📈</button>`;
+}
+
 function renderPersonalTodoCard(t, isDone, themeMap) {
   const sleeping = !isDone && isSnoozed(t);
   const grp = isDone ? 'done' : 'open';
@@ -4544,6 +4776,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           ${!isDone ? `<span class="drag-handle" title="Verschieben">⠿</span>` : ''}
           <span class="topic-status-icon ${grp}">${isDone ? '✓' : ''}</span>
           <h4 class="topic-title ${isDone ? 'done-text' : ''}">${escHtml(t.title)}${t.isPrivate ? ' <span class="private-badge" title="Privat">🔒</span>' : ''}</h4>
+          ${progressBadgeHtml(t.progress)}
         </div>
         <div class="topic-actions">
           ${!isDone ? `
@@ -4551,6 +4784,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
             <button class="btn btn-success btn-sm" onclick="openCompleteTodoModal('${t.id}')">${SVG.check} Erledigt</button>
             <button class="btn btn-ghost btn-sm btn-icon" onclick="openStackPushModal('todo','${t.id}')" title="Auf Stack legen (⌘⇧P)">📚</button>` : `
             <button class="btn btn-secondary btn-sm" onclick="reopenPersonalTodo('${t.id}')">↺ Öffnen</button>`}
+          ${progressPanelButtonHtml('todo', t.id)}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
@@ -4614,11 +4848,13 @@ function renderMeetingTopicTodo(m, t, themeMap) {
         <div class="topic-info">
           <span class="topic-status-icon open"></span>
           <h4 class="topic-title">${escHtml(t.title)}</h4>
+          ${progressBadgeHtml(t.progress)}
         </div>
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${m.id}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
           <button class="btn btn-success btn-sm" onclick="openCompleteModal('${m.id}','${t.id}')">${SVG.check} Erledigt</button>
           <button class="btn btn-ghost btn-sm btn-icon" onclick="openStackPushModal('topic','${t.id}')" title="Auf Stack legen">📚</button>
+          ${progressPanelButtonHtml('topic', t.id)}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
@@ -4685,6 +4921,7 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
           <span class="drag-handle" title="Reihenfolge ändern">⠿</span>
           <span class="topic-status-icon ${grp}">${t.done ? '✓' : ''}</span>
           <h4 class="topic-title ${t.done ? 'done-text' : ''}">${escHtml(t.title)}</h4>
+          ${progressBadgeHtml(t.progress)}
         </div>
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${mid}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
@@ -4694,6 +4931,7 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
           ${!t.done ? `<button class="btn btn-ghost btn-sm btn-icon"
             onclick="openStackPushModal('topic','${t.id}')"
             title="Auf Stack legen (⌘⇧P)">📚</button>` : ''}
+          ${progressPanelButtonHtml('topic', t.id)}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
@@ -5080,6 +5318,7 @@ function openTodoModal(id, presetThemeId) {
   const todoSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
   document.getElementById('todo-snooze-has-time').checked = todoSnoozeHasTime;
   document.getElementById('todo-snooze-time').value = todoSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
+  setRT('todo-progress-snooze-note', '');
   onTodoSnoozeChange();
   document.getElementById('todo-due').value = t?.dueDate?.slice(0, 10) || '';
   document.getElementById('todo-private').checked = !!t?.isPrivate;
@@ -5130,6 +5369,9 @@ async function saveTodoModal() {
       result: isDone ? getRT('todo-result') : '',
       resultDate: isDone ? document.getElementById('todo-result-date').value : '',
     } : {}) };
+  // Vorab erfassen (siehe submitStackPop): Feld wird nach dem Schließen des
+  // Dialogs zurückgesetzt, daher vor dem Request sichern.
+  const progressSnoozeNoteHtml = data.snoozedUntil ? getRT('todo-progress-snooze-note') : '';
   setBusy('todo-save-btn', true);
   let savedTodoId = null;
   try {
@@ -5156,6 +5398,7 @@ async function saveTodoModal() {
     await loadThemeDetail(); render();
     toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
     if (savedTodoId && !data.done) triggerThemeSuggestions('todo', savedTodoId);
+    if (savedTodoId && progressSnoozeNoteHtml) submitProgressEntryBackground('todo', savedTodoId, progressSnoozeNoteHtml, 'snooze');
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('todo-save-btn', false); }
 }
@@ -5479,6 +5722,7 @@ function openTopicModal(mid, tid) {
   const topicSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
   document.getElementById('t-snooze-has-time').checked = topicSnoozeHasTime;
   document.getElementById('t-snooze-time').value = topicSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
+  setRT('t-progress-snooze-note', '');
   onTopicSnoozeChange();
   const rs = document.getElementById('t-result-section');
   if (t) {
@@ -5524,6 +5768,9 @@ async function saveTopicModal() {
       done:       document.getElementById('t-done').checked,
     } : {}),
   };
+  // Vorab erfassen (siehe submitStackPop): Feld wird nach dem Schließen des
+  // Dialogs zurückgesetzt, daher vor dem Request sichern.
+  const progressSnoozeNoteHtml = data.snoozedUntil ? getRT('t-progress-snooze-note') : '';
   setBusy('tm-save-btn', true);
   let savedTopicId = null;
   try {
@@ -5544,6 +5791,7 @@ async function saveTopicModal() {
     closeTopicModal(); render();
     toast(editTopicId ? 'Thema aktualisiert' : 'Thema hinzugefügt');
     if (savedTopicId && !data.done) triggerThemeSuggestions('topic', savedTopicId);
+    if (savedTopicId && progressSnoozeNoteHtml) submitProgressEntryBackground('topic', savedTopicId, progressSnoozeNoteHtml, 'snooze');
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('tm-save-btn', false); }
 }
@@ -7484,6 +7732,13 @@ function openStackPushModal(refType, refId) {
     document.getElementById('sp-target').textContent = `${refType === 'topic' ? '💬' : '✓'} ${title}`;
     document.getElementById('sp-target').style.display = '';
     document.getElementById('sp-target-pick-wrap').style.display = 'none';
+    // Notizfeld mit dem aktuellen "Nächster Schritt" des Vorhabens vorbelegen
+    // (Fortschrittsverlauf, Arbeitspaket S2 liefert diesen bereits eingebettet).
+    const nextStep = progressNextStepFor(refType, refId);
+    if (nextStep) {
+      document.getElementById('sp-note').value = nextStep;
+      document.getElementById('sp-count').textContent = String(nextStep.length);
+    }
   } else {
     // Quick-Pick: list open topics + todos
     document.getElementById('sp-target').style.display = 'none';
@@ -7514,6 +7769,34 @@ function openStackPushModal(refType, refId) {
 
   document.getElementById('stack-push-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('sp-note').focus(), 50);
+}
+
+// Liefert den zuletzt hinterlegten "Nächster Schritt" des Fortschrittsverlaufs
+// (Arbeitspaket S1/S2 betten dieses Feld bereits in /todos bzw. /meetings ein) —
+// leerer String, wenn kein Vorhaben gefunden wird oder noch nichts hinterlegt ist.
+function progressNextStepFor(refType, refId) {
+  if (refType === 'topic') {
+    for (const m of meetings) for (const t of (m.topics || [])) if (t.id === refId) return t.progress?.nextStep || '';
+  }
+  if (refType === 'todo') {
+    const t = todos.find(x => x.id === refId);
+    return t?.progress?.nextStep || '';
+  }
+  return '';
+}
+
+// Beim Quick-Pick (Push ohne festes Ziel) wird das Notizfeld erst nach Auswahl
+// vorbelegt — nur wenn der Nutzer noch nichts eingetippt hat.
+function onStackPushTargetPick() {
+  const v = document.getElementById('sp-target-pick').value;
+  if (!v) return;
+  const [refType, refId] = v.split(':');
+  const nextStep = progressNextStepFor(refType, refId);
+  const noteEl = document.getElementById('sp-note');
+  if (nextStep && !noteEl.value.trim()) {
+    noteEl.value = nextStep;
+    document.getElementById('sp-count').textContent = String(nextStep.length);
+  }
 }
 
 function ensurePushCtx() {
@@ -7617,6 +7900,7 @@ function openStackPopModalFor(frameId) {
   // Reset to "done" default
   document.querySelectorAll('input[name=pop-res]').forEach(r => r.checked = r.value === 'done');
   setRT('pop-result', '');
+  setRT('pop-progress-note', '');
   document.getElementById('pop-result-date').value = new Date().toISOString().slice(0, 10);
   // Default snooze: tomorrow 09:00 local
   const t = new Date(); t.setDate(t.getDate() + 1); t.setHours(9, 0, 0, 0);
@@ -7646,6 +7930,7 @@ function onPopResolutionChange() {
   const v = document.querySelector('input[name=pop-res]:checked')?.value || 'done';
   document.getElementById('pop-result-fields').style.display = (v === 'done')    ? '' : 'none';
   document.getElementById('pop-snooze-fields').style.display = (v === 'snoozed') ? '' : 'none';
+  document.getElementById('pop-progress-fields').style.display = (v === 'snoozed' || v === 'dropped') ? '' : 'none';
 }
 
 async function submitStackPop() {
@@ -7660,10 +7945,16 @@ async function submitStackPop() {
     const local = document.getElementById('pop-snooze-until').value;
     if (local) body.snoozedUntil = new Date(local).toISOString();
   }
+  // Vorab erfassen: "Wo stehe ich gerade?" wird NACH erfolgreichem Pop separat
+  // als Fortschritts-Zwischenstand gespeichert (Story 6) — vor dem Request
+  // sichern, da das Feld nach Schließen des Dialogs zurückgesetzt wird.
+  const progressNoteHtml = (resolution === 'snoozed' || resolution === 'dropped') ? getRT('pop-progress-note') : '';
+  const progressSource = resolution === 'snoozed' ? 'pop_snoozed' : 'pop_dropped';
   try {
     const r = await api('POST', `/stack/pop/${f.id}`, body);
     document.getElementById('stack-pop-modal').style.display = 'none';
     toast(resolution === 'resumed' ? 'Frame wieder aktiv — weiter bearbeiten' : 'Frame geschlossen');
+    if (progressNoteHtml) submitProgressEntryBackground(f.ref_type, f.ref_id, progressNoteHtml, progressSource);
     await Promise.all([loadStack(), loadMeetings(), loadTodos()]);
     render();
     if (resolution === 'resumed') navigateToRef(f.ref_type, f.ref_id);
@@ -7796,6 +8087,310 @@ async function runReentryFor(frameId) {
     if (e.cancelled) banner.innerHTML = '';
     else banner.innerHTML = `<div class="stack-reentry-banner" style="border-left-color:var(--red); color:var(--red)">Fehler: ${escHtml(e.message || '')}</div>`;
   }
+}
+
+// ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W1) ──────────
+// Implementiert window.TSHost.progress (siehe Zuweisung weiter oben) sowie
+// den umgebenden Modal-/Formular-Rahmen. Anzeige-Bausteine (Zeitstrahl,
+// Wiedereinstiegskarte, Badge, Sortier-Comparator) liefert ausschließlich
+// window.TSProgress (public/progress.js, Arbeitspaket W2) — hier wird NICHTS
+// davon dupliziert.
+
+let progressEntryDialogCtx = null;  // { refType, refId, entryId, clientToken, resolve }
+let progressGoalDialogCtx  = null;  // { refType, refId, resolve }
+let progressPanelCtx       = null;  // { refType, refId }
+let progressPanelHandles   = null;  // { timeline, reentry } — Handles von TSProgress.mount*
+let progressPanelGoalCache = '';    // zuletzt geladenes Zielbild des offenen Panels
+
+function isValidProgressRefType(t) { return t === 'todo' || t === 'topic'; }
+
+function makeProgressClientToken() {
+  // Muss ^[A-Za-z0-9_-]{1,64}$ erfüllen (siehe lib/progress/routes.js) — dient
+  // ausschließlich der serverseitigen Idempotenz bei Netzwerk-Retries.
+  if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+}
+
+// ── Zwischenstand erfassen/bearbeiten (TSHost.progress.openEntryDialog) ──
+function openProgressEntryDialog(ctx) {
+  return new Promise((resolve) => {
+    const refType = ctx && ctx.refType, refId = ctx && ctx.refId;
+    if (!isValidProgressRefType(refType) || !refId) { resolve('cancelled'); return; }
+    const entryId = (ctx && ctx.entryId) || null;
+    progressEntryDialogCtx = {
+      refType, refId, entryId, resolve,
+      clientToken: entryId ? null : makeProgressClientToken(),
+    };
+    document.getElementById('progress-entry-modal-title').textContent =
+      entryId ? 'Zwischenstand bearbeiten' : 'Zwischenstand erfassen';
+    setRT('progress-entry-body', (ctx && ctx.prefillHtml) || '');
+    updateProgressEntryCharHint();
+
+    const goalBox = document.getElementById('progress-entry-goal-context');
+    if (ctx && ctx.goal) {
+      goalBox.textContent = '🎯 ' + ctx.goal;
+      goalBox.style.display = '';
+    } else {
+      goalBox.style.display = 'none';
+    }
+
+    const lastBox = document.getElementById('progress-entry-last-context');
+    if (!entryId && ctx && ctx.lastEntryHtml) {
+      // lastEntryHtml kommt laut Vertrag bereits server-seitig sanitisiert an
+      // (identisch zu entry.bodyHtml, siehe public/progress.js) — zusätzlich
+      // durch displayHtml() geführt, analog zur bestehenden Konvention für
+      // alle anderen rt-display-Stellen in dieser Datei (Verteidigung in der
+      // Tiefe, ändert an bereits sauberem HTML nichts).
+      document.getElementById('progress-entry-last-context-body').innerHTML = displayHtml(ctx.lastEntryHtml);
+      lastBox.style.display = '';
+    } else {
+      lastBox.style.display = 'none';
+    }
+
+    document.getElementById('progress-entry-error').style.display = 'none';
+    document.getElementById('progress-entry-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('progress-entry-body').focus(), 50);
+  });
+}
+
+function updateProgressEntryCharHint() {
+  const el = document.getElementById('progress-entry-body');
+  const len = (el.textContent || '').length;
+  document.getElementById('progress-entry-char-hint').textContent = `${len} / 5.000 Zeichen (ungefähr)`;
+}
+
+function closeProgressEntryDialog(result) {
+  document.getElementById('progress-entry-modal').style.display = 'none';
+  const ctx = progressEntryDialogCtx;
+  progressEntryDialogCtx = null;
+  if (ctx && typeof ctx.resolve === 'function') ctx.resolve(result);
+}
+
+function progressEntryOverlayClick(e) {
+  if (e.target.id !== 'progress-entry-modal') return;
+  // Analog zu overlayClick(): bei bereits eingegebenem Text nicht versehentlich
+  // schließen (Klick auf Overlay wird ignoriert, Dialog bleibt offen).
+  if ((getRT('progress-entry-body') || '').trim() !== '') return;
+  closeProgressEntryDialog('cancelled');
+}
+
+async function submitProgressEntryDialog() {
+  const ctx = progressEntryDialogCtx;
+  if (!ctx) return;
+  const bodyHtml = getRT('progress-entry-body');
+  const errEl = document.getElementById('progress-entry-error');
+  errEl.style.display = 'none';
+  if (!bodyHtml) {
+    errEl.textContent = 'Bitte einen Zwischenstand eintragen.';
+    errEl.style.display = '';
+    return;
+  }
+  setBusy('progress-entry-save-btn', true);
+  try {
+    if (ctx.entryId) {
+      await TSHost.api('PUT', `/api/progress/entries/${encodeURIComponent(ctx.entryId)}`, { body: bodyHtml });
+    } else {
+      await TSHost.api('POST', `/api/progress/${encodeURIComponent(ctx.refType)}/${encodeURIComponent(ctx.refId)}/entries`, {
+        body: bodyHtml, source: 'manual', clientToken: ctx.clientToken,
+      });
+    }
+    // Text bleibt bei Erfolg NICHT erhalten (Dialog schließt) — bei Fehler
+    // bleibt der Dialog inkl. eingegebenem Text offen (siehe catch-Zweig),
+    // die Promise wird erst bei tatsächlichem Erfolg aufgelöst.
+    closeProgressEntryDialog('saved');
+  } catch (e) {
+    errEl.textContent = e.message || 'Speichern fehlgeschlagen. Bitte erneut versuchen.';
+    errEl.style.display = '';
+  } finally {
+    setBusy('progress-entry-save-btn', false);
+  }
+}
+
+// ── Zielbild bearbeiten (TSHost.progress.openGoalDialog) ──
+function openProgressGoalDialog(ctx) {
+  return new Promise((resolve) => {
+    const refType = ctx && ctx.refType, refId = ctx && ctx.refId;
+    if (!isValidProgressRefType(refType) || !refId) { resolve('cancelled'); return; }
+    progressGoalDialogCtx = { refType, refId, resolve };
+    const ta = document.getElementById('progress-goal-input');
+    ta.value = (ctx && ctx.goal) || '';
+    document.getElementById('progress-goal-char-hint').textContent = `${ta.value.length} / 500 Zeichen`;
+    document.getElementById('progress-goal-error').style.display = 'none';
+    document.getElementById('progress-goal-modal').style.display = 'flex';
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 50);
+  });
+}
+
+function closeProgressGoalDialog(result) {
+  document.getElementById('progress-goal-modal').style.display = 'none';
+  const ctx = progressGoalDialogCtx;
+  progressGoalDialogCtx = null;
+  if (ctx && typeof ctx.resolve === 'function') ctx.resolve(result);
+}
+
+function progressGoalOverlayClick(e) {
+  if (e.target.id !== 'progress-goal-modal') return;
+  if (document.getElementById('progress-goal-input').value.trim() !== '') return;
+  closeProgressGoalDialog('cancelled');
+}
+
+async function submitProgressGoalDialog() {
+  const ctx = progressGoalDialogCtx;
+  if (!ctx) return;
+  const goal = document.getElementById('progress-goal-input').value;
+  const errEl = document.getElementById('progress-goal-error');
+  errEl.style.display = 'none';
+  if (goal.length > 500) {
+    errEl.textContent = 'Das Zielbild darf maximal 500 Zeichen haben.';
+    errEl.style.display = '';
+    return;
+  }
+  setBusy('progress-goal-save-btn', true);
+  try {
+    await TSHost.api('PUT', `/api/progress/${encodeURIComponent(ctx.refType)}/${encodeURIComponent(ctx.refId)}/goal`, { goal });
+    closeProgressGoalDialog('saved');
+  } catch (e) {
+    errEl.textContent = e.message || 'Speichern fehlgeschlagen. Bitte erneut versuchen.';
+    errEl.style.display = '';
+  } finally {
+    setBusy('progress-goal-save-btn', false);
+  }
+}
+
+// ── KI-Re-Entry-Zusammenfassung für die Wiedereinstiegskarte ──
+// Eigenständige Variante von runReentryFor() oben: liefert das Ergebnis als
+// String zurück statt es in ein Banner zu schreiben (TSProgress rendert die
+// Ausgabe selbst) — siehe Vertrag TSHost.progress.aiReentry. Nutzt bewusst
+// denselben aiCall()-Helper wie runReentryFor(), keine zweite Implementierung
+// des Kosten-/Bestätigungs-Handlings.
+async function runProgressAiReentry(frameId) {
+  const r = await aiCall('POST', `/ai/stack/${frameId}/reentry`);
+  return (r && r.content && typeof r.content.summary === 'string') ? r.content.summary : '';
+}
+
+// ── Listen nach Fortschrittsänderung aktualisieren (TSHost.progress.onProgressChanged) ──
+async function onProgressChangedHost(refType, refId) {
+  if (window.TSProgress && typeof TSProgress.invalidate === 'function') TSProgress.invalidate(refType, refId);
+  try {
+    if (refType === 'todo') await loadTodos();
+    else if (refType === 'topic') await loadMeetings();
+  } catch (_) { /* Liste bleibt ggf. veraltet — kein Blocker, kein Datenverlust */ }
+  render();
+}
+
+// ── Zwischenstand im Hintergrund speichern (Snooze-/Pop-Dialoge, Story 6) ──
+// Wird NACH einem bereits erfolgreichen Snooze/Pop aufgerufen. Schlägt dieser
+// zweite Request fehl, bleibt der bereits erfolgreiche Snooze/Pop unberührt —
+// stattdessen erscheint ein nicht-blockierender Hinweis mit Retry-Aktion; der
+// Text bleibt dafür im Funktions-Closure erhalten.
+function submitProgressEntryBackground(refType, refId, bodyHtml, source) {
+  if (!bodyHtml) return;
+  const clientToken = makeProgressClientToken();
+  function attempt() {
+    TSHost.api('POST', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}/entries`, {
+      body: bodyHtml, source, clientToken,
+    }).then(() => {
+      onProgressChangedHost(refType, refId);
+    }).catch(() => {
+      showProgressRetryToast('Zwischenstand konnte nicht gespeichert werden.', attempt);
+    });
+  }
+  attempt();
+}
+
+function showProgressRetryToast(msg, retryFn) {
+  const el = document.createElement('div');
+  el.className = 'toast toast-error';
+  const retryId = 'ts-progress-retry-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+  el.innerHTML = `<div class="ts-progress-retry-toast"><span>${escHtml(msg)}</span>` +
+    `<button type="button" id="${escHtml(retryId)}">Erneut versuchen</button></div>`;
+  document.getElementById('toast-container').appendChild(el);
+  const btn = document.getElementById(retryId);
+  if (btn) btn.addEventListener('click', () => { el.remove(); retryFn(); });
+  setTimeout(() => el.remove(), 9000);
+}
+
+// ── Verlaufs-Panel (Story: Zeitstrahl/Wiedereinstiegskarte pro Vorhaben) ──
+function progressPanelTitleIcon(refType) { return refType === 'topic' ? '💬' : '✓'; }
+
+function openProgressPanel(refType, refId) {
+  if (!isValidProgressRefType(refType) || !refId) return;
+  if (!window.TSProgress) { toast('Fortschrittsmodul ist noch nicht geladen — bitte kurz warten.', 'error'); return; }
+  const title = refDisplayTitle(refType, refId);
+  document.getElementById('progress-panel-title').textContent = `📈 ${progressPanelTitleIcon(refType)} ${title}`;
+
+  if (progressPanelHandles) {
+    progressPanelHandles.timeline?.destroy();
+    progressPanelHandles.reentry?.destroy();
+    progressPanelHandles = null;
+  }
+  progressPanelCtx = { refType, refId };
+  progressPanelGoalCache = '';
+  renderProgressPanelGoalText(null, true);
+  document.getElementById('progress-panel-goal-edit-btn').disabled = true;
+
+  const timelineMount = document.getElementById('progress-panel-timeline-mount');
+  const reentryMount  = document.getElementById('progress-panel-reentry-mount');
+  progressPanelHandles = {
+    timeline: TSProgress.mountTimeline(timelineMount, { refType, refId }),
+    reentry:  TSProgress.mountReentryCard(reentryMount, { refType, refId }),
+  };
+
+  document.getElementById('progress-panel-modal').style.display = 'flex';
+  loadProgressPanelGoal(refType, refId);
+}
+
+async function loadProgressPanelGoal(refType, refId) {
+  const editBtn = document.getElementById('progress-panel-goal-edit-btn');
+  try {
+    const detail = await TSHost.api('GET', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}`);
+    // Panel könnte inzwischen für ein anderes Vorhaben erneut geöffnet worden
+    // sein — veraltete Antwort verwerfen.
+    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
+    progressPanelGoalCache = typeof detail.goal === 'string' ? detail.goal : '';
+    renderProgressPanelGoalText(progressPanelGoalCache, false);
+  } catch (e) {
+    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
+    renderProgressPanelGoalText(null, false, true);
+  } finally {
+    if (progressPanelCtx && progressPanelCtx.refType === refType && progressPanelCtx.refId === refId) {
+      editBtn.disabled = false;
+    }
+  }
+}
+
+function renderProgressPanelGoalText(goal, loading, failed) {
+  const el = document.getElementById('progress-panel-goal-text');
+  if (loading) { el.textContent = 'Zielbild wird geladen …'; el.classList.add('is-empty'); return; }
+  if (failed) { el.textContent = 'Zielbild konnte nicht geladen werden.'; el.classList.add('is-empty'); return; }
+  if (goal) { el.textContent = goal; el.classList.remove('is-empty'); }
+  else { el.textContent = 'Noch kein Zielbild hinterlegt.'; el.classList.add('is-empty'); }
+}
+
+function openProgressGoalFromPanel() {
+  if (!progressPanelCtx) return;
+  const { refType, refId } = progressPanelCtx;
+  TSHost.progress.openGoalDialog({ refType, refId, goal: progressPanelGoalCache || '' }).then((result) => {
+    if (result !== 'saved') return;
+    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
+    loadProgressPanelGoal(refType, refId);
+    if (progressPanelHandles && progressPanelHandles.reentry) progressPanelHandles.reentry.reload();
+  });
+}
+
+function closeProgressPanelModal() {
+  document.getElementById('progress-panel-modal').style.display = 'none';
+  if (progressPanelHandles) {
+    progressPanelHandles.timeline?.destroy();
+    progressPanelHandles.reentry?.destroy();
+    progressPanelHandles = null;
+  }
+  progressPanelCtx = null;
+}
+
+function progressPanelOverlayClick(e) {
+  if (e.target.id !== 'progress-panel-modal') return;
+  closeProgressPanelModal();
 }
 
 // ── End-of-Day Review & Stack History views ─────────────────
@@ -8156,6 +8751,9 @@ document.addEventListener('keydown', e => {
     ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
+    if (document.getElementById('progress-entry-modal').style.display !== 'none') closeProgressEntryDialog('cancelled');
+    if (document.getElementById('progress-goal-modal').style.display !== 'none') closeProgressGoalDialog('cancelled');
+    if (document.getElementById('progress-panel-modal').style.display !== 'none') closeProgressPanelModal();
     closeConfirm();
     return;
   }
@@ -8191,7 +8789,9 @@ document.getElementById('login-pw').addEventListener('keydown',   e => { if (e.k
 document.getElementById('login-user').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('login-pw').focus(); });
 
 // ── Init ─────────────────────────────────────────────────────
-['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc'].forEach(id => initRtToolbar(id+'-tb', id));
+['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc',
+  'progress-entry-body','todo-progress-snooze-note','t-progress-snooze-note','pop-progress-note']
+  .forEach(id => initRtToolbar(id+'-tb', id));
 initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });
 initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });
 
