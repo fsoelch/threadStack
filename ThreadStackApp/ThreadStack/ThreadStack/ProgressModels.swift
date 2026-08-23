@@ -74,6 +74,40 @@ struct ProgressEntry: Codable, Equatable, Identifiable {
     let gapDaysBefore: Int
     let showDormancyMarker: Bool
     let editable: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id, refType, refId, kind, source, bodyHtml, excerpt, createdAt, editedAt, gapDaysBefore, showDormancyMarker, editable
+    }
+
+    // Der Server liefert aktuell kein `excerpt`-Feld (siehe lib/progress/routes.js) —
+    // solange das so ist, wird es hier defensiv aus bodyHtml abgeleitet, damit das
+    // Decodieren echter Server-Antworten nicht mit keyNotFound scheitert.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        refType = try c.decode(String.self, forKey: .refType)
+        refId = try c.decode(String.self, forKey: .refId)
+        kind = try c.decode(String.self, forKey: .kind)
+        source = try c.decode(String.self, forKey: .source)
+        bodyHtml = try c.decode(String.self, forKey: .bodyHtml)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        editedAt = try c.decodeIfPresent(String.self, forKey: .editedAt)
+        gapDaysBefore = try c.decode(Int.self, forKey: .gapDaysBefore)
+        showDormancyMarker = try c.decode(Bool.self, forKey: .showDormancyMarker)
+        editable = try c.decode(Bool.self, forKey: .editable)
+        if let serverExcerpt = try c.decodeIfPresent(String.self, forKey: .excerpt), !serverExcerpt.isEmpty {
+            excerpt = serverExcerpt
+        } else {
+            excerpt = ProgressEntry.deriveExcerpt(fromBodyHtml: bodyHtml)
+        }
+    }
+
+    static func deriveExcerpt(fromBodyHtml html: String, limit: Int = 280) -> String {
+        let plain = stripHTML(html).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard plain.count > limit else { return plain }
+        let cut = plain.index(plain.startIndex, offsetBy: limit)
+        return String(plain[..<cut]) + "…"
+    }
 }
 
 struct ProgressStats: Codable, Equatable {
