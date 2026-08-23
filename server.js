@@ -13,6 +13,7 @@ const { safeFetchPage, SafeFetchError } = require('./lib/safe-fetch');
 const { extractReadableText, ExtractError } = require('./lib/html-extract');
 const linkCache = require('./ai/link-cache');
 const aiUsage = require('./ai/usage');
+const progress = require('./lib/progress');
 
 const app      = express();
 // If behind a trusted reverse proxy (e.g. nginx on same host), set TRUST_PROXY=1
@@ -520,6 +521,14 @@ db.exec(`
   }
 }
 
+// ── Migration: Zielbild/Fortschrittsverlauf (Arbeitspaket S1/S2) ────
+// Additive CREATE TABLE/INDEX IF NOT EXISTS für progress_entries/progress_meta.
+// Läuft NACH den Kern-Tabellen (users/todos/topics), da progress_entries.user_id
+// auf users(id) referenziert und purgeProgressOrphans() bereits gegen
+// existierende todos/topics abgleicht.
+progress.runProgressMigrations(db);
+progress.purgeProgressOrphans(db);
+
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
 let encryptionKey;
@@ -779,7 +788,23 @@ app.get(`${A}/meetings`, requireAuth, (req, res) => {
   const ts = ms.length
     ? db.prepare(`SELECT * FROM topics WHERE meeting_id IN (${ms.map(()=>'?').join(',')}) ORDER BY sort_order, created_at`).all(...ms.map(m=>m.id))
     : [];
-  res.json(ms.map(m => parseMeeting(m, ts)));
+  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
+  // EINE Batch-Query über summaryFor() für alle Topics dieser Meetings (kein
+  // N+1) - Ergebnis wird nachträglich in die bereits geparsten Topic-Objekte
+  // gejoint, ohne parseMeeting()/parseTopic() selbst anzufassen.
+  const topicItems = ts.map(t => ({
+    refType: 'topic', refId: t.id,
+    refCreatedAt: t.created_at, refUpdatedAt: t.updated_at,
+    refDone: !!t.done, refSnoozedUntil: t.snoozed_until || null,
+  }));
+  const progressMap = progress.summaryFor(db, req.session.uid, topicItems);
+  const meetings = ms.map(m => parseMeeting(m, ts));
+  for (const meeting of meetings) {
+    for (const topic of meeting.topics) {
+      topic.progress = progressMap.get(`topic:${topic.id}`) ?? null;
+    }
+  }
+  res.json(meetings);
 });
 
 app.post(`${A}/meetings`, requireAuth, (req, res) => {
@@ -824,8 +849,17 @@ app.put(`${A}/meetings/:id`, requireAuth, (req, res) => {
 });
 
 app.delete(`${A}/meetings/:id`, requireAuth, (req, res) => {
+  // SQLite kaskadiert topics.meeting_id (ON DELETE CASCADE) automatisch beim
+  // Löschen des Meetings — die betroffenen Topic-IDs müssen daher VORHER
+  // eingesammelt werden, damit der Fortschrittsverlauf (progress_entries/
+  // progress_meta) für diese Topics ebenfalls sofort aufgeräumt wird.
+  const topicIds = db.prepare('SELECT id FROM topics WHERE meeting_id=?').all(req.params.id).map(r => r.id);
   const r = db.prepare('DELETE FROM meetings WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
-  r.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Nicht gefunden' });
+  if (!r.changes) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (topicIds.length) {
+    progress.deleteForRefs(db, topicIds.map(id => ({ refType: 'topic', refId: id })));
+  }
+  res.json({ ok: true });
 });
 
 // ── Topic routes ─────────────────────────────────────────────
@@ -970,6 +1004,7 @@ app.delete(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   db.prepare('DELETE FROM theme_links WHERE ref_type=? AND ref_id=?').run('topic', t.id);
   db.prepare('DELETE FROM topics WHERE id=?').run(t.id);
+  progress.deleteForRefs(db, [{ refType: 'topic', refId: t.id }]);
   // If only one group member remains, dissolve the group
   if (t.group_id) {
     const remaining = db.prepare('SELECT id FROM topics WHERE group_id=?').all(t.group_id);
@@ -1001,7 +1036,20 @@ const TODOS_ORDER_SQL = `
 `;
 
 app.get(`${A}/todos`, requireAuth, (req, res) => {
-  res.json(db.prepare(`SELECT * FROM todos WHERE user_id=? ${TODOS_ORDER_SQL}`).all(req.session.uid).map(parseTodo));
+  const rows = db.prepare(`SELECT * FROM todos WHERE user_id=? ${TODOS_ORDER_SQL}`).all(req.session.uid);
+  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
+  // EINE Batch-Query über summaryFor() für alle geladenen Todos (kein N+1).
+  const items = rows.map(t => ({
+    refType: 'todo', refId: t.id,
+    refCreatedAt: t.created_at, refUpdatedAt: t.updated_at,
+    refDone: !!t.done, refSnoozedUntil: t.snoozed_until || null,
+  }));
+  const progressMap = progress.summaryFor(db, req.session.uid, items);
+  res.json(rows.map(t => {
+    const todo = parseTodo(t);
+    todo.progress = progressMap.get(`todo:${t.id}`) ?? null;
+    return todo;
+  }));
 });
 
 app.post(`${A}/todos`, requireAuth, (req, res) => {
@@ -1049,6 +1097,7 @@ app.delete(`${A}/todos/:id`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   db.prepare('DELETE FROM theme_links WHERE ref_type=? AND ref_id=?').run('todo', t.id);
   db.prepare('DELETE FROM todos WHERE id=?').run(t.id);
+  progress.deleteForRefs(db, [{ refType: 'todo', refId: t.id }]);
   res.json({ ok: true });
 });
 
@@ -1240,6 +1289,14 @@ app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
   const todos = db.prepare(
     `SELECT * FROM todos WHERE user_id=? AND id IN (${todoIds.map(()=>'?').join(',')}) ${TODOS_ORDER_SQL}`
   ).all(req.session.uid, ...todoIds);
+  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
+  // EINE Batch-Query über summaryFor() für alle geladenen Todos (kein N+1).
+  const progressItems = todos.map(td => ({
+    refType: 'todo', refId: td.id,
+    refCreatedAt: td.created_at, refUpdatedAt: td.updated_at,
+    refDone: !!td.done, refSnoozedUntil: td.snoozed_until || null,
+  }));
+  const progressMap = progress.summaryFor(db, req.session.uid, progressItems);
   res.json(todos.map(td => {
     const originThemeId = seen.get(td.id);
     const origin = themesById.get(originThemeId);
@@ -1247,6 +1304,7 @@ app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
       ...parseTodo(td),
       originThemeId,
       originThemeTitle: originThemeId === t.id ? null : (origin ? origin.title : null),
+      progress: progressMap.get(`todo:${td.id}`) ?? null,
     };
   }));
 });
@@ -1970,6 +2028,22 @@ function ownsRef(uid, refType, refId) {
   return false;
 }
 
+// Liefert den für ein Vorhaben (refType/refId) relevantesten Stack-Frame:
+// bevorzugt den aktuell offenen Frame, sonst den zuletzt gepoppten. Wird als
+// getLatestFrameId-Callback an createProgressRouter() injiziert (S2-Wiring).
+// Kein eigener Owner-Check nötig: der Router ruft dies erst NACH resolveRef()
+// (ownsRef bereits geprüft) auf.
+function getLatestFrameId(refType, refId) {
+  const open = db.prepare(
+    'SELECT id FROM stack_frames WHERE ref_type=? AND ref_id=? AND popped_at IS NULL LIMIT 1'
+  ).get(refType, refId);
+  if (open) return open.id;
+  const lastPopped = db.prepare(
+    'SELECT id FROM stack_frames WHERE ref_type=? AND ref_id=? AND popped_at IS NOT NULL ORDER BY popped_at DESC LIMIT 1'
+  ).get(refType, refId);
+  return lastPopped ? lastPopped.id : null;
+}
+
 function refTitleAndDescription(refType, refId) {
   if (refType === 'topic') {
     const t = db.prepare('SELECT title, description, result FROM topics WHERE id=?').get(refId);
@@ -2054,9 +2128,15 @@ app.post(`${A}/stack/push`, requireAuth, (req, res) => {
   const parentId = ordered[0]?.id || null;
 
   const id = uid();
+  const pushedAt = new Date().toISOString();
   db.prepare(
     'INSERT INTO stack_frames(id,user_id,ref_type,ref_id,next_step_note,pushed_at,parent_frame_id) VALUES (?,?,?,?,?,?,?)'
-  ).run(id, req.session.uid, refType, refId, note, new Date().toISOString(), parentId);
+  ).run(id, req.session.uid, refType, refId, note, pushedAt, parentId);
+
+  // Story 5: "Nächster Schritt" im Zielbild/Fortschrittsverlauf spiegelt die
+  // Stack-Notiz (progress_meta ist die persistente Quelle, die auch nach dem
+  // Pop erhalten bleibt — siehe pop-Handler unten).
+  progress.setNextStep(db, req.session.uid, refType, refId, note, pushedAt);
 
   const frame = db.prepare('SELECT * FROM stack_frames WHERE id=?').get(id);
   const newDepth = ordered.length + 1;
@@ -2145,6 +2225,31 @@ app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
   // Close the frame
   db.prepare('UPDATE stack_frames SET popped_at=?, pop_resolution=? WHERE id=?').run(now, resolution, f.id);
 
+  // Story 5: bei resolution='done' einen Zeitstrahl-Marker im Fortschrittsverlauf
+  // anlegen (kind='result'). progress_meta.next_step bleibt beim Pop UNVERÄNDERT
+  // (kein Löschen/Zurücksetzen) — nur dieser optionale Marker ist neu.
+  // Best-effort: darf den Pop selbst NIEMALS scheitern lassen (z.B. wenn wegen
+  // idx_progress_result_frame bereits ein Ergebnis-Eintrag für diesen Frame
+  // existiert — dann bewusst ein No-Op statt Fehler).
+  if (resolution === 'done') {
+    try {
+      progress.insertEntry(db, {
+        userId: req.session.uid,
+        refType: f.ref_type,
+        refId: f.ref_id,
+        kind: 'result',
+        source: 'pop_done',
+        bodyHtml: '',
+        bodyText: '',
+        linkFrameId: f.id,
+        clientToken: null,
+        nowIso: now,
+      });
+    } catch (_) {
+      // Best-effort — Fehler hier dürfen den Pop nicht kippen.
+    }
+  }
+
   // Determine new active frame
   const openAfter = db.prepare(
     'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
@@ -2191,6 +2296,14 @@ app.put(`${A}/stack/:frameId/note`, requireAuth, (req, res) => {
     'UPDATE stack_frames SET next_step_note=? WHERE id=? AND user_id=? AND popped_at IS NULL'
   ).run(note, req.params.frameId, req.session.uid);
   if (!r.changes) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
+
+  // Story 5: Notiz-Update spiegelt sich in progress_meta.next_step für das
+  // Vorhaben dieses Frames zurück.
+  const frame = db.prepare('SELECT ref_type, ref_id FROM stack_frames WHERE id=?').get(req.params.frameId);
+  if (frame) {
+    progress.setNextStep(db, req.session.uid, frame.ref_type, frame.ref_id, note, new Date().toISOString());
+  }
+
   res.json({ ok: true });
 });
 
@@ -2472,6 +2585,21 @@ require('./export')(app, {
   fail,
   apiBase: A,
 });
+
+// ── Progress-API (Zielbild/Fortschrittsverlauf, Arbeitspaket S1/S2) ──
+// Mount-Pfad folgt der App-weiten BASE_PATH-Konvention (siehe `A = BASE +
+// '/api'`, analog zum Graph-/Export-Modul oben via `apiBase: A`) statt eines
+// literal hartkodierten '/api/progress': in der Standard-/Test-Konfiguration
+// (BASE_PATH unset/'/') ist `${A}/progress` identisch zu '/api/progress' -
+// siehe Abschlussbericht für die dokumentierte Abweichung vom wörtlichen
+// Vertragstext bei gesetztem BASE_PATH (Produktions-Default '/notes').
+app.use(`${A}/progress`, progress.createProgressRouter({
+  db,
+  requireAuth,
+  ownsRef,
+  getLatestFrameId,
+  now: () => new Date(),
+}));
 
 // ── Globaler Error-Handler (letzte Middleware) ────────────────
 // Loggt den Stacktrace ausschließlich nach stderr, niemals in der Antwort an
