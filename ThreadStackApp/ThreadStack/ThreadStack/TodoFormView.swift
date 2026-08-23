@@ -11,14 +11,16 @@ struct TodoFormView: View {
     /// Themen-gescopten Todo-Liste in ThemeDetailScreen).
     var onSaved: (() -> Void)? = nil
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var progressStore: ProgressStore // A3: Fortschrittsverlauf-Zugriff
     @Environment(\.dismiss) var dismiss
+    @State private var showProgressHistory = false // A3
     @State private var title = ""
     @State private var description = ""
     @State private var hasSnooze = false
     @State private var snoozeDate = Date()
-    @State private var snoozeHasTime = false
     @State private var hasDueDate = false
     @State private var dueDate = Date()
+    @State private var dueReminderEnabled = false
     @State private var isPrivate = false
     @State private var loading = false
     @State private var error: String?
@@ -44,22 +46,22 @@ struct TodoFormView: View {
                 Section {
                     Toggle("📅 Fälligkeitsdatum", isOn: $hasDueDate)
                     if hasDueDate {
-                        DatePicker("Fällig am", selection: $dueDate, displayedComponents: .date)
+                        DatePicker("Fällig am", selection: $dueDate,
+                                    displayedComponents: dueReminderEnabled ? [.date, .hourAndMinute] : [.date])
+                        Toggle("🔔 Erinnerung", isOn: $dueReminderEnabled)
                     }
                 } footer: {
-                    Text("Todos mit Fälligkeit werden zuerst angezeigt — frühestes oben.")
+                    Text(dueReminderEnabled
+                         ? "Erinnert dich per Benachrichtigung zu dieser Uhrzeit."
+                         : "Todos mit Fälligkeit werden zuerst angezeigt — frühestes oben.")
                 }
                 Section {
                     Toggle("😴 Schlafen bis", isOn: $hasSnooze)
                     if hasSnooze {
                         DatePicker("Wacht auf am", selection: $snoozeDate, displayedComponents: .date)
-                        Toggle("🕐 zu bestimmter Uhrzeit", isOn: $snoozeHasTime)
-                        if snoozeHasTime {
-                            DatePicker("Uhrzeit", selection: $snoozeDate, displayedComponents: .hourAndMinute)
-                        }
                     }
                 } footer: {
-                    Text(snoozeHasTime ? "Wacht exakt zu dieser Uhrzeit auf — mit Benachrichtigung." : "Bis zu diesem Datum ausblenden.")
+                    Text("Bis zu diesem Datum ausblenden.")
                 }
                 Section {
                     Toggle(isOn: $isPrivate) {
@@ -67,6 +69,14 @@ struct TodoFormView: View {
                     }
                 } footer: {
                     Text("Nur für dich — lässt sich in der Todos-Liste schnell ausblenden.")
+                }
+                // A3: Verlaufs-Zugriff nur für bereits gespeicherte Todos (id vorhanden).
+                if todo != nil {
+                    Section {
+                        Button { showProgressHistory = true } label: {
+                            Label("Fortschrittsverlauf", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                    }
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
@@ -87,6 +97,12 @@ struct TodoFormView: View {
                     description += (description.isEmpty ? "" : "\n\n") + text
                 })
             }
+            // A3: Fortschrittsverlauf-Sheet, nur für bereits gespeicherte Todos.
+            .sheet(isPresented: $showProgressHistory) {
+                if let t = todo {
+                    ProgressHistorySheet(refType: "todo", refId: t.id, store: progressStore)
+                }
+            }
         }
     }
 
@@ -95,15 +111,15 @@ struct TodoFormView: View {
         title = t.title
         description = stripHTML(t.description)   // show plain text in editor
         isPrivate = t.isPrivate
-        if let s = t.snoozedUntil, !s.isEmpty {
-            if s.count > 10, let d = parseFlexDate(s) {
-                hasSnooze = true; snoozeDate = d; snoozeHasTime = true
-            } else if let d = Self.parseDate(s) {
-                hasSnooze = true; snoozeDate = d
-            }
+        if let s = t.snoozedUntil, !s.isEmpty, let d = parseFlexDate(s) {
+            hasSnooze = true; snoozeDate = d
         }
-        if let s = t.dueDate, !s.isEmpty, let d = Self.parseDate(s) {
-            hasDueDate = true; dueDate = d
+        if let s = t.dueDate, !s.isEmpty {
+            if s.count > 10, let d = parseFlexDate(s) {
+                hasDueDate = true; dueDate = d; dueReminderEnabled = true
+            } else if let d = Self.parseDate(s) {
+                hasDueDate = true; dueDate = d
+            }
         }
     }
 
@@ -125,12 +141,12 @@ struct TodoFormView: View {
 
     private func save() {
         loading = true
-        let snooze: String? = hasSnooze
-            ? (snoozeHasTime ? ISO8601DateFormatter().string(from: snoozeDate) : Self.formatDate(snoozeDate))
+        let snooze: String? = hasSnooze ? Self.formatDate(snoozeDate) : nil
+        let due:    String? = hasDueDate
+            ? (dueReminderEnabled ? ISO8601DateFormatter().string(from: dueDate) : Self.formatDate(dueDate))
             : nil
-        let due:    String? = hasDueDate ? Self.formatDate(dueDate)    : nil
         let notificationTitle = title
-        let fireAt: Date? = (hasSnooze && snoozeHasTime) ? snoozeDate : nil
+        let fireAt: Date? = (hasDueDate && dueReminderEnabled) ? dueDate : nil
         Task {
             do {
                 if let t = todo {
@@ -139,12 +155,12 @@ struct TodoFormView: View {
                         done: t.done, result: t.result, resultDate: t.resultDate,
                         snoozedUntil: snooze, dueDate: due, isPrivate: isPrivate
                     )
-                    NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate)
+                    NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate, notificationTitle: "ThreadStack — Erinnerung")
                 } else {
                     let created = try await state.createTodoReturning(title: title, description: description,
                                                snoozedUntil: snooze, dueDate: due,
                                                isPrivate: isPrivate)
-                    NotificationScheduler.shared.reschedule(id: "todo-\(created.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate)
+                    NotificationScheduler.shared.reschedule(id: "todo-\(created.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate, notificationTitle: "ThreadStack — Erinnerung")
                     if let presetThemeId {
                         try? await state.addThemeLink(themeId: presetThemeId, refType: "todo", refId: created.id)
                     }

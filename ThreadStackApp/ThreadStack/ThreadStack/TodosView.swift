@@ -165,6 +165,7 @@ struct TodoRowView: View {
                     if !todo.done, let due = todo.dueDateFormatted {
                         dueBadge(text: due, status: todo.dueStatus)
                     }
+                    ProgressBadgeView(summary: todo.progress) // A3
                     if todo.isSnoozed, let wake = todo.snoozeWakeFormatted {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
@@ -255,7 +256,8 @@ struct TodoRowView: View {
             } : nil)
         }
         .sheet(isPresented: $showPush) {
-            StackPushSheet(target: PushTarget(refType: "todo", refId: todo.id, title: todo.title))
+            StackPushSheet(target: PushTarget(refType: "todo", refId: todo.id, title: todo.title,
+                                               nextStep: todo.progress?.nextStep)) // A3: Vorbelegung
         }
         .alert("Fehler", isPresented: Binding(
             get: { error != nil }, set: { if !$0 { error = nil } }

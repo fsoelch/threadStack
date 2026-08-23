@@ -60,6 +60,12 @@ struct Topic: Identifiable, Codable, Equatable {
     }
 
     var resultDateParsed: Date? { parseFlexDate(resultDate) }
+
+    // Arbeitspaket A3: additiv, vom Server optional in GET /api/meetings eingebettet
+    // (siehe ProgressModels.swift). Synthesized Codable dekodiert ein optionales
+    // Feld automatisch per decodeIfPresent — fehlt es im JSON (altes Server-Verhalten
+    // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
+    var progress: ProgressSummary?
 }
 
 // MARK: - TodoItem
@@ -115,6 +121,12 @@ struct TodoItem: Identifiable, Codable, Equatable {
         if due == today { return .today }
         return .future
     }
+
+    // Arbeitspaket A3: additiv, vom Server optional in GET /api/todos eingebettet
+    // (siehe ProgressModels.swift). Synthesized Codable dekodiert ein optionales
+    // Feld automatisch per decodeIfPresent — fehlt es im JSON (altes Server-Verhalten
+    // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
+    var progress: ProgressSummary?
 }
 
 enum DueStatus { case none, overdue, today, future }

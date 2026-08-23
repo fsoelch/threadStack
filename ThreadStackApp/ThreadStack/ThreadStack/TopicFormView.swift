@@ -4,6 +4,7 @@ struct TopicFormView: View {
     let meetingId: String
     var topic: Topic? = nil
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var progressStore: ProgressStore // A3: Fortschrittsverlauf-Zugriff
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
     @State private var description = ""
@@ -14,6 +15,7 @@ struct TopicFormView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var showLinkSheet = false
+    @State private var showProgressHistory = false // A3
 
     var body: some View {
         NavigationStack {
@@ -47,6 +49,14 @@ struct TopicFormView: View {
                 } footer: {
                     Text(snoozeHasTime ? "Wacht exakt zu dieser Uhrzeit auf — mit Benachrichtigung." : "Bis zu diesem Datum ausblenden.")
                 }
+                // A3: Verlaufs-Zugriff nur für bereits gespeicherte Topics (id vorhanden).
+                if topic != nil {
+                    Section {
+                        Button { showProgressHistory = true } label: {
+                            Label("Fortschrittsverlauf", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                    }
+                }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
                 }
@@ -65,6 +75,12 @@ struct TopicFormView: View {
                 LinkInsertSheet(onInsert: { text in
                     description += (description.isEmpty ? "" : "\n\n") + text
                 })
+            }
+            // A3: Fortschrittsverlauf-Sheet, nur für bereits gespeicherte Topics.
+            .sheet(isPresented: $showProgressHistory) {
+                if let t = topic {
+                    ProgressHistorySheet(refType: "topic", refId: t.id, store: progressStore)
+                }
             }
         }
     }

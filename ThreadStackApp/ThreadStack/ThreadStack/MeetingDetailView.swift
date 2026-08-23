@@ -330,6 +330,7 @@ struct TopicRowView: View {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
+                    ProgressBadgeView(summary: topic.progress) // A3
                     // Theme chips
                     if !themeLinks.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -408,7 +409,8 @@ struct TopicRowView: View {
                   catch { self.error = error.localizedDescription } }
         } : nil) }
         .sheet(isPresented: $showPush) {
-            StackPushSheet(target: PushTarget(refType: "topic", refId: topic.id, title: topic.title))
+            StackPushSheet(target: PushTarget(refType: "topic", refId: topic.id, title: topic.title,
+                                               nextStep: topic.progress?.nextStep)) // A3: Vorbelegung
         }
         .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}

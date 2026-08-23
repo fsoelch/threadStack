@@ -7,6 +7,12 @@ struct PushTarget: Identifiable {
     let refType: String
     let refId:   String
     let title:   String
+    /// A3: `progress.nextStep` des Vorhabens aus der Liste, falls dort schon
+    /// eingebettet (siehe `ProgressSummary`) — dient der Vorbelegung des
+    /// Notizfelds in `StackPushSheet`. `nil`, wenn (noch) kein Fortschritt
+    /// erfasst wurde oder die aufrufende Liste `progress` nicht mitliefert;
+    /// `StackPushSheet` fragt in diesem Fall selbst über den `ProgressStore` nach.
+    var nextStep: String? = nil
 }
 
 // MARK: - Floating Stack Panel
@@ -197,11 +203,35 @@ struct StackPanelView: View {
     }
 }
 
+// MARK: - Push-Dialog Vorbelegung (A3, Story 5)
+
+/// Reine, aus dem View-Body extrahierte Vorbelegungs-Logik für das
+/// Notizfeld von `StackPushSheet` (siehe A2-Vorbild in `ProgressBadgeView.swift`
+/// / `ProgressReentryCardView.swift`: "reine Logik getrennt vom View-Body,
+/// damit sie ohne Rendering unit-testbar ist"). Bevorzugt den bereits in der
+/// Liste eingebetteten `listNextStep` (kein Netzwerk-Roundtrip); fällt sonst
+/// auf `storeNextStep` (per `ProgressStore`-Nachladen) zurück. Liefert `nil`,
+/// wenn das Notizfeld bereits Text enthält (Nutzereingabe wird nie
+/// überschrieben) oder kein Wert vorliegt.
+enum StackPushPrefillLogic {
+    static func prefillValue(currentNote: String, listNextStep: String?, storeNextStep: String?) -> String? {
+        guard currentNote.isEmpty else { return nil }
+        if let ns = listNextStep?.trimmingCharacters(in: .whitespacesAndNewlines), !ns.isEmpty {
+            return ns
+        }
+        if let ns = storeNextStep?.trimmingCharacters(in: .whitespacesAndNewlines), !ns.isEmpty {
+            return ns
+        }
+        return nil
+    }
+}
+
 // MARK: - Push Sheet
 
 struct StackPushSheet: View {
     let target: PushTarget
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var progressStore: ProgressStore // A3
     @Environment(\.dismiss) var dismiss
     @State private var note: String = ""
     @State private var loading = false
@@ -238,8 +268,27 @@ struct StackPushSheet: View {
                         .disabled(loading || note.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .task { await prefillNextStepIfNeeded() } // A3: Story 5
         }
     }
+
+    /// A3 (Story 5): Notizfeld mit dem zuletzt erfassten "Nächster Schritt"
+    /// vorbelegen (siehe `StackPushPrefillLogic`). Nur falls der Wert nicht
+    /// bereits in der Liste eingebettet war, wird zusätzlich über den
+    /// `ProgressStore` nachgeladen.
+    private func prefillNextStepIfNeeded() async {
+        if let v = StackPushPrefillLogic.prefillValue(currentNote: note, listNextStep: target.nextStep, storeNextStep: nil) {
+            note = v
+            return
+        }
+        guard note.isEmpty else { return }
+        await progressStore.load(refType: target.refType, refId: target.refId)
+        let storeNextStep = progressStore.detail(refType: target.refType, refId: target.refId)?.nextStep
+        if let v = StackPushPrefillLogic.prefillValue(currentNote: note, listNextStep: nil, storeNextStep: storeNextStep) {
+            note = v
+        }
+    }
+
     private func submit() {
         loading = true; error = nil
         Task {
@@ -252,11 +301,33 @@ struct StackPushSheet: View {
     }
 }
 
+// MARK: - Pop-Sheet Zwischenstand-Quelle (A3, Story 6)
+
+/// Reine, aus dem View-Body extrahierte Zuordnung `Pop-Resolution -> Progress-
+/// Source` für den optionalen "Wo stehe ich gerade?"-Zwischenstand in
+/// `StackPopSheet`. Werte müssen exakt dem serverseitigen `SOURCES`-Set in
+/// `lib/progress/routes.js` entsprechen ('manual' | 'snooze' | 'pop_snoozed' |
+/// 'pop_dropped' | 'pop_done') — ein unbekannter Wert würde die Anfrage mit
+/// `invalid_source` (400) scheitern lassen. `nil` bedeutet: für diese
+/// Resolution existiert kein passender Source-Wert, das Feld wird in der UI
+/// entsprechend gar nicht erst angeboten (siehe `StackPopSheet.body`).
+enum StackPopCheckpointLogic {
+    static func progressSource(forResolution resolution: String) -> String? {
+        switch resolution {
+        case "done":    return "pop_done"
+        case "snoozed": return "pop_snoozed"
+        case "dropped": return "pop_dropped"
+        default:        return nil // "resumed": kein eigener Server-Source-Wert
+        }
+    }
+}
+
 // MARK: - Pop Sheet
 
 struct StackPopSheet: View {
     let frame: StackFrame
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var progressStore: ProgressStore // A3
     @Environment(\.dismiss) var dismiss
     @State private var resolution: String = "done"
     @State private var resultText: String = ""
@@ -265,6 +336,9 @@ struct StackPopSheet: View {
     @State private var loading = false
     @State private var error: String?
     @State private var showDriftAlert = false
+    // A3 (Story 6): optionaler Zwischenstand beim Schließen des Frames.
+    @State private var whereAmI: String = ""
+    @State private var checkpointError: String?
 
     var body: some View {
         NavigationStack {
@@ -297,6 +371,19 @@ struct StackPopSheet: View {
                         DatePicker("", selection: $snoozeUntil).labelsHidden()
                     }
                 }
+                // A3 (Story 6): kein eigener Progress-Source-Wert für "resumed"
+                // (siehe SOURCES in lib/progress/routes.js) — Feld dort nicht
+                // anzeigen, statt Text stillschweigend zu verwerfen.
+                if StackPopCheckpointLogic.progressSource(forResolution: resolution) != nil {
+                    Section("Wo stehe ich gerade? (optional)") {
+                        TextEditor(text: $whereAmI).frame(minHeight: 80)
+                        Text("\(whereAmI.count) / \(ProgressEntryCharLimit.maxLength)")
+                            .scaledFont(.caption).foregroundStyle(.secondary)
+                        if let checkpointError {
+                            Text(checkpointError).scaledFont(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                }
                 if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
             }
             .navigationTitle("Frame schließen")
@@ -304,7 +391,9 @@ struct StackPopSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Pop") { submit() }.disabled(loading)
+                    Button("Pop") { submit() }
+                        .disabled(loading || (StackPopCheckpointLogic.progressSource(forResolution: resolution) != nil
+                                               && ProgressEntryCharLimit.isOverLimit(length: whereAmI.count)))
                 }
             }
             .alert("In Backlog verschieben?", isPresented: $showDriftAlert) {
@@ -331,8 +420,40 @@ struct StackPopSheet: View {
                     resultDate: resolution == "done" ? resultDateStr : nil,
                     snoozedUntil: resolution == "snoozed" ? snoozeStr : nil
                 )
-                if r.drift_warning { showDriftAlert = true } else { dismiss() }
+                // A3 (Story 6): der Pop ist an dieser Stelle bereits serverseitig
+                // erfolgt — ein Fehler beim optionalen Zwischenstand darf ihn
+                // NICHT als fehlgeschlagen erscheinen lassen (siehe Vertrag).
+                let checkpointOK = await saveCheckpointIfNeeded()
+                loading = false
+                if r.drift_warning {
+                    showDriftAlert = true
+                } else if checkpointOK {
+                    dismiss()
+                }
+                // Bei checkpointOK == false bleibt das Sheet bewusst offen:
+                // `checkpointError` ist sichtbar, `whereAmI` bleibt erhalten
+                // (Text geht nicht verloren), Nutzer schließt manuell über
+                // "Abbrechen" (der eigentliche Pop ist bereits abgeschlossen).
             } catch { self.error = error.localizedDescription; loading = false }
+        }
+    }
+
+    /// A3 (Story 6): legt — falls ausgefüllt — einen Zwischenstand mit einer
+    /// zur `resolution` passenden Quelle an (siehe `SOURCES` in
+    /// `lib/progress/routes.js`: 'pop_done' | 'pop_snoozed' | 'pop_dropped').
+    /// Liefert `true`, wenn entweder kein Zwischenstand nötig war oder das
+    /// Speichern erfolgreich war.
+    private func saveCheckpointIfNeeded() async -> Bool {
+        let trimmed = whereAmI.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let source = StackPopCheckpointLogic.progressSource(forResolution: resolution)
+        else { return true }
+        do {
+            _ = try await progressStore.addEntry(refType: frame.ref_type, refId: frame.ref_id,
+                                                  bodyHTML: trimmed, source: source)
+            return true
+        } catch {
+            checkpointError = "Zwischenstand konnte nicht gespeichert werden — dein Text bleibt oben erhalten."
+            return false
         }
     }
 
