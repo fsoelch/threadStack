@@ -27,7 +27,7 @@ test('Progress-Router: GET /:refType/:refId liefert ref-Daten aus der echten tod
 
   const r = await agent.get(`/api/progress/todo/${todoId}`);
   assert.equal(r.status, 200);
-  assert.equal(r.body.ref.refId, todoId);
+  assert.equal(r.body.ref.id, todoId);
   assert.equal(r.body.ref.title, 'Todo-1');
   assert.equal(r.body.goal, '');
   assert.equal(r.body.nextStep, '');

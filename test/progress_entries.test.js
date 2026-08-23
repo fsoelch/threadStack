@@ -413,11 +413,11 @@ test('GET .../entries: Cursor-Pagination + gapDaysBefore ueber Seitengrenzen hin
   assert.ok(/e4/.test(page1.body.entries[1].bodyHtml));
   assert.equal(page1.body.entries[0].gapDaysBefore, 5); // e5 -> e4: 20.-15. = 5 Tage
   assert.equal(page1.body.entries[1].gapDaysBefore, 1); // e4 -> e3 (ueber Seitengrenze!): 15.-14. = 1 Tag
-  assert.equal(page1.body.hasMore, true);
-  assert.ok(page1.body.nextCursor);
+  assert.equal(page1.body.page.hasMore, true);
+  assert.ok(page1.body.page.nextCursor);
 
   // Seite 2 ueber Cursor: e3, e2
-  const page2 = await agent.get(`/api/progress/todo/${todoId}/entries?limit=2&cursor=${encodeURIComponent(page1.body.nextCursor)}`);
+  const page2 = await agent.get(`/api/progress/todo/${todoId}/entries?limit=2&cursor=${encodeURIComponent(page1.body.page.nextCursor)}`);
   assert.equal(page2.status, 200);
   assert.equal(page2.body.entries.length, 2);
   assert.ok(/e3/.test(page2.body.entries[0].bodyHtml));
@@ -425,15 +425,15 @@ test('GET .../entries: Cursor-Pagination + gapDaysBefore ueber Seitengrenzen hin
   assert.equal(page2.body.entries[0].gapDaysBefore, 13); // e3 -> e2: 14.01 - 01.01 = 13 Tage
   assert.equal(page2.body.entries[1].gapDaysBefore, 31); // e2 -> e1 (ueber Seitengrenze): 01.01 - 01.12 = 31 Tage
   assert.equal(page2.body.entries[1].showDormancyMarker, true); // > GAP_DAYS (7)
-  assert.equal(page2.body.hasMore, true);
+  assert.equal(page2.body.page.hasMore, true);
 
   // Seite 3: e1 (aeltester Eintrag ueberhaupt) -> gapDaysBefore = 0
-  const page3 = await agent.get(`/api/progress/todo/${todoId}/entries?limit=2&cursor=${encodeURIComponent(page2.body.nextCursor)}`);
+  const page3 = await agent.get(`/api/progress/todo/${todoId}/entries?limit=2&cursor=${encodeURIComponent(page2.body.page.nextCursor)}`);
   assert.equal(page3.body.entries.length, 1);
   assert.ok(/e1/.test(page3.body.entries[0].bodyHtml));
   assert.equal(page3.body.entries[0].gapDaysBefore, 0);
-  assert.equal(page3.body.hasMore, false);
-  assert.equal(page3.body.nextCursor, null);
+  assert.equal(page3.body.page.hasMore, false);
+  assert.equal(page3.body.page.nextCursor, null);
 });
 
 test('reentry.ai: nutzt injizierten getLatestFrameId-Callback (auch async)', async (t) => {

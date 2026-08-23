@@ -1,10 +1,11 @@
 {
-  "_comment": "Kanonische Beispiel-JSONs der Progress-API (Arbeitspaket S1, lib/progress/routes.js). Wird von test/progress_*.test.js NICHT automatisiert gegen diese Datei geprueft - sie dient als Referenz fuer S2/W1/W2/A1-A3, um das exakte Antwortformat gegenzupruefen. Enthaelt keine echten personenbezogenen Daten.",
+  "_comment": "Kanonische Beispiel-JSONs der Progress-API (Arbeitspaket S1, lib/progress/routes.js). Wird von test/progress_*.test.js NICHT automatisiert gegen diese Datei geprueft - sie dient als Referenz fuer S2/W1/W2/A1-A3, um das exakte Antwortformat gegenzupruefen. Enthaelt keine echten personenbezogenen Daten. Stand 2026-08-23 gegen den echten Server verifiziert (vorherige Fassung wich in ref.type/id/exists, excerpt und der Pagination-Huelle der /entries-Route vom tatsaechlichen Server ab - siehe Commit 'fix(progress): API-Vertragsabweichungen ...').",
 
   "GET /api/progress/:refType/:refId": {
     "ref": {
-      "refType": "todo",
-      "refId": "t_kickoff01",
+      "type": "todo",
+      "id": "t_kickoff01",
+      "exists": true,
       "title": "Angebot fuer Projekt Nordwind erstellen",
       "done": false,
       "snoozedUntil": null,
@@ -42,6 +43,7 @@
         "kind": "note",
         "source": "manual",
         "bodyHtml": "<p>Kickoff mit Team abgehalten, erste Eckdaten stehen.</p>",
+        "excerpt": "Kickoff mit Team abgehalten, erste Eckdaten stehen.",
         "createdAt": "2026-08-10T09:10:00.000Z",
         "editedAt": null,
         "editable": true,
@@ -56,6 +58,7 @@
         "kind": "note",
         "source": "manual",
         "bodyHtml": "<p>Erste Rueckmeldung vom Kunden eingeholt.</p>",
+        "excerpt": "Erste Rueckmeldung vom Kunden eingeholt.",
         "createdAt": "2026-07-22T11:00:00.000Z",
         "editedAt": "2026-07-22T11:05:00.000Z",
         "editable": true,
@@ -64,13 +67,14 @@
         "showDormancyMarker": false
       }
     ],
-    "page": { "limit": 20, "nextCursor": null, "hasMore": false }
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
   },
 
   "GET /api/progress/:refType/:refId?limit=20 (dormantes, unbearbeitetes Vorhaben)": {
     "ref": {
-      "refType": "topic",
-      "refId": "tp_altprojekt1",
+      "type": "topic",
+      "id": "tp_altprojekt1",
+      "exists": true,
       "title": "Altsystem-Migration klaeren",
       "done": false,
       "snoozedUntil": null,
@@ -101,7 +105,7 @@
       "ai": { "available": true, "frameId": "sf_c1a2f3e4" }
     },
     "entries": [],
-    "page": { "limit": 20, "nextCursor": null, "hasMore": false }
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
   },
 
   "GET /api/progress/:refType/:refId/entries?limit=20&cursor=...": {
@@ -113,6 +117,7 @@
         "kind": "note",
         "source": "manual",
         "bodyHtml": "<p>Erste Rueckmeldung vom Kunden eingeholt.</p>",
+        "excerpt": "Erste Rueckmeldung vom Kunden eingeholt.",
         "createdAt": "2026-07-22T11:00:00.000Z",
         "editedAt": "2026-07-22T11:05:00.000Z",
         "editable": true,
@@ -121,9 +126,7 @@
         "showDormancyMarker": false
       }
     ],
-    "nextCursor": null,
-    "hasMore": false,
-    "page": { "limit": 20, "cursor": "2026-08-10T09:10:00.000Z|pe_b1c2d3e4f5a6" }
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
   },
 
   "GET .../entries (kind=result Eintrag ueber ref.result aufgeloest)": {
@@ -135,6 +138,7 @@
         "kind": "result",
         "source": "pop_done",
         "bodyHtml": "<p>Angebot verschickt und vom Kunden akzeptiert.</p>",
+        "excerpt": "Angebot verschickt und vom Kunden akzeptiert.",
         "createdAt": "2026-08-15T14:00:00.000Z",
         "editedAt": null,
         "editable": false,
@@ -143,9 +147,7 @@
         "showDormancyMarker": false
       }
     ],
-    "nextCursor": null,
-    "hasMore": false,
-    "page": { "limit": 20, "cursor": null }
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
   },
 
   "POST /api/progress/:refType/:refId/entries -> 201": {
@@ -156,11 +158,14 @@
       "kind": "note",
       "source": "manual",
       "bodyHtml": "<p>Kickoff mit Team abgehalten, erste Eckdaten stehen.</p>",
+      "excerpt": "Kickoff mit Team abgehalten, erste Eckdaten stehen.",
       "createdAt": "2026-08-10T09:10:00.000Z",
       "editedAt": null,
       "editable": true,
       "linkFrameId": null,
-      "clientToken": "web-a1b2c3d4"
+      "clientToken": "web-a1b2c3d4",
+      "gapDaysBefore": 0,
+      "showDormancyMarker": false
     },
     "stats": {
       "entryCount": 2,
@@ -182,11 +187,14 @@
       "kind": "note",
       "source": "manual",
       "bodyHtml": "<p>Kickoff mit Team abgehalten, erste Eckdaten stehen.</p>",
+      "excerpt": "Kickoff mit Team abgehalten, erste Eckdaten stehen.",
       "createdAt": "2026-08-10T09:10:00.000Z",
       "editedAt": null,
       "editable": true,
       "linkFrameId": null,
-      "clientToken": "web-a1b2c3d4"
+      "clientToken": "web-a1b2c3d4",
+      "gapDaysBefore": 0,
+      "showDormancyMarker": false
     },
     "idempotent": true,
     "stats": {
@@ -209,11 +217,14 @@
       "kind": "note",
       "source": "manual",
       "bodyHtml": "<p>Kickoff mit Team abgehalten, ueberarbeitete Version.</p>",
+      "excerpt": "Kickoff mit Team abgehalten, ueberarbeitete Version.",
       "createdAt": "2026-08-10T09:10:00.000Z",
       "editedAt": "2026-08-10T09:20:00.000Z",
       "editable": true,
       "linkFrameId": null,
-      "clientToken": "web-a1b2c3d4"
+      "clientToken": "web-a1b2c3d4",
+      "gapDaysBefore": 0,
+      "showDormancyMarker": false
     }
   },
 

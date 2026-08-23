@@ -75,6 +75,26 @@ struct ProgressEntry: Codable, Equatable, Identifiable {
     let showDormancyMarker: Bool
     let editable: Bool
 
+    // Custom init(from:) unten deaktiviert die automatische Synthese des
+    // memberwise Initializers — hier explizit wiederhergestellt, u.a. fuer
+    // Tests, die ProgressEntry direkt konstruieren (siehe ProgressViewLogicTests.swift).
+    init(id: String, refType: String, refId: String, kind: String, source: String,
+         bodyHtml: String, excerpt: String, createdAt: String, editedAt: String?,
+         gapDaysBefore: Int, showDormancyMarker: Bool, editable: Bool) {
+        self.id = id
+        self.refType = refType
+        self.refId = refId
+        self.kind = kind
+        self.source = source
+        self.bodyHtml = bodyHtml
+        self.excerpt = excerpt
+        self.createdAt = createdAt
+        self.editedAt = editedAt
+        self.gapDaysBefore = gapDaysBefore
+        self.showDormancyMarker = showDormancyMarker
+        self.editable = editable
+    }
+
     private enum CodingKeys: String, CodingKey {
         case id, refType, refId, kind, source, bodyHtml, excerpt, createdAt, editedAt, gapDaysBefore, showDormancyMarker, editable
     }
