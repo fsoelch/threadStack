@@ -2,14 +2,20 @@
 //  ProgressEntryEditorSheet.swift
 //  ThreadStack
 //
-//  Arbeitspaket A2 ("App-UI-Bausteine Progress"): Sheet zum Erfassen/
-//  Bearbeiten eines Zwischenstands (Rich Text). Nutzt AUSSCHLIESSLICH die
+//  Arbeitspaket A2 ("App-UI-Bausteine Progress"): Sheet zum Bearbeiten eines
+//  BESTEHENDEN Zwischenstands (Rich Text). Nutzt AUSSCHLIESSLICH die
 //  bestehende Editor-Komponentenfamilie aus dem Wissens-Editor
 //  (`KnowledgeEditorController` + `KnowledgeEditorWebView` +
 //  `KnowledgeEditorToolbar`, siehe `KnowledgeEditorView.swift` als
 //  Referenzintegration) — kein neuer Editor, keine eigene WKWebView-Bridge.
 //  Bilder sind für Zwischenstände serverseitig verboten, daher
 //  `KnowledgeEditorToolbar(..., showImageButton: false)`.
+//
+//  Arbeitspaket A1 (UX-Nachbesserung "Zielbild und Fortschrittsverlauf"):
+//  auf "nur Bearbeiten" verengt — das Neuanlegen eines Zwischenstands läuft
+//  jetzt ausschließlich über den immer sichtbaren Composer
+//  (`ProgressEntryComposerView.swift`), der bisherige `Mode.create`-Zweig
+//  entfällt ersatzlos (siehe dortiger Datei-Kopfkommentar).
 //
 
 import SwiftUI
@@ -56,18 +62,21 @@ enum ProgressEntryCharLimit {
 // MARK: - View
 
 struct ProgressEntryEditorSheet: View {
-    enum Mode: Equatable {
-        case create
-        case edit(ProgressEntry)
-    }
-
-    let mode: Mode
+    let entry: ProgressEntry
     let refType: String
     let refId: String
     @ObservedObject var store: ProgressStore
     /// Wird nach erfolgreichem Speichern aufgerufen, bevor das Sheet
     /// schließt — analog zu `KnowledgeEditorView.onSaved`.
     var onSaved: (() -> Void)? = nil
+
+    init(entry: ProgressEntry, refType: String, refId: String, store: ProgressStore, onSaved: (() -> Void)? = nil) {
+        self.entry = entry
+        self.refType = refType
+        self.refId = refId
+        self.store = store
+        self.onSaved = onSaved
+    }
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var controller = KnowledgeEditorController()
@@ -88,24 +97,18 @@ struct ProgressEntryEditorSheet: View {
     @State private var measuredEditorHeight: CGFloat = 240
     #endif
 
-    private var navigationTitleText: String {
-        switch mode {
-        case .create: return "Zwischenstand erfassen"
-        case .edit: return "Zwischenstand bearbeiten"
-        }
-    }
+    private var navigationTitleText: String { "Zwischenstand bearbeiten" }
 
     private var goalExcerpt: String? {
         let goal = store.detail(refType: refType, refId: refId)?.goal.trimmingCharacters(in: .whitespacesAndNewlines)
         return (goal?.isEmpty ?? true) ? nil : goal
     }
 
-    /// Letzter (vorhandener) Zwischenstand als Kontext-Auszug — bei
-    /// Bearbeitung eines bestehenden Eintrags wird dieser selbst dabei
-    /// ausgeschlossen, damit der Kontext wirklich den VORHERIGEN Stand zeigt.
+    /// Letzter (vorhandener) Zwischenstand als Kontext-Auszug — der gerade
+    /// bearbeitete Eintrag wird dabei selbst ausgeschlossen, damit der
+    /// Kontext wirklich den VORHERIGEN Stand zeigt.
     private var previousEntryExcerpt: String? {
-        let editingId: String? = { if case .edit(let e) = mode { return e.id }; return nil }()
-        let candidate = store.entries(refType: refType, refId: refId).first { $0.id != editingId }
+        let candidate = store.entries(refType: refType, refId: refId).first { $0.id != entry.id }
         guard let candidate, !candidate.excerpt.isEmpty else { return nil }
         return candidate.excerpt
     }
@@ -178,9 +181,7 @@ struct ProgressEntryEditorSheet: View {
                 }
             }
             .task {
-                if case .edit(let entry) = mode {
-                    contentToLoad = entry.bodyHtml
-                }
+                contentToLoad = entry.bodyHtml
             }
             .onChange(of: controller.isReady) { _, ready in
                 guard ready else { contentLoaded = false; return }
@@ -229,12 +230,7 @@ struct ProgressEntryEditorSheet: View {
             return
         }
         do {
-            switch mode {
-            case .create:
-                _ = try await store.addEntry(refType: refType, refId: refId, bodyHTML: html, source: "manual")
-            case .edit(let entry):
-                _ = try await store.updateEntry(refType: refType, refId: refId, entryId: entry.id, bodyHTML: html)
-            }
+            _ = try await store.updateEntry(refType: refType, refId: refId, entryId: entry.id, bodyHTML: html)
             onSaved?()
             dismiss()
         } catch {

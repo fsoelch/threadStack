@@ -9,6 +9,15 @@
 //  Retry, siehe `StackPanelView.runReentry` in `StackViews.swift`) — kein
 //  neuer KI-Aufruf-Mechanismus.
 //
+//  Arbeitspaket A1 (UX-Nachbesserung "Zielbild und Fortschrittsverlauf"):
+//  der bisherige eigene Sheet-Einstieg (`ProgressEntryEditorSheet(mode: .create, …)`)
+//  entfällt ersatzlos — der "Zwischenstand erfassen"-CTA ruft jetzt nur noch
+//  `onRequestCompose?()` auf, damit der Aufrufer (Paket A2 dieser
+//  Nachbesserung) den bereits eingebetteten, immer sichtbaren Composer
+//  (`ProgressEntryComposerView`) fokussieren kann, statt ein zweites,
+//  abweichendes Eingabe-UI zu öffnen (siehe CLAUDE.md "Wiederverwendung vor
+//  Neuentwicklung").
+//
 
 import SwiftUI
 
@@ -45,12 +54,24 @@ struct ProgressReentryCardView: View {
     let refType: String
     let refId: String
     @ObservedObject var store: ProgressStore
+    /// Wird aufgerufen, wenn der Nutzer über diese Karte einen neuen
+    /// Zwischenstand erfassen möchte — der Aufrufer fokussiert daraufhin den
+    /// bereits eingebetteten Composer (`ProgressEntryComposerView`). `nil`
+    /// (Default, rückwärtskompatibel) bedeutet: kein CTA-Button wird
+    /// angezeigt (nicht nur deaktiviert).
+    var onRequestCompose: (() -> Void)? = nil
     @EnvironmentObject var appState: AppState
 
-    @State private var showEntryEditor = false
     @State private var aiSummary: String?
     @State private var aiError: String?
     @State private var aiLoading = false
+
+    init(refType: String, refId: String, store: ProgressStore, onRequestCompose: (() -> Void)? = nil) {
+        self.refType = refType
+        self.refId = refId
+        self.store = store
+        self.onRequestCompose = onRequestCompose
+    }
 
     var body: some View {
         if let detail = store.detail(refType: refType, refId: refId),
@@ -75,9 +96,6 @@ struct ProgressReentryCardView: View {
         .padding(12)
         .background(RoundedRectangle(cornerRadius: DS.cardRadius).fill(DS.accentLight.opacity(0.6)))
         .overlay(RoundedRectangle(cornerRadius: DS.cardRadius).strokeBorder(DS.accent.opacity(0.25)))
-        .sheet(isPresented: $showEntryEditor) {
-            ProgressEntryEditorSheet(mode: .create, refType: refType, refId: refId, store: store)
-        }
     }
 
     private func header(reentry: ProgressReentry) -> some View {
@@ -152,13 +170,15 @@ struct ProgressReentryCardView: View {
                     .disabled(aiLoading)
                     .accessibilityLabel("KI-Zusammenfassung anfordern")
                 }
-                Button {
-                    showEntryEditor = true
-                } label: {
-                    Label("Zwischenstand erfassen", systemImage: "plus")
+                if let onRequestCompose {
+                    Button {
+                        onRequestCompose()
+                    } label: {
+                        Label("Zwischenstand erfassen", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                    .accessibilityLabel("Zwischenstand erfassen")
                 }
-                .buttonStyle(.borderedProminent).controlSize(.small)
-                .accessibilityLabel("Zwischenstand erfassen")
             }
         }
     }

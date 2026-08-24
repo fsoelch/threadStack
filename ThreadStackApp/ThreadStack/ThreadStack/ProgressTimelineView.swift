@@ -13,6 +13,26 @@
 //  `StackPopSheet`/`TodosView` für die Lösch-Bestätigung, `scaledFont` für
 //  alle Texte.
 //
+//  Arbeitspaket A1 (UX-Nachbesserung "Zielbild und Fortschrittsverlauf"):
+//  fest in `TodoFormView`/`TopicFormView` eingebettet statt in einem
+//  separaten Sheet zu leben (`ProgressHistorySheet` entfällt, wird von
+//  Paket A2 dieser Nachbesserung entfernt). Nimmt den immer sichtbaren
+//  Composer (`ProgressEntryComposerView`) sowie die Wiedereinstiegskarte
+//  (`ProgressReentryCardView`) als generische `@ViewBuilder`-Slots entgegen,
+//  statt sie selbst zu instanziieren — der einbettende Aufrufer (Paket A2)
+//  entscheidet, WIE der Composer angebunden wird (Fokus-State etc.), diese
+//  View bestimmt nur noch die verbindliche REIHENFOLGE:
+//  Composer → Zielbild → Nächster Schritt → Wiedereinstiegskarte → Verlauf.
+//  `composer()`/`reentry()` werden dabei UNABHÄNGIG vom Ladezustand des
+//  restlichen Bereichs gerendert (siehe `body` unten) — nur Zielbild/
+//  Nächster-Schritt/Trenner/Verlauf schalten auf Lade-/Fehleranzeige um.
+//
+//  Der bisherige interne "+ Zwischenstand erfassen"-Einstieg (Kopfzeile UND
+//  Empty-State) entfällt ersatzlos, da das Erfassen jetzt ausschließlich
+//  über den immer sichtbaren, von außen übergebenen Composer läuft (siehe
+//  CLAUDE.md "Wiederverwendung vor Neuentwicklung" — kein zweiter, paralleler
+//  Erfassungs-Einstieg neben dem Composer).
+//
 
 import SwiftUI
 
@@ -95,10 +115,12 @@ enum ProgressDormancyFormatting {
 
 // MARK: - View
 
-struct ProgressTimelineView: View {
+struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     let refType: String
     let refId: String
     @ObservedObject var store: ProgressStore
+    private let composerContent: () -> Composer
+    private let reentryContent: () -> Reentry
 
     @State private var showGoalEditor = false
     @State private var showNextStepEditor = false
@@ -107,72 +129,50 @@ struct ProgressTimelineView: View {
     @State private var deleteErrorText: String?
     @State private var expandedEntryIds: Set<String> = []
 
+    init(refType: String, refId: String, store: ProgressStore,
+         @ViewBuilder composer: @escaping () -> Composer,
+         @ViewBuilder reentry: @escaping () -> Reentry) {
+        self.refType = refType
+        self.refId = refId
+        self.store = store
+        self.composerContent = composer
+        self.reentryContent = reentry
+    }
+
     private struct EntrySheetTarget: Identifiable {
         let id: String
-        let mode: ProgressEntryEditorSheet.Mode
+        let entry: ProgressEntry
     }
 
     var body: some View {
-        Group {
-            switch store.state(refType: refType, refId: refId) {
-            case .idle, .loading:
-                ProgressView("Lädt Fortschritt…")
-                    .frame(maxWidth: .infinity)
-                    .padding()
-            case .failed(let error):
-                errorState(error)
-            case .loaded(let detail):
-                loadedContent(detail: detail)
+        VStack(alignment: .leading, spacing: 12) {
+            // (1) Composer — immer sichtbar, unabhängig vom Ladezustand.
+            composerContent()
+            // (2)+(3) Zielbild/Nächster Schritt — nur im geladenen Zustand.
+            headerSection
+            // (4) Wiedereinstiegskarte — immer gemountet (verbirgt sich
+            // selbst über store.shouldShowReentry, siehe Vertrag), NICHT vom
+            // Ladezustand des restlichen Bereichs abhängig.
+            reentryContent()
+            // (5) Trenner — nur wenn der Verlaufsbereich Inhalt hat.
+            if historyAreaHasVisibleContent {
+                Divider()
             }
+            // (6) Verlauf — Lade-/Fehleranzeige oder Einträge, je nach Zustand.
+            historySection
         }
         .task { await loadIfNeeded() }
-    }
-
-    private func loadIfNeeded() async {
-        if store.state(refType: refType, refId: refId) == .idle {
-            await store.load(refType: refType, refId: refId)
-        }
-    }
-
-    private func errorState(_ error: ProgressError) -> some View {
-        VStack(spacing: 8) {
-            Text(error.errorDescription ?? "Unbekannter Fehler.")
-                .scaledFont(.subheadline).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            Button("Erneut versuchen") {
-                Task { await store.retry(refType: refType, refId: refId) }
-            }
-            .buttonStyle(.bordered)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
-    }
-
-    // MARK: - Loaded content
-
-    // Zielbild/Nächster Schritt bleiben FIXIERT sichtbar, nur der eigentliche
-    // Verlauf scrollt darunter (Tester-Fund: Zielbild scrollte bislang mit
-    // dem restlichen Inhalt mit statt fixiert zu bleiben, wie es die Web-
-    // Variante per `position:sticky` bereits tut).
-    private func loadedContent(detail: ProgressDetail) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 16) {
-                goalSection(detail: detail)
-                nextStepSection(detail: detail)
-            }
-            Divider().padding(.vertical, 12)
-            ScrollView {
-                entriesSection(detail: detail)
-            }
-        }
         .sheet(isPresented: $showGoalEditor) {
             ProgressGoalEditorSheet(refType: refType, refId: refId, store: store)
         }
         .sheet(isPresented: $showNextStepEditor) {
-            NextStepEditSheet(refType: refType, refId: refId, store: store, initialValue: detail.nextStep)
+            NextStepEditSheet(
+                refType: refType, refId: refId, store: store,
+                initialValue: store.detail(refType: refType, refId: refId)?.nextStep ?? ""
+            )
         }
         .sheet(item: $entrySheetTarget) { target in
-            ProgressEntryEditorSheet(mode: target.mode, refType: refType, refId: refId, store: store)
+            ProgressEntryEditorSheet(entry: target.entry, refType: refType, refId: refId, store: store)
         }
         .confirmationDialog(
             deleteDialogTitle,
@@ -193,6 +193,69 @@ struct ProgressTimelineView: View {
         } message: {
             Text(deleteErrorText ?? "")
         }
+    }
+
+    private func loadIfNeeded() async {
+        if store.state(refType: refType, refId: refId) == .idle {
+            await store.load(refType: refType, refId: refId)
+        }
+    }
+
+    /// Ob der Verlaufsbereich (Lade-/Fehleranzeige oder Einträge/Empty-Hinweis)
+    /// aktuell sichtbaren Inhalt hat — steuert den Trenner (5), siehe Vertrag
+    /// "Divider() nur wenn der Verlaufsbereich Inhalt hat". Bei den aktuell
+    /// vier `LoadState`-Fällen trifft das durchgängig zu (Ladeanzeige,
+    /// Fehlermeldung, Einträge und der Leer-Hinweis rendern alle sichtbaren
+    /// Text) — als expliziter Schalter statt eines fest verdrahteten `true`
+    /// gehalten, damit ein künftiger, wirklich inhaltsloser Zwischenzustand
+    /// (aktuell nicht Teil des Vertrags) den Trenner sauber ausblenden könnte,
+    /// ohne die Aufrufstelle im `body` anzufassen.
+    private var historyAreaHasVisibleContent: Bool {
+        switch store.state(refType: refType, refId: refId) {
+        case .idle, .loading, .failed, .loaded: return true
+        }
+    }
+
+    @ViewBuilder
+    private var headerSection: some View {
+        if let detail = store.detail(refType: refType, refId: refId) {
+            VStack(alignment: .leading, spacing: 16) {
+                goalSection(detail: detail)
+                nextStepSection(detail: detail)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var historySection: some View {
+        switch store.state(refType: refType, refId: refId) {
+        case .idle, .loading:
+            loadingState
+        case .failed(let error):
+            errorState(error)
+        case .loaded(let detail):
+            entriesSection(detail: detail)
+        }
+    }
+
+    private var loadingState: some View {
+        ProgressView("Lädt Fortschritt…")
+            .frame(maxWidth: .infinity)
+            .padding()
+    }
+
+    private func errorState(_ error: ProgressError) -> some View {
+        VStack(spacing: 8) {
+            Text(error.errorDescription ?? "Unbekannter Fehler.")
+                .scaledFont(.subheadline).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Erneut versuchen") {
+                Task { await store.retry(refType: refType, refId: refId) }
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity)
+        .padding()
     }
 
     private var deleteDialogTitle: String {
@@ -248,17 +311,7 @@ struct ProgressTimelineView: View {
     private func entriesSection(detail: ProgressDetail) -> some View {
         let entries = store.entries(refType: refType, refId: refId)
         return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Verlauf").scaledFont(.headline)
-                Spacer()
-                Button {
-                    entrySheetTarget = EntrySheetTarget(id: "create", mode: .create)
-                } label: {
-                    Label("Zwischenstand erfassen", systemImage: "plus")
-                }
-                .buttonStyle(.bordered).controlSize(.small)
-                .accessibilityLabel("Zwischenstand erfassen")
-            }
+            Text("Verlauf").scaledFont(.headline)
 
             if entries.isEmpty {
                 emptyState
@@ -279,18 +332,10 @@ struct ProgressTimelineView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Text("Noch kein Zwischenstand erfasst.")
-                .scaledFont(.subheadline).foregroundStyle(.secondary)
-            Button {
-                entrySheetTarget = EntrySheetTarget(id: "create", mode: .create)
-            } label: {
-                Label("Ersten Zwischenstand erfassen", systemImage: "plus.circle")
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity)
-        .padding()
+        Text("Noch kein Zwischenstand erfasst — trag oben deinen ersten ein.")
+            .scaledFont(.subheadline).foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding()
     }
 
     private func dormancyMarkerRow(gapDays: Int) -> some View {
@@ -323,7 +368,7 @@ struct ProgressTimelineView: View {
                 Spacer()
                 if entry.editable {
                     Button {
-                        entrySheetTarget = EntrySheetTarget(id: entry.id, mode: .edit(entry))
+                        entrySheetTarget = EntrySheetTarget(id: entry.id, entry: entry)
                     } label: {
                         Image(systemName: "pencil")
                     }
@@ -404,6 +449,19 @@ struct ProgressTimelineView: View {
             deleteErrorText = (error as? ProgressError)?.errorDescription ?? error.localizedDescription
             deleteCandidate = nil
         }
+    }
+}
+
+// MARK: - Komfort-Init ohne Composer/Reentry-Slot
+
+/// Rückwärtskompatibler Initializer OHNE `composer`/`reentry`-Slots (beide
+/// rendern dann `EmptyView`). Wird u.a. von `ProgressHistorySheet` genutzt,
+/// die ihre Wiedereinstiegskarte weiterhin selbst separat oberhalb dieser
+/// View platziert (siehe dortiger Datei-Kopfkommentar) und keinen Composer
+/// einbettet.
+extension ProgressTimelineView where Composer == EmptyView, Reentry == EmptyView {
+    init(refType: String, refId: String, store: ProgressStore) {
+        self.init(refType: refType, refId: refId, store: store, composer: { EmptyView() }, reentry: { EmptyView() })
     }
 }
 
