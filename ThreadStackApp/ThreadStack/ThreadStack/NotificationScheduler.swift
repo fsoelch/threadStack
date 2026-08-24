@@ -1,7 +1,7 @@
 import UserNotifications
 
-/// Plant/verwaltet lokale Systembenachrichtigungen für zeitbasierte Snoozes
-/// (Todos/Themen). Rein geräteseitig — kein Server-Push, funktioniert aber
+/// Plant/verwaltet lokale Systembenachrichtigungen für Todo-Fälligkeits-
+/// Erinnerungen und zeitbasierte Themen-Snoozes. Rein geräteseitig — kein Server-Push, funktioniert aber
 /// auch wenn die App im Hintergrund ist, da `UNCalendarNotificationTrigger`
 /// vom Betriebssystem selbst ausgelöst wird.
 @MainActor
@@ -27,14 +27,17 @@ final class NotificationScheduler {
     /// Aufruf ist idempotent (alter Request wird immer zuerst entfernt).
     /// `isPrivate`: bei true wird ein generischer, inhaltsloser Text angezeigt
     /// statt des Todo-/Themen-Titels (Vorschau auf Sperrbildschirm/geteiltem Gerät).
-    func reschedule(id: String, title: String, fireAt: Date?, isPrivate: Bool = false) {
+    /// `notificationTitle`: Überschrift der Systembenachrichtigung — Aufrufer
+    /// passen sie an den Auslöser an (z. B. Fälligkeits-Erinnerung vs. Snooze-Wecker).
+    func reschedule(id: String, title: String, fireAt: Date?, isPrivate: Bool = false,
+                     notificationTitle: String = "ThreadStack — aufgewacht") {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [id])
         guard let fireAt, fireAt > Date() else { return }
         requestPermissionIfNeeded()
         let content = UNMutableNotificationContent()
-        content.title = "ThreadStack — aufgewacht"
-        content.body = isPrivate ? "Ein privates Todo ist aufgewacht" : title
+        content.title = notificationTitle
+        content.body = isPrivate ? "Ein privates Todo ist fällig" : title
         content.sound = .default
         let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: fireAt)
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
