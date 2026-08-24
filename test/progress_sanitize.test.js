@@ -50,6 +50,25 @@ test('sanitizeProgressHtml: img mit quoted ">" im Attributwert wird trotzdem ent
   assert.ok(!/<img/i.test(out));
 });
 
+test('sanitizeProgressHtml: verschachteltes/zusammengesetztes <img> ueberlebt nicht (Security Review F1)', () => {
+  // Der Regex-Vorstrip (stripDisallowedMediaTags) kann durch ineinander
+  // verschachtelte Tag-Fragmente umgangen werden, die sich erst NACH dem
+  // Vorstrip zu einem gueltigen <img> zusammensetzen. Die eigentliche
+  // Sicherheitsgrenze ist deshalb allowImages:false in der Allowlist selbst.
+  const out1 = sanitizeProgressHtml('<<img>img src="https://evil.example/p.png">');
+  assert.ok(!/<img/i.test(out1), `img sollte entfernt sein, war: ${out1}`);
+  const out2 = sanitizeProgressHtml('<im<img>g src="https://evil.example/p.png">');
+  assert.ok(!/<img/i.test(out2), `img sollte entfernt sein, war: ${out2}`);
+});
+
+test('sanitizePlainField: doppelt kodierte Entities erzeugen kein Markup mehr (Security Review F2)', () => {
+  const out1 = sanitizePlainField('&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;');
+  assert.ok(!/[<>]/.test(out1), `sollte keine spitzen Klammern enthalten, war: ${out1}`);
+  const out2 = sanitizePlainField('<b>hi</b> &amp;lt;img src=x onerror=1&amp;gt;');
+  assert.ok(!/[<>]/.test(out2), `sollte keine spitzen Klammern enthalten, war: ${out2}`);
+  assert.ok(/hi/.test(out2));
+});
+
 test('progressPlainText: entfernt Markup, normalisiert Whitespace', () => {
   const out = progressPlainText('<p>Hallo   <strong>Welt</strong>\n\n  !</p>');
   assert.equal(out, 'Hallo Welt !');

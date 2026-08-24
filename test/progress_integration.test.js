@@ -137,3 +137,53 @@ test('Progress-Router: reentry.ai wird über den echten getLatestFrameId-Callbac
   assert.equal(withFrame.status, 200);
   assert.deepEqual(withFrame.body.reentry.ai, { available: true, frameId });
 });
+
+test('Thema-zu-Todo-Konvertierung: Fortschrittsverlauf wandert auf die neue Referenz mit (Security Review F4)', async (t) => {
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  const { agent, meetingId, topicId } = await bootstrapStackFixture(request, app, db);
+
+  const goal = await agent.put(`/api/progress/topic/${topicId}/goal`).send({ goal: 'Angebot fertigstellen' });
+  assert.equal(goal.status, 200);
+  const entry = await agent.post(`/api/progress/topic/${topicId}/entries`)
+    .send({ body: '<p>Erster Stand</p>', source: 'manual', clientToken: 'conv-test-1' });
+  assert.equal(entry.status, 201);
+
+  const conv = await agent.post(`/api/meetings/${meetingId}/topics/${topicId}/move`).send({});
+  assert.equal(conv.status, 200);
+  assert.equal(conv.body.targetType, 'todo');
+  const newTodoId = conv.body.newId;
+  assert.ok(newTodoId);
+
+  const oldProgress = await agent.get(`/api/progress/topic/${topicId}`);
+  assert.equal(oldProgress.status, 404, 'alte Topic-Referenz sollte nicht mehr existieren');
+
+  const newProgress = await agent.get(`/api/progress/todo/${newTodoId}`);
+  assert.equal(newProgress.status, 200);
+  assert.equal(newProgress.body.goal, 'Angebot fertigstellen', 'Zielbild sollte migriert sein, nicht verloren gehen');
+  assert.equal(newProgress.body.entries.length, 1, 'Zwischenstand sollte migriert sein, nicht verloren gehen');
+  assert.ok(/Erster Stand/.test(newProgress.body.entries[0].bodyHtml));
+});
+
+test('Todo-zu-Thema-Verschiebung: Fortschrittsverlauf wandert auf die neue Referenz mit (Security Review F4)', async (t) => {
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  const { agent, meetingId, todoId } = await bootstrapStackFixture(request, app, db);
+
+  const goal = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'Migrationsziel' });
+  assert.equal(goal.status, 200);
+
+  const moved = await agent.post(`/api/todos/${todoId}/move`).send({ targetMeetingId: meetingId });
+  assert.equal(moved.status, 200);
+  const newTopicId = moved.body.newId;
+  assert.ok(newTopicId);
+
+  const oldProgress = await agent.get(`/api/progress/todo/${todoId}`);
+  assert.equal(oldProgress.status, 404, 'alte Todo-Referenz sollte nicht mehr existieren');
+
+  const newProgress = await agent.get(`/api/progress/topic/${newTopicId}`);
+  assert.equal(newProgress.status, 200);
+  assert.equal(newProgress.body.goal, 'Migrationsziel', 'Zielbild sollte migriert sein, nicht verloren gehen');
+});

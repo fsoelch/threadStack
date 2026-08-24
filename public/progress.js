@@ -199,6 +199,16 @@
     return url;
   }
 
+  // Der Detail-Endpunkt (detailUrl) wertet nur `limit` aus, keinen `cursor` -
+  // Nachladen weiterer Seiten muss den eigenständigen /entries-Endpunkt
+  // treffen, sonst liefert der Server wiederholt Seite 1 zurueck (Security
+  // Review, Mittel: F5).
+  function entriesUrl(refType, refId, cursor) {
+    var url = '/api/progress/' + encodeURIComponent(refType) + '/' + encodeURIComponent(refId) + '/entries';
+    if (cursor) url += '?cursor=' + encodeURIComponent(cursor);
+    return url;
+  }
+
   function fetchDetail(refType, refId, force) {
     var k = cacheKey(refType, refId);
     if (!force && detailCache[k]) return detailCache[k];
@@ -322,11 +332,19 @@
     this.state.loadingMore = true;
     this.state.loadMoreError = null;
     this.render();
-    host.api('GET', detailUrl(this.refType, this.refId, this.state.page.nextCursor), null).then(function (detail) {
+    var priorCursor = this.state.page.nextCursor;
+    host.api('GET', entriesUrl(this.refType, this.refId, priorCursor), null).then(function (result) {
       if (self.destroyed) return;
-      var newEntries = (detail && Array.isArray(detail.entries)) ? detail.entries : [];
+      var newEntries = (result && Array.isArray(result.entries)) ? result.entries : [];
+      var nextPage = (result && result.page) || { limit: 20, hasMore: false, nextCursor: null };
+      // Defensive: keine Vervielfachung/Endlosschleife, falls der Server
+      // trotzdem keinen Fortschritt macht (z.B. bei einem zukünftigen
+      // Vertragsbruch wie F5).
+      if (newEntries.length === 0 || nextPage.nextCursor === priorCursor) {
+        nextPage = { limit: nextPage.limit, hasMore: false, nextCursor: null };
+      }
       self.state.entries = self.state.entries.concat(newEntries);
-      self.state.page = (detail && detail.page) || { limit: 20, hasMore: false, nextCursor: null };
+      self.state.page = nextPage;
       self.state.loadingMore = false;
       self.render();
       self.announce(newEntries.length + ' weitere ' + (newEntries.length === 1 ? 'Eintrag' : 'Einträge') + ' geladen');

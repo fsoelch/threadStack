@@ -27,6 +27,26 @@ test('Stack Push spiegelt next_step_note in progress_meta.next_step', async (t) 
   assert.ok(p.nextStepUpdatedAt);
 });
 
+test('Stack Push: next_step_note wird vor der Spiegelung nach progress_meta sanitisiert (Security Review F3)', async (t) => {
+  // Der /api/stack/push-Endpunkt sanitisiert die Notiz selbst nicht (das war
+  // nie sein Vertrag) - setNextStep() in queries.js muss das unabhaengig
+  // vom Aufrufer sicherstellen, sonst hat progress_meta.next_step je nach
+  // Schreibpfad unterschiedliche Garantien.
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  const { agent, topicId } = await bootstrapStackFixture(request, app, db);
+
+  const push = await agent.post('/api/stack/push').send({
+    refType: 'topic', refId: topicId,
+    nextStepNote: '&amp;lt;script&amp;gt;alert(1)&amp;lt;/script&amp;gt;',
+  });
+  assert.equal(push.status, 201);
+
+  const p = await getProgress(agent, 'topic', topicId);
+  assert.ok(!/[<>]/.test(p.nextStep), `nextStep sollte keine spitzen Klammern enthalten, war: ${p.nextStep}`);
+});
+
 test('Stack-Notiz-Update (PUT /stack/:frameId/note) spiegelt sich in progress_meta zurück', async (t) => {
   const dir = setupEnv();
   const { app, db } = loadServer(REPO_ROOT);

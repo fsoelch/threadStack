@@ -949,6 +949,7 @@ app.post(`${A}/meetings/:id/topics/:tid/move`, requireAuth, (req, res) => {
       if (remaining.length === 1) db.prepare('UPDATE topics SET group_id=NULL WHERE id=?').run(remaining[0].id);
     }
     db.prepare('DELETE FROM topics WHERE id=?').run(t.id);
+    progress.retargetRef(db, 'topic', t.id, 'todo', id);
     res.json({ ok: true, targetType: 'todo', newId: id });
   }
 });
@@ -967,6 +968,7 @@ app.post(`${A}/todos/:id/move`, requireAuth, (req, res) => {
   // Transfer theme_links to the new topic
   db.prepare('UPDATE theme_links SET ref_type=?, ref_id=? WHERE ref_type=? AND ref_id=?').run('topic', id, 'todo', t.id);
   db.prepare('DELETE FROM todos WHERE id=?').run(t.id);
+  progress.retargetRef(db, 'todo', t.id, 'topic', id);
   res.json({ ok: true, targetMeetingId, newId: id });
 });
 
@@ -2477,9 +2479,9 @@ function parseAttachment(a) {
 // ── Statische Assets (Graph-Modul: /public/graph.js, graph.css) ──
 // Unter beiden Pfaden gemountet, damit `/assets/...` in index.html unabhängig
 // von einem konfigurierten BASE_PATH funktioniert.
-// graph-dev.html ist eine Entwickler-Harness (Mock-Backend, keine Secrets) und soll
-// nicht im Produktionsauslieferungspfad erreichbar sein.
-const assetsGuard = (req, res, next) => (req.path.toLowerCase() === '/graph-dev.html') ? res.status(404).end() : next();
+// *-dev.html sind Entwickler-Harnesses (Mock-Backend, keine Secrets) und sollen
+// nicht im Produktionsauslieferungspfad erreichbar sein (Security Review, Niedrig: F6).
+const assetsGuard = (req, res, next) => (/-dev\.html$/i.test(req.path)) ? res.status(404).end() : next();
 const assetsStatic = express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'ignore', etag: true, maxAge: 0 });
 app.use('/assets', assetsGuard, assetsStatic);
 if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
@@ -2495,7 +2497,9 @@ app.get(BASE || '/', (req, res) => {
   if (BASE) {
     html = html
       .replace('href="/assets/graph.css"', `href="${BASE}/assets/graph.css"`)
-      .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`);
+      .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`)
+      .replace('href="/assets/progress.css"', `href="${BASE}/assets/progress.css"`)
+      .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`);
   }
   html = html.replace('</head>',
     `<script>window.__TS_BASE__ = ${JSON.stringify(BASE).replace(/</g, '\\u003c')};</script>\n</head>`);
