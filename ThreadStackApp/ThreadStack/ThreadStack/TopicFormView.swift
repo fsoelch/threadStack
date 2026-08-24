@@ -1,5 +1,24 @@
 import SwiftUI
 
+/// Reine, von SwiftUI entkoppelte Entscheidungslogik für `TopicFormView.save()`:
+/// sobald für das aktuell bearbeitete Thema bereits eine Server-ID bekannt ist
+/// — entweder weil ein bestehendes Thema bearbeitet wird ODER weil ein
+/// vorheriger Speicherversuch im Anlegen-Modus das Thema bereits erfolgreich
+/// angelegt hat (nur der anschliessende, optionale Zwischenstand-Commit ist
+/// danach fehlgeschlagen, siehe `createdId`) — MUSS der nächste
+/// Speicherversuch ein Update sein, niemals ein zweites Create (sonst
+/// Duplikat, Security Review, Mittel: Fund 1).
+enum TopicSaveTarget: Equatable {
+    case create
+    case update(id: String)
+
+    static func resolve(existingTopicId: String?, createdId: String?) -> TopicSaveTarget {
+        if let existingTopicId { return .update(id: existingTopicId) }
+        if let createdId { return .update(id: createdId) }
+        return .create
+    }
+}
+
 struct TopicFormView: View {
     let meetingId: String
     var topic: Topic? = nil
@@ -21,6 +40,13 @@ struct TopicFormView: View {
     @StateObject private var progressComposer = ProgressEntryComposer()
     @FocusState private var progressComposerFocused: Bool
     @State private var showDiscardConfirm = false
+    // Wird gesetzt, sobald save() im Anlegen-Modus erfolgreich ein neues
+    // Thema erzeugt hat — auch wenn der anschliessende, optionale
+    // Zwischenstand-Commit fehlschlaegt und das Sheet deshalb offen bleibt.
+    // Ein erneuter Klick auf "Speichern" muss dann als Update auf dieses
+    // bereits angelegte Thema laufen statt erneut createTopicReturning
+    // aufzurufen (das wuerde sonst ein Duplikat anlegen).
+    @State private var createdId: String?
 
     var body: some View {
         NavigationStack {
@@ -165,22 +191,38 @@ struct TopicFormView: View {
         let fireAt: Date? = (hasSnooze && snoozeHasTime) ? snoozeDate : nil
         Task {
             do {
-                var savedId = topic?.id
-                if let t = topic {
+                var savedId: String?
+                switch TopicSaveTarget.resolve(existingTopicId: topic?.id, createdId: createdId) {
+                case .update(let id) where topic?.id == id:
+                    let t = topic! // sicher: id stammt hier nachweislich aus topic?.id
                     try await state.updateTopic(
                         meetingId: meetingId, id: t.id,
                         title: title, description: description,
                         done: t.done, result: t.result, resultDate: t.resultDate,
                         isTodo: isTodo, snoozedUntil: snooze
                     )
+                    savedId = t.id
                     NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(t.id)", title: notificationTitle, fireAt: fireAt)
-                } else {
+                case .update(let existingId):
+                    // Ein vorheriger Speicherversuch hat das Thema bereits
+                    // angelegt (nur der Zwischenstand-Commit ist danach
+                    // fehlgeschlagen) — jetzt updaten statt erneut anlegen.
+                    try await state.updateTopic(
+                        meetingId: meetingId, id: existingId,
+                        title: title, description: description,
+                        done: false, result: "", resultDate: "",
+                        isTodo: isTodo, snoozedUntil: snooze
+                    )
+                    savedId = existingId
+                    NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(existingId)", title: notificationTitle, fireAt: fireAt)
+                case .create:
                     let created = try await state.createTopicReturning(
                         meetingId: meetingId, title: title,
                         description: description, isTodo: isTodo,
                         snoozedUntil: snooze
                     )
                     savedId = created.id
+                    createdId = created.id
                     NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(created.id)", title: notificationTitle, fireAt: fireAt)
                 }
                 // Das Anlegen/Aktualisieren ist an dieser Stelle bereits

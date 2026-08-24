@@ -29,28 +29,9 @@
 		8725B5CD2FB522EB000200C3 /* ThreadStackUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ThreadStackUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		8725BA4D2FB6294B000200C3 /* Exceptions for "ThreadStack" folder in "ThreadStackTests" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-			);
-			target = 8725B5C22FB522EB000200C3 /* ThreadStackTests */;
-		};
-		8725BA4E2FB6294B000200C3 /* Exceptions for "ThreadStack" folder in "ThreadStackUITests" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-			);
-			target = 8725B5CC2FB522EB000200C3 /* ThreadStackUITests */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		8725B5B62FB522E7000200C3 /* ThreadStack */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				8725BA4D2FB6294B000200C3 /* Exceptions for "ThreadStack" folder in "ThreadStackTests" target */,
-				8725BA4E2FB6294B000200C3 /* Exceptions for "ThreadStack" folder in "ThreadStackUITests" target */,
-			);
 			path = ThreadStack;
 			sourceTree = "<group>";
 		};
@@ -410,7 +391,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 260814;
+				CURRENT_PROJECT_VERSION = 260824;
 				DEVELOPMENT_TEAM = 5G7Y6QKWGK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
@@ -469,7 +450,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 260814;
+				CURRENT_PROJECT_VERSION = 260824;
 				DEVELOPMENT_TEAM = 5G7Y6QKWGK;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;

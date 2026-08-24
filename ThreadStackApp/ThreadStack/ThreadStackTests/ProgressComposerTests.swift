@@ -94,6 +94,51 @@ struct ProgressEntrySourceTests {
     }
 }
 
+// MARK: - ProgressPlainTextEncoding.encode(_:) (Security Review, Mittel: Fund 2)
+//
+// Der Composer liefert reinen Klartext (TextEditor), `bodyHtml` wird
+// serverseitig aber als HTML interpretiert und sanitisiert
+// (`sanitizeProgressHtml`, `lib/progress/sanitize.js`) — ungeschützt
+// durchgereichter Klartext mit `<`/`>`/`&` verlor dabei still Inhalt (z.B.
+// "wenn a<b dann fertig" -> serverseitig nur "wenn a" gespeichert, da "<b "
+// als vermeintlicher Tag-Start interpretiert wurde).
+
+struct ProgressPlainTextEncodingTests {
+    @Test func plainTextWithoutSpecialCharsIsPreservedInsideParagraph() {
+        let result = ProgressPlainTextEncoding.encode("Einfacher Text ohne Sonderzeichen")
+        #expect(result == "<p>Einfacher Text ohne Sonderzeichen</p>")
+    }
+
+    /// & MUSS zuerst escaped werden — sonst würden die durch das Escaping
+    /// von `<`/`>` neu erzeugten Entities selbst nochmal escaped
+    /// (`&amp;lt;` statt `&lt;`).
+    @Test func escapesAmpersandBeforeAngleBrackets() {
+        let result = ProgressPlainTextEncoding.encode("a < b & c > d")
+        #expect(result == "<p>a &lt; b &amp; c &gt; d</p>")
+    }
+
+    /// Regression für den verifizierten Datenverlust-Fall aus dem Security
+    /// Review: ohne Encoding wurde daraus serverseitig nur "wenn a".
+    @Test func regressionForVerifiedDataLossCase() {
+        let result = ProgressPlainTextEncoding.encode("wenn a<b dann fertig")
+        #expect(result == "<p>wenn a&lt;b dann fertig</p>")
+    }
+
+    @Test func singleNewlineBecomesLineBreakWithinParagraph() {
+        let result = ProgressPlainTextEncoding.encode("Zeile eins\nZeile zwei")
+        #expect(result == "<p>Zeile eins<br>Zeile zwei</p>")
+    }
+
+    @Test func doubleNewlineStartsNewParagraph() {
+        let result = ProgressPlainTextEncoding.encode("Erster Absatz\n\nZweiter Absatz")
+        #expect(result == "<p>Erster Absatz</p><p>Zweiter Absatz</p>")
+    }
+
+    @Test func emptyStringYieldsEmptyString() {
+        #expect(ProgressPlainTextEncoding.encode("") == "")
+    }
+}
+
 // MARK: - isDirty / isOverLimit
 
 @MainActor
@@ -191,12 +236,93 @@ struct ProgressEntryComposerCommitTests {
         #expect(composer.errorText == nil)
     }
 
-    @Test func commitSendsDerivedSourceBasedOnHasSnooze() async throws {
-        var receivedSource: String?
-        var callCount = 0
+    /// Security Review, Mittel: Fund 2 — der über den TextEditor eingegebene
+    /// Klartext muss VOR dem Versand über `ProgressPlainTextEncoding.encode`
+    /// laufen, statt ungeschützt als `bodyHtml` durchgereicht zu werden.
+    @Test func commitEncodesPlainTextAsHtmlBeforeSendingBodyHtml() async throws {
+        var receivedBodyHtml: String?
+        // Filtert explizit nach der POST-Methode statt nach Aufreihenfolge
+        // (`callCount == 1`) — robust gegenüber der tatsächlichen
+        // Request-Reihenfolge, analog zu
+        // `concurrentCommitsTriggerOnlyOneAddEntryRequest` weiter unten in
+        // dieser Datei.
         let state = makeComposerTestState { req in
+            if req.httpMethod == "POST" {
+                if let body = requestBodyData(req),
+                   let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
+                    // Server-Vertrag (`ProgressAPI.swift`, `addProgressEntry`):
+                    // das Request-Feld heisst `body` (NICHT `bodyHtml` — das ist
+                    // ausschliesslich der Feldname in der Server-ANTWORT,
+                    // `ProgressEntry.bodyHtml`).
+                    receivedBodyHtml = obj["body"] as? String
+                }
+                return (200, jsonData(entryJSON()))
+            }
+            return (200, jsonData(detailJSON()))
+        }
+        let store = makeStore(state)
+        let composer = ProgressEntryComposer()
+        composer.text = "wenn a<b dann fertig"
+        _ = await composer.commit(store: store, refType: "todo", refId: "a1", hasSnooze: false)
+        #expect(receivedBodyHtml == "<p>wenn a&lt;b dann fertig</p>")
+    }
+
+    /// Security Review, Niedrig: Fund 3 — das Textfeld ist während eines
+    /// laufenden Commits nicht gesperrt. Tippt der Nutzer währenddessen
+    /// weiter, darf ein erfolgreicher Commit den inzwischen geänderten Text
+    /// NICHT stillschweigend verwerfen.
+    @Test func inFlightEditIsNotDiscardedWhenCommitSucceeds() async throws {
+        var callCount = 0
+        let state = makeComposerTestState { _ in
             callCount += 1
             if callCount == 1 {
+                // Simuliert eine langsame Verbindung, damit der Test genug
+                // Zeit hat, `text` zu ändern, während der Request noch läuft.
+                Thread.sleep(forTimeInterval: 0.05)
+                return (200, jsonData(entryJSON()))
+            }
+            return (200, jsonData(detailJSON()))
+        }
+        let store = makeStore(state)
+        let composer = ProgressEntryComposer()
+        composer.text = "Ausgangstext"
+        let commitTask = Task { await composer.commit(store: store, refType: "todo", refId: "a1", hasSnooze: false) }
+        // Lässt commit() Zeit, den Ausgangstext einzufrieren, bevor wir ihn
+        // während des laufenden Requests weiter bearbeiten.
+        try? await Task.sleep(nanoseconds: 15_000_000)
+        composer.text = "Ausgangstext weitergetippt"
+        let result = await commitTask.value
+        #expect(result == .saved)
+        #expect(composer.text == "Ausgangstext weitergetippt")
+    }
+
+    /// Gegenprobe zu obigem Test: hat der Nutzer NICHT weitergetippt, wird
+    /// nach Erfolg weiterhin wie gehabt geleert (Fund 3 darf den
+    /// Normalfall nicht regressieren).
+    @Test func textIsClearedOnSuccessWhenUnchangedDuringCommit() async throws {
+        var callCount = 0
+        let state = makeComposerTestState { _ in
+            callCount += 1
+            if callCount == 1 { return (200, jsonData(entryJSON())) }
+            return (200, jsonData(detailJSON()))
+        }
+        let store = makeStore(state)
+        let composer = ProgressEntryComposer()
+        composer.text = "Unverändert bis zum Erfolg"
+        let result = await composer.commit(store: store, refType: "todo", refId: "a1", hasSnooze: false)
+        #expect(result == .saved)
+        #expect(composer.text == "")
+    }
+
+    @Test func commitSendsDerivedSourceBasedOnHasSnooze() async throws {
+        var receivedSource: String?
+        // Filtert explizit nach der POST-Methode statt nach Aufreihenfolge
+        // (`callCount == 1`) — robust gegenüber der tatsächlichen
+        // Request-Reihenfolge, analog zu
+        // `concurrentCommitsTriggerOnlyOneAddEntryRequest` weiter unten in
+        // dieser Datei.
+        let state = makeComposerTestState { req in
+            if req.httpMethod == "POST" {
                 if let body = requestBodyData(req),
                    let obj = try? JSONSerialization.jsonObject(with: body) as? [String: Any] {
                     receivedSource = obj["source"] as? String

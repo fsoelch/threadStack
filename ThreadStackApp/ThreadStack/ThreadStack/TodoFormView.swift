@@ -1,5 +1,24 @@
 import SwiftUI
 
+/// Reine, von SwiftUI entkoppelte Entscheidungslogik für `TodoFormView.save()`:
+/// sobald für das aktuell bearbeitete Todo bereits eine Server-ID bekannt ist
+/// — entweder weil ein bestehendes Todo bearbeitet wird ODER weil ein
+/// vorheriger Speicherversuch im Anlegen-Modus das Todo bereits erfolgreich
+/// angelegt hat (nur der anschliessende, optionale Zwischenstand-Commit ist
+/// danach fehlgeschlagen, siehe `createdId`) — MUSS der nächste
+/// Speicherversuch ein Update sein, niemals ein zweites Create (sonst
+/// Duplikat, Security Review, Mittel: Fund 1).
+enum TodoSaveTarget: Equatable {
+    case create
+    case update(id: String)
+
+    static func resolve(existingTodoId: String?, createdId: String?) -> TodoSaveTarget {
+        if let existingTodoId { return .update(id: existingTodoId) }
+        if let createdId { return .update(id: createdId) }
+        return .create
+    }
+}
+
 struct TodoFormView: View {
     var todo: TodoItem? = nil
     /// Nur im Anlegen-Modus wirksam: verknüpft das neu erstellte Todo nach
@@ -30,6 +49,13 @@ struct TodoFormView: View {
     @StateObject private var progressComposer = ProgressEntryComposer()
     @FocusState private var progressComposerFocused: Bool
     @State private var showDiscardConfirm = false
+    // Wird gesetzt, sobald save() im Anlegen-Modus erfolgreich ein neues
+    // Todo erzeugt hat — auch wenn der anschliessende, optionale
+    // Zwischenstand-Commit fehlschlaegt und das Sheet deshalb offen bleibt.
+    // Ein erneuter Klick auf "Speichern" muss dann als Update auf dieses
+    // bereits angelegte Todo laufen statt erneut createTodoReturning
+    // aufzurufen (das wuerde sonst ein Duplikat anlegen).
+    @State private var createdId: String?
 
     var body: some View {
         NavigationStack {
@@ -190,19 +216,34 @@ struct TodoFormView: View {
         let fireAt: Date? = (hasDueDate && dueReminderEnabled) ? dueDate : nil
         Task {
             do {
-                var savedId = todo?.id
-                if let t = todo {
+                var savedId: String?
+                switch TodoSaveTarget.resolve(existingTodoId: todo?.id, createdId: createdId) {
+                case .update(let id) where todo?.id == id:
+                    let t = todo! // sicher: id stammt hier nachweislich aus todo?.id
                     try await state.updateTodo(
                         id: t.id, title: title, description: description,
                         done: t.done, result: t.result, resultDate: t.resultDate,
                         snoozedUntil: snooze, dueDate: due, isPrivate: isPrivate
                     )
+                    savedId = t.id
                     NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate, notificationTitle: "ThreadStack — Erinnerung")
-                } else {
+                case .update(let existingId):
+                    // Ein vorheriger Speicherversuch hat das Todo bereits
+                    // angelegt (nur der Zwischenstand-Commit ist danach
+                    // fehlgeschlagen) — jetzt updaten statt erneut anlegen.
+                    try await state.updateTodo(
+                        id: existingId, title: title, description: description,
+                        done: false, result: "", resultDate: "",
+                        snoozedUntil: snooze, dueDate: due, isPrivate: isPrivate
+                    )
+                    savedId = existingId
+                    NotificationScheduler.shared.reschedule(id: "todo-\(existingId)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate, notificationTitle: "ThreadStack — Erinnerung")
+                case .create:
                     let created = try await state.createTodoReturning(title: title, description: description,
                                                snoozedUntil: snooze, dueDate: due,
                                                isPrivate: isPrivate)
                     savedId = created.id
+                    createdId = created.id
                     NotificationScheduler.shared.reschedule(id: "todo-\(created.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate, notificationTitle: "ThreadStack — Erinnerung")
                     if let presetThemeId {
                         try? await state.addThemeLink(themeId: presetThemeId, refType: "todo", refId: created.id)

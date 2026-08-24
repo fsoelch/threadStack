@@ -3181,6 +3181,11 @@ let completeTid     = null;
 let completeTodoId  = null;
 let editUserId      = null;
 let confirmCallback = null;
+// Sicherheitsfix (Security Review, Mittel, Fund 3): Label-/Klassen-Cleanup von
+// genericConfirm() darf nicht nur bei Klick auf einen der beiden Dialog-
+// Buttons laufen, sondern bei JEDEM Schließen des #confirm-dialog (z. B. auch
+// über Escape) — siehe closeConfirm() weiter unten.
+let confirmCleanup  = null;
 let themes          = [];
 let contacts        = [];
 let editContactId   = null;
@@ -5435,6 +5440,10 @@ async function saveTodoModal() {
     } : {}) };
   setBusy('todo-save-btn', true);
   let savedTodoId = null;
+  // Vor dem Speichern merken, ob dies ein Anlegen- oder Bearbeiten-Vorgang
+  // ist — für die Erfolgsmeldung, da editTodoId weiter unten ggf. schon vor
+  // dem Ende der Funktion auf die neu vergebene Id gesetzt wird (Fund 2).
+  const wasNewTodo = !editTodoId;
   try {
     if (editTodoId) {
       await api('PUT', `/todos/${editTodoId}`, data);
@@ -5444,6 +5453,19 @@ async function saveTodoModal() {
       const t = await api('POST', '/todos', data);
       todos.push(t);
       savedTodoId = t.id;
+      // Sicherheitsfix (Security Review, Mittel, Fund 2): editTodoId SOFORT
+      // nach erfolgreichem Anlegen auf die neu vergebene Id setzen, BEVOR
+      // der Fortschritts-Composer committet wird. Schlägt der Composer-
+      // Commit anschließend fehl und bleibt das Modal offen, läuft ein
+      // erneuter Klick auf "Speichern" dadurch in den Update-Zweig (PUT)
+      // statt erneut ein Todo anzulegen — verhindert ein doppelt angelegtes
+      // Todo. Bewusst KEIN erneuter openProgressEmbed(...)-Aufruf hier: der
+      // würde den noch unversendeten Composer-Text sowie den zugehörigen
+      // Idempotenz-Token (Fund 1) löschen und damit den Retry-Pfad kaputt
+      // machen. commitProgressComposer()/saveTodoProgressComposerBtn()
+      // erhalten die Id ohnehin explizit als Parameter bzw. über editTodoId
+      // und sind nicht auf gemountete Handles angewiesen.
+      editTodoId = savedTodoId;
       if (todoModalPresetThemeId) {
         try {
           const link = await api('POST', `/themes/${todoModalPresetThemeId}/links`, {
@@ -5466,7 +5488,7 @@ async function saveTodoModal() {
       toast('Todo gespeichert — der Zwischenstand konnte noch nicht gespeichert werden.', 'error');
     } else {
       closeTodoModal();
-      toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
+      toast(wasNewTodo ? 'Todo erstellt' : 'Todo aktualisiert');
     }
     render();
     await loadThemeDetail(); render();
@@ -5881,6 +5903,10 @@ async function saveTopicModal() {
   };
   setBusy('tm-save-btn', true);
   let savedTopicId = null;
+  // Vor dem Speichern merken, ob dies ein Anlegen- oder Bearbeiten-Vorgang
+  // ist — für die Erfolgsmeldung, da editTopicId weiter unten ggf. schon vor
+  // dem Ende der Funktion auf die neu vergebene Id gesetzt wird (Fund 2).
+  const wasNewTopic = !editTopicId;
   try {
     if (editTopicId) {
       const t = getTopic(editTopicMid, editTopicId);
@@ -5895,6 +5921,12 @@ async function saveTopicModal() {
       const t = await api('POST', `/meetings/${editTopicMid}/topics`, data);
       getMeeting(editTopicMid).topics.push(t);
       savedTopicId = t.id;
+      // Sicherheitsfix (Security Review, Mittel, Fund 2): editTopicId SOFORT
+      // nach erfolgreichem Anlegen auf die neu vergebene Id setzen, BEVOR
+      // der Fortschritts-Composer committet wird — analog zu saveTodoModal()
+      // (siehe dortiger Kommentar für die ausführliche Begründung inkl. der
+      // bewussten Entscheidung gegen einen erneuten openProgressEmbed(...)).
+      editTopicId = savedTopicId;
     }
 
     // Fortschritts-Composer NACH erfolgreichem Speichern des Themas, VOR dem
@@ -5906,7 +5938,7 @@ async function saveTopicModal() {
       toast('Thema gespeichert — der Zwischenstand konnte noch nicht gespeichert werden.', 'error');
     } else {
       closeTopicModal();
-      toast(editTopicId ? 'Thema aktualisiert' : 'Thema hinzugefügt');
+      toast(wasNewTopic ? 'Thema hinzugefügt' : 'Thema aktualisiert');
     }
     render();
     if (savedTopicId && !data.done) triggerThemeSuggestions('topic', savedTopicId);
@@ -7293,7 +7325,18 @@ function confirmDelete(type, ...args) {
   document.getElementById('confirm-dialog').style.display = 'flex';
 }
 
-function closeConfirm() { document.getElementById('confirm-dialog').style.display = 'none'; confirmCallback = null; }
+function closeConfirm() {
+  document.getElementById('confirm-dialog').style.display = 'none';
+  confirmCallback = null;
+  // Sicherheitsfix (Security Review, Mittel, Fund 3): Label-/Klassen-Cleanup
+  // von genericConfirm() bei JEDEM Schließen des Dialogs ausführen (Button-
+  // Klick, Escape, oder ein sonstiger Programmaufruf) — nicht nur, wenn einer
+  // der beiden Dialog-Buttons selbst geklickt wurde. Sonst behält der geteilte
+  // #confirm-dialog dauerhaft die zuletzt von genericConfirm() gesetzten
+  // Labels/Klasse, und ein späterer, tatsächlich destruktiver Aufruf (z. B.
+  // confirmDeleteTodo) zeigt falsch beschriftete/gestylte Buttons.
+  if (confirmCleanup) { const fn = confirmCleanup; confirmCleanup = null; fn(); }
+}
 async function executeConfirm() { const cb = confirmCallback; closeConfirm(); if (cb) await cb(); }
 
 // Generische Promise-basierte Bestätigung mit anpassbaren Button-Labels (nutzt
@@ -7310,14 +7353,16 @@ function genericConfirm(title, message, confirmLabel, cancelLabel) {
     cancelBtn.textContent = cancelLabel || 'Abbrechen';
     confirmBtn.textContent = confirmLabel || 'Bestätigen';
     confirmBtn.className = 'btn btn-primary';
-    const cleanup = () => {
+    // Läuft jetzt zentral in closeConfirm() (Fund 3), damit Labels/Klasse
+    // auch bei einem Schließen von außen (z. B. Escape) zuverlässig
+    // zurückgesetzt werden statt dauerhaft "hängen zu bleiben".
+    confirmCleanup = () => {
       cancelBtn.textContent = origCancelText;
       confirmBtn.textContent = origConfirmText;
       confirmBtn.className = origConfirmClass;
-      confirmCallback = null;
     };
-    confirmCallback = async () => { cleanup(); resolve(true); };
-    cancelBtn.onclick = () => { closeConfirm(); cleanup(); resolve(false); cancelBtn.onclick = () => closeConfirm(); };
+    confirmCallback = async () => { resolve(true); };
+    cancelBtn.onclick = () => { closeConfirm(); resolve(false); cancelBtn.onclick = () => closeConfirm(); };
     document.getElementById('confirm-dialog').style.display = 'flex';
     confirmBtn.focus();
   });
@@ -8475,7 +8520,27 @@ function showProgressRetryToast(msg, retryFn) {
 // Bearbeiten-Modal eingebettet und nur beim Bearbeiten eines bestehenden
 // Todos/Themas sichtbar.
 
-const progressComposerToken = {}; // key ('todo'|'topic') -> pending clientToken des Composers
+// Sicherheitsfix (Security Review, Mittel, Fund 1): der pending clientToken
+// eines Composer-Commits wird an das konkrete Vorhaben (refType/refId)
+// gebunden, nicht nur an den UI-Slot ('todo'|'topic'). Ohne diese Bindung
+// würde ein Token, der für ein Vorhaben erzeugt, aber wegen eines Netzwerk-
+// fehlers nie zugestellt wurde, bei einem nachfolgenden Speichern-Versuch
+// für ein ANDERES Vorhaben (z. B. ein zwischenzeitlich neu angelegtes Todo)
+// wiederverwendet — der Zwischenstand würde serverseitig (Idempotenz über
+// user_id + client_token) am falschen Vorhaben landen. Schlüsselformat
+// analog zur bestehenden nativen App-Lösung (ProgressStore.pendingEntryTokens,
+// dort `refType:refId`), hier zusätzlich um den UI-Slot ergänzt.
+const progressComposerToken = {}; // `${key}:${refType}:${refId}` -> pending clientToken des Composers
+function progressComposerTokenKey(key, refType, refId) { return `${key}:${refType}:${refId}`; }
+// Verwirft alle für einen UI-Slot ('todo'|'topic') gemerkten Tokens, unabhängig
+// vom zuletzt referenzierten Vorhaben — wird beim Öffnen/Schließen des
+// eingebetteten Fortschrittsbereichs aufgerufen, da closeProgressEmbed(key)
+// selbst kein refType/refId kennt (siehe Vertrag von openProgressEmbed/
+// closeProgressEmbed weiter unten).
+function clearProgressComposerTokensForSlot(key) {
+  const prefix = `${key}:`;
+  Object.keys(progressComposerToken).forEach(k => { if (k.startsWith(prefix)) delete progressComposerToken[k]; });
+}
 const timelineHandles = {};       // key -> Handle von TSProgress.mountTimeline
 const reentryHandles  = {};       // key -> Handle von TSProgress.mountReentryCard
 
@@ -8518,7 +8583,7 @@ function openProgressEmbed(key, refType, refId) {
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
   const hintEl = document.getElementById(ids.noteHint);
   if (hintEl) hintEl.style.display = 'none';
-  delete progressComposerToken[key];
+  clearProgressComposerTokensForSlot(key);
 
   if (!window.TSProgress) { toast('Fortschrittsmodul ist noch nicht geladen — bitte kurz warten.', 'error'); return; }
 
@@ -8548,7 +8613,18 @@ function closeProgressEmbed(key) {
   const ids = progressEmbedIds(key);
   if (reentryHandles[key]) { reentryHandles[key].destroy(); delete reentryHandles[key]; }
   if (timelineHandles[key]) { timelineHandles[key].destroy(); delete timelineHandles[key]; }
-  delete progressComposerToken[key];
+  clearProgressComposerTokensForSlot(key);
+  // Sicherheitsfix (Security Review, Niedrig, Fund 4): Notiz-Feld und
+  // Hinweis-/Fehleranzeigen beim Ausblenden genauso zurücksetzen wie beim
+  // Öffnen (siehe openProgressEmbed) — sonst bleibt beim nächsten Anlegen
+  // eines NEUEN Todos/Themas (Section erscheint erst gar nicht) Text aus
+  // einer vorherigen Bearbeiten-Sitzung im ausgeblendeten Composer-Feld
+  // stehen und könnte fälschlich am neuen Vorhaben committet werden.
+  setRT(ids.note, '');
+  const errEl = document.getElementById(ids.noteError);
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  const hintEl = document.getElementById(ids.noteHint);
+  if (hintEl) hintEl.style.display = 'none';
   const section = document.getElementById(ids.section);
   if (section) section.style.display = 'none';
 }
@@ -8575,20 +8651,32 @@ function updateProgressComposerCharHint(key) {
 // doppelter Eintrag bei Composer-Save gefolgt von Formular-Speichern).
 async function commitProgressComposer(key, refType, refId, snoozedUntilValue) {
   const ids = progressEmbedIds(key);
+  if (!isValidProgressRefType(refType) || !refId) return 'noop';
+  // Sicherheitsfix (Security Review, Niedrig, Fund 4): ist der eingebettete
+  // Fortschrittsbereich für diesen Slot gerade ausgeblendet, wird NIE
+  // committet — ein sichtbarer Composer ist Voraussetzung dafür, dass der
+  // Inhalt tatsächlich vom Nutzer für DIESES Vorhaben eingegeben wurde
+  // (verhindert defensiv, dass Restinhalt aus einer anderen Sitzung an ein
+  // frisch angelegtes Todo/Thema committet wird, siehe auch closeProgressEmbed).
+  const section = document.getElementById(ids.section);
+  if (!section || section.style.display === 'none') return 'noop';
   const html = getRT(ids.note);
   if (!window.TSProgress || TSProgress.isEffectivelyEmptyHtml(html)) return 'noop';
-  if (!isValidProgressRefType(refType) || !refId) return 'noop';
   const errEl = document.getElementById(ids.noteError);
   if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
   const source = TSProgress.deriveEntrySource({ snoozedUntil: snoozedUntilValue });
-  if (!progressComposerToken[key]) progressComposerToken[key] = makeProgressClientToken();
+  // Sicherheitsfix (Security Review, Mittel, Fund 1): Token an refType/refId
+  // binden (siehe Deklaration von progressComposerToken oben) statt nur an
+  // den UI-Slot, damit ein Retry nie den Token eines anderen Vorhabens nutzt.
+  const tokenKey = progressComposerTokenKey(key, refType, refId);
+  if (!progressComposerToken[tokenKey]) progressComposerToken[tokenKey] = makeProgressClientToken();
   try {
     await TSHost.api('POST', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}/entries`, {
-      body: html, source, clientToken: progressComposerToken[key],
+      body: html, source, clientToken: progressComposerToken[tokenKey],
     });
     setRT(ids.note, '');
     updateProgressComposerCharHint(key);
-    delete progressComposerToken[key];
+    delete progressComposerToken[tokenKey];
     if (timelineHandles[key]) timelineHandles[key].reload();
     if (reentryHandles[key]) reentryHandles[key].reload();
     onProgressChangedHost(refType, refId);
@@ -8980,6 +9068,26 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'Escape') {
+    // Sicherheitsfix (Security Review, Mittel, Fund 3): #confirm-dialog ist
+    // ein global geteilter Dialog, den u. a. genericConfirm() nutzt (z. B. der
+    // Composer-Datenverlustschutz beim Schließen von Todo-/Topic-Modal, siehe
+    // requestCloseTodoModal()/requestCloseTopicModal()). Ist er gerade
+    // sichtbar, schließt Escape NUR ihn — über denselben Pfad wie ein Klick
+    // auf "Abbrechen" (inkl. Promise-Resolve + Label-/Klassen-Cleanup über
+    // closeConfirm(), siehe genericConfirm()) — und bricht danach sofort ab.
+    // Andernfalls würde ein im selben Tastendruck weiter unten zusätzlich
+    // aufgerufenes requestCloseTodoModal()/requestCloseTopicModal() (das bei
+    // ungesichertem Composer-Text seinerseits den Dialog erst öffnet) durch
+    // das anschließende blinde closeConfirm() sofort wieder zugeklappt werden,
+    // ohne dass Labels/Klasse zurückgesetzt oder die Promise aufgelöst wird.
+    const confirmDialogEl = document.getElementById('confirm-dialog');
+    if (confirmDialogEl && confirmDialogEl.style.display !== 'none') {
+      const actions = confirmDialogEl.querySelector('.confirm-actions');
+      const cancelBtn = actions && actions.children[0];
+      if (cancelBtn && typeof cancelBtn.onclick === 'function') cancelBtn.onclick();
+      else closeConfirm();
+      return;
+    }
     if (document.getElementById('search-overlay').classList.contains('open')) { closeSearch(); return; }
     closeMobileSidebar();
     closeHelp();
@@ -8993,7 +9101,6 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
     if (document.getElementById('progress-entry-modal').style.display !== 'none') closeProgressEntryDialog('cancelled');
     if (document.getElementById('progress-goal-modal').style.display !== 'none') closeProgressGoalDialog('cancelled');
-    closeConfirm();
     return;
   }
   // '?' öffnet Hilfe (nur wenn kein Eingabefeld fokussiert)

@@ -44,6 +44,41 @@ enum ProgressEntrySource {
     }
 }
 
+/// Der Composer nutzt bewusst einen reinen `TextEditor` (siehe Datei-Kopf-
+/// kommentar), liefert also Klartext. Der Server interpretiert `bodyHtml`
+/// aber als HTML und sanitisiert es serverseitig (`sanitizeProgressHtml`,
+/// `lib/progress/sanitize.js`) — ungeschützt durchgereichter Klartext mit
+/// `<`/`>`/`&` würde dort als (Teil-)Markup fehlinterpretiert und dabei
+/// STILL Inhalt verlieren (Security Review, Mittel: Fund 2). Diese reine,
+/// testbare Funktion codiert Klartext sicher als HTML-Fragment, bevor er als
+/// `bodyHtml` an `store.addEntry` übergeben wird.
+enum ProgressPlainTextEncoding {
+    /// Escaped HTML-Sonderzeichen und bildet Absätze/Zeilenumbrüche auf
+    /// `<p>`/`<br>` ab (beide Teil der bestehenden Rich-Text-Allowlist,
+    /// `lib/sanitize.js` ALLOWED_TAGS) — konsistent zum Markup, das der
+    /// bestehende Rich-Text-Editor/Web-Renderer (`public/progress.js`)
+    /// bereits erwartet bzw. erzeugt. Ein doppelter Zeilenumbruch trennt
+    /// Absätze, ein einzelner wird innerhalb eines Absatzes zu `<br>`.
+    static func encode(_ plainText: String) -> String {
+        guard !plainText.isEmpty else { return "" }
+        let escaped = escapeHTML(plainText)
+        let paragraphs = escaped.components(separatedBy: "\n\n")
+        return paragraphs
+            .map { "<p>\($0.replacingOccurrences(of: "\n", with: "<br>"))</p>" }
+            .joined()
+    }
+
+    /// WICHTIG: `&` MUSS zuerst escaped werden — sonst würden die durch das
+    /// Escaping von `<`/`>` neu erzeugten Entities (`&lt;`/`&gt;`) selbst
+    /// nochmal escaped und dadurch verstümmelt (`&amp;lt;` statt `&lt;`).
+    private static func escapeHTML(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+}
+
 /// Zustand + Speicherlogik des immer sichtbaren Composers, getrennt vom
 /// View-Body (analog zu den bereits bestehenden `*CharLimit`/`*Logic`-Enums
 /// in diesem Feature).
@@ -81,7 +116,11 @@ final class ProgressEntryComposer: ObservableObject {
     ///   zweiten Request auszulösen.
     /// - Erfolg: `text` wird geleert, `errorText` auf `nil` gesetzt (der vom
     ///   `ProgressStore` verwaltete `clientToken` wird dabei intern bereits
-    ///   von `store.addEntry` verworfen) -> `.saved`.
+    ///   von `store.addEntry` verworfen) -> `.saved`. Das Feld ist während des
+    ///   laufenden Requests NICHT gesperrt — hat der Nutzer währenddessen
+    ///   weitergetippt, wird `text` NICHT geleert (sonst ginge der
+    ///   nachgetippte Text kommentarlos verloren, Security Review, Niedrig:
+    ///   Fund 3), sondern bleibt für einen weiteren, eigenen Commit stehen.
     /// - Fehler: `errorText` wird gesetzt, `text` bleibt UNVERÄNDERT
     ///   erhalten (kein Datenverlust), derselbe `clientToken` bleibt für den
     ///   nächsten Versuch bestehen (Idempotenz bei Retry, da `store.addEntry`
@@ -93,7 +132,14 @@ final class ProgressEntryComposer: ObservableObject {
         }
         guard let refId, isDirty else { return .noop }
 
-        let bodyHTML = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text zu Request-Start einfrieren: sowohl als Grundlage für den
+        // HTML-Body als auch, um nach dem Request zu erkennen, ob der Nutzer
+        // währenddessen weitergetippt hat (siehe Fund 3 oben).
+        let originalText = text
+        // Der TextEditor liefert reinen Klartext, `bodyHtml` wird serverseitig
+        // aber als HTML interpretiert/sanitisiert — deshalb sicher encodieren
+        // statt ungeschützt durchzureichen (Security Review, Mittel: Fund 2).
+        let bodyHTML = ProgressPlainTextEncoding.encode(originalText.trimmingCharacters(in: .whitespacesAndNewlines))
         let source = ProgressEntrySource.derive(hasSnooze: hasSnooze)
 
         let task = Task<CommitResult, Never> { @MainActor [weak self] in
@@ -103,7 +149,9 @@ final class ProgressEntryComposer: ObservableObject {
             defer { self.isSaving = false }
             do {
                 _ = try await store.addEntry(refType: refType, refId: refId, bodyHTML: bodyHTML, source: source)
-                self.text = ""
+                if self.text == originalText {
+                    self.text = ""
+                }
                 self.errorText = nil
                 return .saved
             } catch {
