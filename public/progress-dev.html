@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ThreadStack — Fortschritt Dev Harness</title>
+<title>ThreadStack — Fortschritt Dev Harness (W1: eingebetteter Bereich)</title>
 <style>
   html, body { margin:0; padding:0; font-family: 'DM Sans', -apple-system, system-ui, sans-serif; background:#F5F5F2; color:#111210; }
   #dev-toolbar {
@@ -19,11 +19,33 @@
   #dev-status { margin-left:auto; opacity:.8; }
   #dev-layout { display:flex; gap:24px; padding:24px; max-width:1100px; margin:0 auto; align-items:flex-start; flex-wrap:wrap; }
   .dev-col { flex:1 1 420px; min-width:340px; }
-  .dev-col h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#5A5850; margin:0 0 10px; }
-  #reentry-root, #reentry-root-2, #reentry-root-3 { margin-bottom:18px; }
+  .dev-col h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:#5A5850; margin:18px 0 10px; }
+  .dev-col h2:first-child { margin-top:0; }
   #timeline-panel {
     background:#fff; border:1px solid #E8E7E2; border-radius:12px; padding:16px; box-shadow:0 1px 2px rgba(16,22,30,.05);
   }
+  #reentry-root-standalone { margin-bottom:18px; }
+  /* "Heimatposition" der Slots — bewusst KEIN Nachfahre von #timeline-root
+     (siehe Host-Pflicht im Abschlussbericht W1: sonst würde der Slot beim
+     Leeren des Containers zerstört, bevor er umgehängt werden kann). Wird
+     beim Mounten in #timeline-root verschoben, bei destroy()/Unmount wieder
+     hierher zurückgehängt. */
+  #slot-staging {
+    border: 1px dashed #C9C7BE; border-radius: 10px; padding: 10px; background: #FBFBF9;
+    font-size: 12px; color: #5A5850;
+  }
+  #slot-staging .staging-label { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:#9A9890; margin-bottom:6px; }
+  .dummy-composer { display:flex; flex-direction:column; gap:6px; margin-bottom: 14px; }
+  .dummy-composer textarea {
+    width:100%; box-sizing:border-box; font-family:inherit; font-size:13px; padding:8px 10px;
+    border:1px solid #E8E7E2; border-radius:8px; resize:vertical;
+  }
+  .dummy-composer button {
+    align-self:flex-start; background:#1D6FE8; color:#fff; border:none; border-radius:8px;
+    padding:6px 14px; font-size:12.5px; cursor:pointer; font-family:inherit;
+  }
+  .dummy-composer button:hover { background:#1560CC; }
+  .dummy-composer .hint { font-size:11px; color:#9A9890; }
   #dev-log {
     position:fixed; bottom:0; left:0; right:0; max-height:140px; overflow-y:auto;
     background:#0f172a; color:#a7f3d0; font-family:monospace; font-size:11px; padding:6px 10px; display:none; z-index:100;
@@ -35,17 +57,16 @@
 <body>
 
 <div id="dev-toolbar">
-  <strong>Fortschritt Dev Harness</strong>
+  <strong>Fortschritt Dev Harness (W1)</strong>
   <button id="btn-mount">Mount (alle)</button>
-  <button id="btn-unmount">Unmount (alle)</button>
+  <button id="btn-unmount">Unmount (alle) — Slots kehren zur Heimatposition zurück</button>
   <button id="btn-invalidate">Invalidate Cache</button>
   <span class="sep"></span>
   <button id="btn-scenario-normal">Szenario: Normal (dormant + KI)</button>
-  <button id="btn-scenario-empty">Szenario: Leer (kein Zwischenstand)</button>
-  <button id="btn-scenario-result">Szenario: mit Stack-Abschluss</button>
+  <button id="btn-scenario-empty">Szenario: Leer (Text statt Button)</button>
   <button id="btn-scenario-manypages">Szenario: Pagination (2 Seiten)</button>
   <span class="sep"></span>
-  <button id="btn-error-initial">Initial-Fehler simulieren</button>
+  <button id="btn-error-initial">Initial-Fehler simulieren (Kopf + Verlauf)</button>
   <button id="btn-error-loadmore">Nachlade-Fehler simulieren</button>
   <button id="btn-toggle-ai">KI an/aus (aktuell: <span id="ai-state">an</span>)</button>
   <button id="btn-clear-dismiss">Dismiss-Storage löschen</button>
@@ -55,16 +76,26 @@
 
 <div id="dev-layout">
   <div class="dev-col">
-    <h2>Wiedereinstiegskarte — Szenario A (mit KI)</h2>
-    <div id="reentry-root"></div>
-    <h2>Wiedereinstiegskarte — Szenario B (leer / reduziert)</h2>
-    <div id="reentry-root-2"></div>
-  </div>
-  <div class="dev-col">
-    <h2>Zeitstrahl</h2>
+    <h2>Fortschrittsbereich (mountTimeline: Composer → Zielbild → Nächster Schritt → Wiedereinstiegskarte → Verlauf)</h2>
     <div id="timeline-panel">
       <div id="timeline-root"></div>
     </div>
+  </div>
+  <div class="dev-col">
+    <h2>Slot-Heimatposition (Host-DOM, außerhalb von #timeline-root)</h2>
+    <div id="slot-staging">
+      <div class="staging-label">Composer-Slot (Dummy — echter Rich-Text-Editor lebt in W2/index.html)</div>
+      <div id="composer-slot-node" class="dummy-composer">
+        <textarea id="composer-textarea" rows="3" placeholder="Neuer Zwischenstand …"></textarea>
+        <button type="button" id="composer-save-btn">+ Zwischenstand speichern</button>
+        <span class="hint">Wird nach dem Mounten oben im Fortschrittsbereich sichtbar (ganz oben, vor Zielbild).</span>
+      </div>
+      <div class="staging-label">Wiedereinstiegskarte-Slot (separat mit mountReentryCard gemountet, dann als reentrySlot übergeben)</div>
+      <div id="reentry-slot-node"></div>
+    </div>
+
+    <h2>Wiedereinstiegskarte — eigenständig gemountet, OHNE onRequestCompose (CTA-Buttons entfallen laut Vertrag)</h2>
+    <div id="reentry-root-standalone"></div>
   </div>
 </div>
 
@@ -210,17 +241,11 @@
     progress: {
       openEntryDialog: function (ctx) {
         log('openEntryDialog(' + JSON.stringify({ refType: ctx.refType, refId: ctx.refId, entryId: ctx.entryId }) + ')');
-        var text = window.prompt('Mock-Dialog: Zwischenstand-Text (Klartext, wird als <p> gespeichert). Leer = Abbrechen.', ctx.entryId ? 'Bearbeiteter Text …' : '');
+        var text = window.prompt('Mock-Dialog: Zwischenstand bearbeiten (Klartext, wird als <p> gespeichert).', 'Bearbeiteter Text …');
         if (text == null || text.trim() === '') return Promise.resolve('cancelled');
         var detail = store[ctx.refId];
-        if (ctx.entryId) {
-          var e = detail.entries.filter(function (x) { return x.id === ctx.entryId; })[0];
-          if (e) { e.bodyHtml = '<p>' + text.replace(/</g, '&lt;') + '</p>'; e.editedAt = new Date().toISOString(); }
-        } else {
-          detail.entries.unshift(makeEntry('new' + Date.now(), 0, '<p>' + text.replace(/</g, '&lt;') + '</p>'));
-          detail.stats.entryCount++;
-          detail.reentry.show = false;
-        }
+        var e = detail.entries.filter(function (x) { return x.id === ctx.entryId; })[0];
+        if (e) { e.bodyHtml = '<p>' + text.replace(/</g, '&lt;') + '</p>'; e.editedAt = new Date().toISOString(); }
         return Promise.resolve('saved');
       },
       openGoalDialog: function (ctx) {
@@ -228,6 +253,13 @@
         var text = window.prompt('Mock-Dialog: neues Zielbild', ctx.goal || '');
         if (text == null) return Promise.resolve('cancelled');
         store[ctx.refId].goal = text;
+        return Promise.resolve('saved');
+      },
+      openNextStepDialog: function (ctx) {
+        log('openNextStepDialog(' + JSON.stringify({ refType: ctx.refType, refId: ctx.refId }) + ')');
+        var text = window.prompt('Mock-Dialog: neuer nächster Schritt', ctx.nextStep || '');
+        if (text == null) return Promise.resolve('cancelled');
+        store[ctx.refId].nextStep = text;
         return Promise.resolve('saved');
       },
       confirmDelete: function (opts) {
@@ -275,26 +307,72 @@
   var log = window.__devLog;
   var mock = window.__devMock;
   var store = window.__devStore;
-  var scenarios = window.__devScenarios;
 
   var status = document.getElementById('dev-status');
-  var timelineHandle = null, reentryHandle = null, reentryHandle2 = null;
+  var currentRefId = 'a1';
+  var timelineHandle = null, reentryStandaloneHandle = null;
+
+  var composerSlotNode = document.getElementById('composer-slot-node');
+  var reentrySlotNode = document.getElementById('reentry-slot-node');
+  var composerTextarea = document.getElementById('composer-textarea');
+
+  document.getElementById('composer-save-btn').addEventListener('click', function () {
+    var text = composerTextarea.value.trim();
+    if (!text) return;
+    var detail = store[currentRefId];
+    detail.entries.unshift({
+      id: 'new' + Date.now(), refType: 'todo', refId: currentRefId, kind: 'note', source: 'manual',
+      bodyHtml: '<p>' + text.replace(/</g, '&lt;') + '</p>',
+      excerpt: text.slice(0, 280), createdAt: new Date().toISOString(), editedAt: null,
+      gapDaysBefore: null, showDormancyMarker: false, editable: true
+    });
+    detail.stats.entryCount++;
+    detail.reentry.show = false;
+    composerTextarea.value = '';
+    window.TSProgress.invalidate('todo', currentRefId);
+    if (timelineHandle) timelineHandle.reload();
+    log('Composer (Mock): Zwischenstand für ' + currentRefId + ' gespeichert.');
+  });
 
   function mountAll() {
-    timelineHandle = window.TSProgress.mountTimeline(document.getElementById('timeline-root'), { refType: 'todo', refId: 'a1' });
-    reentryHandle = window.TSProgress.mountReentryCard(document.getElementById('reentry-root'), { refType: 'todo', refId: 'a1' });
-    reentryHandle2 = window.TSProgress.mountReentryCard(document.getElementById('reentry-root-2'), { refType: 'todo', refId: 'a2' });
-    status.textContent = 'gemountet';
-  }
-  function unmountAll() {
-    if (timelineHandle) timelineHandle.destroy();
-    if (reentryHandle) reentryHandle.destroy();
-    if (reentryHandle2) reentryHandle2.destroy();
-    timelineHandle = reentryHandle = reentryHandle2 = null;
-    status.textContent = 'unmounted';
+    // mountReentryCard wird separat gemountet (bereits existierende, hier
+    // wiederverwendete Lösung) — der befüllte Container wird danach als
+    // reentrySlot an mountTimeline übergeben, das ihn ortsfest einhängt.
+    var reentryHandleForSlot = window.TSProgress.mountReentryCard(reentrySlotNode, {
+      refType: 'todo', refId: currentRefId,
+      onRequestCompose: function () {
+        log('onRequestCompose() aufgerufen — Host fokussiert den Composer.');
+        composerTextarea.focus();
+      }
+    });
+
+    timelineHandle = window.TSProgress.mountTimeline(document.getElementById('timeline-root'), {
+      refType: 'todo', refId: currentRefId,
+      composerSlot: composerSlotNode,
+      reentrySlot: reentrySlotNode
+    });
+    timelineHandle._reentrySlotHandle = reentryHandleForSlot; // nur für Unmount hier im Dev-Harness gehalten
+
+    // Zweite, eigenständige Wiedereinstiegskarte OHNE onRequestCompose:
+    // demonstriert, dass die CTA-Buttons dann laut Vertrag komplett entfallen.
+    reentryStandaloneHandle = window.TSProgress.mountReentryCard(document.getElementById('reentry-root-standalone'), {
+      refType: 'todo', refId: 'a2'
+    });
+
+    status.textContent = 'gemountet für ' + currentRefId + ' (Zielbild: "' + timelineHandle.getGoal().slice(0, 40) + '")';
   }
 
-  document.getElementById('btn-mount').addEventListener('click', mountAll);
+  function unmountAll() {
+    if (timelineHandle) {
+      if (timelineHandle._reentrySlotHandle) timelineHandle._reentrySlotHandle.destroy();
+      timelineHandle.destroy(); // hängt composerSlotNode/reentrySlotNode zurück in #slot-staging
+    }
+    if (reentryStandaloneHandle) reentryStandaloneHandle.destroy();
+    timelineHandle = reentryStandaloneHandle = null;
+    status.textContent = 'unmounted — Slots zurück in #slot-staging';
+  }
+
+  document.getElementById('btn-mount').addEventListener('click', function () { unmountAll(); mountAll(); });
   document.getElementById('btn-unmount').addEventListener('click', unmountAll);
   document.getElementById('btn-invalidate').addEventListener('click', function () {
     window.TSProgress.invalidate('todo', 'a1');
@@ -303,33 +381,31 @@
     log('Cache invalidiert für a1/a2/a3');
   });
 
-  function switchTimelineTo(refId, scenarioFactory) {
+  function switchTo(refId, scenarioFactory) {
     store[refId] = scenarioFactory();
     window.TSProgress.invalidate('todo', refId);
-    if (timelineHandle) timelineHandle.destroy();
-    timelineHandle = window.TSProgress.mountTimeline(document.getElementById('timeline-root'), { refType: 'todo', refId: refId });
+    currentRefId = refId;
+    unmountAll();
+    mountAll();
   }
 
   document.getElementById('btn-scenario-normal').addEventListener('click', function () {
     mock.simulateInitialError = false; mock.simulateLoadMoreError = false;
-    switchTimelineTo('a1', scenarios.normal);
+    switchTo('a1', window.__devScenarios.normal);
   });
   document.getElementById('btn-scenario-empty').addEventListener('click', function () {
     mock.simulateInitialError = false; mock.simulateLoadMoreError = false;
-    switchTimelineTo('a2', scenarios.empty);
-  });
-  document.getElementById('btn-scenario-result').addEventListener('click', function () {
-    mock.simulateInitialError = false; mock.simulateLoadMoreError = false;
-    switchTimelineTo('a1', scenarios.normal);
+    switchTo('a2', window.__devScenarios.empty);
   });
   document.getElementById('btn-scenario-manypages').addEventListener('click', function () {
     mock.simulateInitialError = false; mock.simulateLoadMoreError = false;
-    switchTimelineTo('a3', scenarios.manypages);
+    switchTo('a3', window.__devScenarios.manypages);
   });
   document.getElementById('btn-error-initial').addEventListener('click', function () {
     mock.simulateInitialError = true;
-    window.TSProgress.invalidate('todo', 'a1');
+    window.TSProgress.invalidate('todo', currentRefId);
     if (timelineHandle) timelineHandle.reload();
+    log('Initial-Fehler aktiv (5s) — betrifft Kopfbereich (Zielbild/Nächster Schritt) UND Verlauf, Composer/Wiedereinstieg bleiben nutzbar.');
     setTimeout(function () { mock.simulateInitialError = false; }, 5000);
   });
   document.getElementById('btn-error-loadmore').addEventListener('click', function () {
@@ -340,14 +416,15 @@
   document.getElementById('btn-toggle-ai').addEventListener('click', function () {
     mock.aiEnabled = !mock.aiEnabled;
     document.getElementById('ai-state').textContent = mock.aiEnabled ? 'an' : 'aus';
-    if (reentryHandle) reentryHandle.reload();
+    if (timelineHandle && timelineHandle._reentrySlotHandle) timelineHandle._reentrySlotHandle.reload();
+    if (reentryStandaloneHandle) reentryStandaloneHandle.reload();
   });
   document.getElementById('btn-clear-dismiss').addEventListener('click', function () {
     Object.keys(window.localStorage).filter(function (k) { return k.indexOf('ts.progress.dismiss.') === 0; })
       .forEach(function (k) { window.localStorage.removeItem(k); });
     log('Dismiss-Storage gelöscht');
-    if (reentryHandle) reentryHandle.reload();
-    if (reentryHandle2) reentryHandle2.reload();
+    if (timelineHandle && timelineHandle._reentrySlotHandle) timelineHandle._reentrySlotHandle.reload();
+    if (reentryStandaloneHandle) reentryStandaloneHandle.reload();
   });
 
   window.addEventListener('DOMContentLoaded', mountAll);

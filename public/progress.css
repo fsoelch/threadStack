@@ -1,4 +1,5 @@
-/* ThreadStack — Fortschrittsverlauf (Arbeitspaket W2: Web-Modul Fortschritt)
+/* ThreadStack — Fortschrittsverlauf (Arbeitspaket W1: Platzierung/Konsolidierung
+   in die Todo-/Themen-Bearbeiten-Ansicht)
    Nutzt die Design-Tokens von index.html (--border, --shadow-xs, --r, ...)
    direkt über var(), mit Fallback-Werten (identisch zu index.html), damit
    das Modul auch losgelöst (progress-dev.html, ohne index.html-Stylesheet)
@@ -46,6 +47,25 @@
   overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }
 
+/* ─── Slot-Hosts (Composer/Wiedereinstiegskarte, Host-DOM) ──────────────
+   :empty verhindert eine sichtbare Lücke, wenn der Host keinen Slot
+   übergeben hat oder sich der Inhalt (z.B. die Wiedereinstiegskarte) selbst
+   verbirgt.
+   Bewusst OHNE eigene Vertikal-Margin auf dem Host selbst: mountReentryCard
+   leert bei "verborgen" nur den Inhalt seines Wurzel-Elements
+   (.progress-reentry-wrap bleibt als Knoten bestehen, ist dann aber leer) -
+   der Host wäre also strukturell nie :empty, während er visuell trotzdem
+   keine Lücke erzeugen soll. Der Abstand kommt daher ausschließlich aus dem
+   sichtbaren Innenleben (z.B. .progress-reentry-card { margin-bottom }
+   weiter unten), nicht aus dem Host-Wrapper. */
+.progress-composer-slot-host,
+.progress-reentry-slot-host {
+  width: 100%;
+}
+.progress-composer-slot-host:empty,
+.progress-reentry-slot-host:empty { display: none; }
+.progress-composer-slot-host { margin-bottom: 1rem; }
+
 /* ─── Buttons (self-contained, keine Abhängigkeit von index.html-.btn) ─── */
 .progress-btn {
   display: inline-flex; align-items: center; gap: .35rem;
@@ -71,7 +91,8 @@
   background: transparent; border: 1px solid transparent; color: var(--p-text-muted);
   cursor: pointer; font-size: .8125rem; transition: background .1s, color .1s;
 }
-.progress-icon-btn:hover { background: rgba(16,24,40,.06); color: var(--p-text); }
+.progress-icon-btn:hover:not(:disabled) { background: rgba(16,24,40,.06); color: var(--p-text); }
+.progress-icon-btn:disabled { opacity: .4; cursor: not-allowed; }
 
 /* ─── Fortschritts-Badge (im Stil von .due-badge) ─────────────────────── */
 .progress-badge {
@@ -87,6 +108,40 @@
   border-radius: 4px; text-transform: uppercase; letter-spacing: .02em;
   background: var(--p-green-light); color: #166534; border: 1px solid var(--p-green-ring);
   align-self: flex-start;
+}
+
+/* ─── Kopfbereich: Zielbild / Nächster Schritt ──────────────────────────
+   Fest im Bereich verankert, direkt unter dem Composer-Slot (siehe
+   DOM-Reihenfolge in progress.js: Composer -> Zielbild -> Nächster Schritt
+   -> Wiedereinstiegskarte -> Verlauf). */
+.progress-section-head {
+  display: flex; flex-direction: column; gap: .5rem;
+  padding: .75rem .875rem; margin-bottom: .5rem;
+  background: var(--p-card2); border: 1px solid var(--p-border);
+  border-radius: var(--p-r);
+}
+.progress-goal-row, .progress-nextstep-row {
+  display: flex; align-items: flex-start; gap: .5rem;
+}
+.progress-row-label {
+  flex-shrink: 0; padding-top: .1rem; white-space: nowrap;
+  font-size: .6875rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--p-text-muted);
+}
+.progress-row-text {
+  flex: 1; min-width: 0; font-size: .8125rem; color: var(--p-text);
+  word-break: break-word; white-space: pre-wrap;
+}
+.progress-row-text-empty,
+.progress-row-text-muted { color: var(--p-text-light); font-style: italic; }
+
+/* ─── Trenner zwischen Kopf-/Wiedereinstiegsbereich und Verlauf ─────────
+   Sichtbarkeit wird per Style-Toggle (nicht DOM-Ersatz) gesteuert, siehe
+   progress.js updateDividerVisibility(); daher hier bewusst kein :empty-
+   Selektor, sondern reines display-Verhalten über Inline-Style. */
+.progress-section-divider {
+  height: 1px; width: 100%; margin: .75rem 0;
+  background: var(--p-border-md); border: none;
 }
 
 /* ─── Zeitstrahl ─────────────────────────────────────────────────────── */

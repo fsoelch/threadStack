@@ -1,12 +1,13 @@
 'use strict';
-// Arbeitspaket W2 (Web-Modul Fortschritt).
+// Arbeitspaket W1 (Platzierung/Konsolidierung Fortschrittsverlauf).
 //
 // Deckt die reinen, DOM-freien Hilfsfunktionen aus public/progress.js ab, die
 // über `window.TSProgress` öffentlich sind (Comparator, Badge-Markup,
-// Undokumentiert-Prädikat, Datumsformatierung) sowie die Dismiss-Logik der
-// Wiedereinstiegskarte. DOM-Rendering (mountTimeline/mountReentryCard) wird
-// hier bewusst nicht getestet (kein Browser/DOM in dieser Node-Testumgebung) -
-// dafür dient public/progress-dev.html als visuelles Prüfwerkzeug.
+// Undokumentiert-Prädikat, Datumsformatierung, Entry-Source-Ableitung,
+// Leer-HTML-Erkennung) sowie die Dismiss-Logik der Wiedereinstiegskarte.
+// DOM-Rendering (mountTimeline/mountReentryCard) wird hier bewusst nicht
+// getestet (kein Browser/DOM in dieser Node-Testumgebung) - dafür dient
+// public/progress-dev.html als visuelles Prüfwerkzeug.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -24,7 +25,9 @@ const {
   dismissStorageKey,
   isValidRefType,
   isValidRefId,
-  escHtml
+  escHtml,
+  deriveEntrySource,
+  isEffectivelyEmptyHtml
 } = require(path.join('..', 'public', 'progress.js'));
 
 // ---- Fake localStorage für Dismiss-Tests (kein Browser im Node-Test) ------
@@ -276,5 +279,74 @@ test('escHtml: escaped alle relevanten HTML-Sonderzeichen (genutzt für Zielbild
   await t.test('null/undefined -> leerer String, kein Absturz', () => {
     assert.equal(escHtml(null), '');
     assert.equal(escHtml(undefined), '');
+  });
+});
+
+test('deriveEntrySource: Herkunft eines Zwischenstands aus snoozedUntil ableiten', async (t) => {
+  await t.test("'snooze', wenn snoozedUntil ein nicht-leerer, getrimmter String ist", () => {
+    assert.equal(deriveEntrySource({ snoozedUntil: '2026-09-01T00:00:00.000Z' }), 'snooze');
+  });
+  await t.test("'manual', wenn snoozedUntil nur Whitespace ist ('   ')", () => {
+    assert.equal(deriveEntrySource({ snoozedUntil: '   ' }), 'manual');
+  });
+  await t.test("'manual', wenn snoozedUntil null ist", () => {
+    assert.equal(deriveEntrySource({ snoozedUntil: null }), 'manual');
+  });
+  await t.test("'manual', wenn snoozedUntil undefined ist", () => {
+    assert.equal(deriveEntrySource({ snoozedUntil: undefined }), 'manual');
+  });
+  await t.test("'manual', wenn snoozedUntil ein leerer String ('') ist", () => {
+    assert.equal(deriveEntrySource({ snoozedUntil: '' }), 'manual');
+  });
+  await t.test("'manual', wenn snoozedUntil kein String ist (z.B. Zahl/Objekt/Date)", () => {
+    assert.equal(deriveEntrySource({ snoozedUntil: 12345 }), 'manual');
+    assert.equal(deriveEntrySource({ snoozedUntil: {} }), 'manual');
+    assert.equal(deriveEntrySource({ snoozedUntil: new Date() }), 'manual');
+    assert.equal(deriveEntrySource({ snoozedUntil: true }), 'manual');
+  });
+  await t.test("'manual', wenn das Options-Objekt selbst fehlt/leer ist (defensiv)", () => {
+    assert.equal(deriveEntrySource({}), 'manual');
+    assert.equal(deriveEntrySource(null), 'manual');
+    assert.equal(deriveEntrySource(undefined), 'manual');
+  });
+  await t.test('führende/nachgestellte Whitespaces um einen echten Wert stören nicht (String bleibt gültig)', () => {
+    assert.equal(deriveEntrySource({ snoozedUntil: '  2026-09-01T00:00:00.000Z  ' }), 'snooze');
+  });
+});
+
+test('isEffectivelyEmptyHtml: erkennt inhaltlich leeres Rich-Text-HTML', async (t) => {
+  await t.test("'' ist leer", () => {
+    assert.equal(isEffectivelyEmptyHtml(''), true);
+  });
+  await t.test("'<br>' ist leer", () => {
+    assert.equal(isEffectivelyEmptyHtml('<br>'), true);
+  });
+  await t.test("'<div><br></div>' ist leer", () => {
+    assert.equal(isEffectivelyEmptyHtml('<div><br></div>'), true);
+  });
+  await t.test("'<p>   </p>' (nur Whitespace) ist leer", () => {
+    assert.equal(isEffectivelyEmptyHtml('<p>   </p>'), true);
+  });
+  await t.test("'<p>&nbsp;</p>' (nur nbsp-Entity) ist leer", () => {
+    assert.equal(isEffectivelyEmptyHtml('<p>&nbsp;</p>'), true);
+  });
+  await t.test('reine Whitespace-Strings ohne Tags sind leer', () => {
+    assert.equal(isEffectivelyEmptyHtml('   \n\t  '), true);
+  });
+  await t.test('null/undefined gelten als leer (defensiv)', () => {
+    assert.equal(isEffectivelyEmptyHtml(null), true);
+    assert.equal(isEffectivelyEmptyHtml(undefined), true);
+  });
+  await t.test('verschachtelte leere Tags ohne Inhalt sind leer', () => {
+    assert.equal(isEffectivelyEmptyHtml('<p><span></span><br></p>'), true);
+  });
+  await t.test('echter Textinhalt ist NICHT leer', () => {
+    assert.equal(isEffectivelyEmptyHtml('<p>Text</p>'), false);
+  });
+  await t.test('Text neben einem <br> ist NICHT leer', () => {
+    assert.equal(isEffectivelyEmptyHtml('<p>Notiz<br>weiter</p>'), false);
+  });
+  await t.test('reiner Text ohne Tags ist NICHT leer', () => {
+    assert.equal(isEffectivelyEmptyHtml('nur Text'), false);
   });
 });

@@ -1,14 +1,22 @@
 /*
- * ThreadStack — Fortschrittsverlauf (Arbeitspaket W2: Web-Modul Fortschritt)
+ * ThreadStack — Fortschrittsverlauf (Arbeitspaket W1: Platzierung/Konsolidierung
+ * des Fortschrittsverlaufs in die Todo-/Themen-Bearbeiten-Ansicht)
  *
  * Exponiert ausschließlich window.TSProgress = {
  *   mountTimeline, mountReentryCard, badgeHtml, compareByProgress,
- *   isUndocumented, formatAbsolute, formatRelative, invalidate
+ *   isUndocumented, formatAbsolute, formatRelative, invalidate,
+ *   deriveEntrySource, isEffectivelyEmptyHtml
  * }.
  * Konsumiert window.TSHost (api, toast, escHtml, confirm, reducedMotion) sowie
- * window.TSHost.progress (openEntryDialog, openGoalDialog, confirmDelete,
- * aiReentry, aiEnabled, onProgressChanged) — siehe progress-dev.html für ein
- * lauffähiges Mock dieser Schnittstelle.
+ * window.TSHost.progress (openGoalDialog, openNextStepDialog, openEntryDialog,
+ * confirmDelete, aiReentry, aiEnabled, onProgressChanged) — siehe
+ * progress-dev.html für ein lauffähiges Mock dieser Schnittstelle.
+ *
+ * mountTimeline bettet den Verlauf fest ein (Composer-Slot -> Zielbild ->
+ * Nächster Schritt -> Reentry-Slot -> Verlauf), statt ihn in einem separaten
+ * Panel zu öffnen. Der Composer selbst (Rich-Text-Eingabe für einen neuen
+ * Zwischenstand) lebt als Host-DOM im Konsumenten (W2/index.html) und wird
+ * hier nur ortsfest eingehängt — dieses Modul kennt seinen Inhalt nicht.
  *
  * Nur Anzeige-/Lese-Bausteine: Zeitstrahl, Ruhephasen-Marker, Wiedereinstiegs-
  * karte, Badge-Markup, Sortier-Comparator, Datumsformatierung. Erfassen/
@@ -135,6 +143,41 @@
       '<span class="progress-badge-label">' + escHtml(progress.badgeLabel) + '</span></span>';
   }
 
+  /**
+   * Herkunft eines (neuen) Zwischenstands ableiten. 'snooze' GENAU DANN, wenn
+   * `snoozedUntil` ein String ist, dessen getrimmter Wert nicht leer ist —
+   * alles andere (null/undefined/leer/Nicht-String) ergibt 'manual'.
+   */
+  function deriveEntrySource(opts) {
+    var snoozedUntil = opts && opts.snoozedUntil;
+    if (typeof snoozedUntil === 'string' && snoozedUntil.trim() !== '') return 'snooze';
+    return 'manual';
+  }
+
+  /**
+   * true, wenn `html` inhaltlich leer ist (kein sichtbarer Text nach Entfernen
+   * aller Tags, Entities zu Leerzeichen aufgelöst und getrimmt) — z.B. '',
+   * '<br>', '<div><br></div>', '<p>   </p>', '<p>&nbsp;</p>' oder reine
+   * Whitespace-Strings. Rein string-basiert (kein DOM nötig), damit sowohl im
+   * Browser als auch in Node-Tests nutzbar.
+   */
+  function isEffectivelyEmptyHtml(html) {
+    if (html == null) return true;
+    var s = String(html);
+    if (s.trim() === '') return true;
+    var text = s
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&#160;/gi, ' ')
+      .replace(/&#xa0;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return text.length === 0;
+  }
+
   // ---- Wiedereinstiegskarte: Dismiss-Logik (localStorage) ------------------
 
   function dismissStorageKey(refType, refId) {
@@ -246,6 +289,11 @@
     return e;
   }
 
+  /** true, wenn `x` ein tatsächliches DOM-Element ist (Validierung von Host-Input). */
+  function isElement(x) {
+    return !!x && typeof x === 'object' && x.nodeType === 1 && typeof x.parentNode !== 'undefined';
+  }
+
   // `retryAction` ist der data-action-Wert, den der delegierte Klick-Handler
   // der jeweiligen Instanz (TimelineInstance/ReentryInstance) auswertet.
   function renderError(container, message, retryAction) {
@@ -270,6 +318,8 @@
     this.container = container;
     this.refType = opts.refType;
     this.refId = opts.refId;
+    this.composerSlot = isElement(opts.composerSlot) ? opts.composerSlot : null;
+    this.reentrySlot = isElement(opts.reentrySlot) ? opts.reentrySlot : null;
     this.destroyed = false;
     this.state = {
       loading: true,
@@ -277,16 +327,57 @@
       entries: [],
       page: { limit: 20, hasMore: false, nextCursor: null },
       goal: '',
+      nextStep: '',
       loadingMore: false,
       loadMoreError: null,
       expanded: {}, // entryId -> true
       refExists: true
     };
+
+    // Invariante (Datenverlustschutz): Heimatposition JEDES übergebenen Slots
+    // wird erfasst, BEVOR irgendetwas in `container` geschrieben oder der Slot
+    // selbst bewegt wird. destroy() hängt beide Slots strikt in dieser
+    // Reihenfolge zuerst zurück, bevor der Container geleert wird.
+    if (this.composerSlot) {
+      this._composerHome = this.composerSlot.parentNode;
+      this._composerNext = this.composerSlot.nextSibling;
+    }
+    if (this.reentrySlot) {
+      this._reentryHome = this.reentrySlot.parentNode;
+      this._reentryNext = this.reentrySlot.nextSibling;
+    }
+
     this.rootEl = el('div', { class: 'progress-timeline', 'data-progress-timeline': '1' });
     this.announceEl = el('div', { class: 'progress-sr-only', 'aria-live': 'polite' });
     this.rootEl.appendChild(this.announceEl);
+
+    if (this.composerSlot) {
+      this.composerHostEl = el('div', { class: 'progress-composer-slot-host' });
+      this.composerHostEl.appendChild(this.composerSlot);
+      this.rootEl.appendChild(this.composerHostEl);
+    }
+
+    // Wird ausschließlich von renderHead() beschrieben.
+    this.headEl = el('div', { class: 'progress-section-head' });
+    this.rootEl.appendChild(this.headEl);
+
+    if (this.reentrySlot) {
+      this.reentryHostEl = el('div', { class: 'progress-reentry-slot-host' });
+      this.reentryHostEl.appendChild(this.reentrySlot);
+      this.rootEl.appendChild(this.reentryHostEl);
+    }
+
+    // Sichtbarkeit wird separat (nicht als Teil von renderHead()/renderBody())
+    // per Style-Toggle gesteuert — der Divider selbst ist kein Nachfahre der
+    // beiden von render() beschriebenen Container.
+    this.dividerEl = el('div', { class: 'progress-section-divider', 'aria-hidden': 'true' });
+    this.dividerEl.style.display = 'none';
+    this.rootEl.appendChild(this.dividerEl);
+
+    // Wird ausschließlich von renderBody() beschrieben.
     this.listWrapEl = el('div', { class: 'progress-timeline-body' });
     this.rootEl.appendChild(this.listWrapEl);
+
     container.innerHTML = '';
     container.appendChild(this.rootEl);
     this._onClick = this.handleClick.bind(this);
@@ -359,20 +450,55 @@
   TimelineInstance.prototype.openEntryDialogFor = function (entryId) {
     var host = getHost();
     if (!host || !host.progress || typeof host.progress.openEntryDialog !== 'function') return;
-    var entry = null;
-    if (entryId) {
-      entry = this.state.entries.filter(function (e) { return e.id === entryId; })[0] || null;
-    }
+    // entryId ist jetzt Pflicht (nur noch Bearbeiten, siehe Vertrag) — der
+    // frühere "Erfassen ohne entryId"-Fall entfällt.
+    if (!entryId) return;
+    var entry = this.state.entries.filter(function (e) { return e.id === entryId; })[0] || null;
+    if (!entry) return; // z.B. veraltete Id nach zwischenzeitlicher Löschung
     var lastEntry = this.state.entries[0] || null;
     var self = this;
     host.progress.openEntryDialog({
       refType: this.refType,
       refId: this.refId,
-      entryId: entry ? entry.id : null,
-      source: entry ? entry.source : 'manual',
-      prefillHtml: entry ? (entry.bodyHtml || '') : '',
+      entryId: entry.id,
+      source: entry.source,
+      prefillHtml: entry.bodyHtml || '',
       goal: this.state.goal || '',
       lastEntryHtml: lastEntry ? (lastEntry.bodyHtml || '') : ''
+    }).then(function (result) {
+      if (self.destroyed) return;
+      if (result === 'saved') {
+        self.load(true);
+        if (host.progress.onProgressChanged) host.progress.onProgressChanged(self.refType, self.refId);
+      }
+    }).catch(function () { /* Dialog-Fehler werden vom Host selbst kommuniziert */ });
+  };
+
+  TimelineInstance.prototype.openGoalDialogFor = function () {
+    var host = getHost();
+    if (!host || !host.progress || typeof host.progress.openGoalDialog !== 'function') return;
+    var self = this;
+    host.progress.openGoalDialog({
+      refType: this.refType,
+      refId: this.refId,
+      goal: this.state.goal || ''
+    }).then(function (result) {
+      if (self.destroyed) return;
+      if (result === 'saved') {
+        self.load(true);
+        if (host.progress.onProgressChanged) host.progress.onProgressChanged(self.refType, self.refId);
+      }
+    }).catch(function () { /* Dialog-Fehler werden vom Host selbst kommuniziert */ });
+  };
+
+  TimelineInstance.prototype.openNextStepDialogFor = function () {
+    var host = getHost();
+    if (!host || !host.progress || typeof host.progress.openNextStepDialog !== 'function') return;
+    var self = this;
+    host.progress.openNextStepDialog({
+      refType: this.refType,
+      refId: this.refId,
+      nextStep: this.state.nextStep || ''
     }).then(function (result) {
       if (self.destroyed) return;
       if (result === 'saved') {
@@ -425,6 +551,10 @@
         var again = self.rootEl.querySelector('[data-action="toggle-more"][data-entry-id="' + cssEscape(entryId) + '"]');
         if (again) again.focus();
       }, 0);
+    } else if (action === 'edit-goal') {
+      this.openGoalDialogFor();
+    } else if (action === 'edit-nextstep') {
+      this.openNextStepDialogFor();
     } else if (action === 'edit-entry') {
       this.openEntryDialogFor(entryId);
     } else if (action === 'delete-entry') {
@@ -433,8 +563,6 @@
       this.loadMore();
     } else if (action === 'retry-load-more') {
       this.loadMore();
-    } else if (action === 'empty-cta') {
-      this.openEntryDialogFor(null);
     } else if (action === 'retry-load') {
       this.load(true);
     }
@@ -530,8 +658,79 @@
     }
   };
 
-  TimelineInstance.prototype.render = function () {
-    if (this.destroyed) return;
+  /**
+   * Kopfbereich (Zielbild / Nächster Schritt). Beschreibt ausschließlich
+   * `.progress-section-head` — rührt Composer-/Reentry-Slot-Hosts nicht an.
+   * Texte werden IMMER über textContent gesetzt (nie innerHTML): Zielbild und
+   * Nächster Schritt sind Klartextfelder und dürfen nie als HTML interpretiert
+   * werden.
+   */
+  TimelineInstance.prototype.renderHead = function () {
+    var head = this.headEl;
+    head.innerHTML = '';
+
+    var goalRow = el('div', { class: 'progress-goal-row' });
+    goalRow.appendChild(el('span', { class: 'progress-row-label' }, '🎯 Zielbild'));
+    var goalText = el('span', { class: 'progress-row-text' });
+    var goalBtn = el('button', {
+      type: 'button', class: 'progress-icon-btn', 'data-action': 'edit-goal',
+      'aria-label': 'Zielbild bearbeiten', title: 'Bearbeiten'
+    }, '<span aria-hidden="true">✎</span>');
+
+    var nextRow = el('div', { class: 'progress-nextstep-row' });
+    nextRow.appendChild(el('span', { class: 'progress-row-label' }, '➡️ Nächster Schritt'));
+    var nextText = el('span', { class: 'progress-row-text' });
+    var nextBtn = el('button', {
+      type: 'button', class: 'progress-icon-btn', 'data-action': 'edit-nextstep',
+      'aria-label': 'Nächsten Schritt bearbeiten', title: 'Bearbeiten'
+    }, '<span aria-hidden="true">✎</span>');
+
+    if (this.state.loading) {
+      goalText.textContent = 'Zielbild wird geladen …';
+      goalText.className = 'progress-row-text progress-row-text-muted';
+      goalBtn.disabled = true;
+      nextText.textContent = 'Nächster Schritt wird geladen …';
+      nextText.className = 'progress-row-text progress-row-text-muted';
+      nextBtn.disabled = true;
+    } else if (this.state.error) {
+      goalText.textContent = 'Zielbild konnte nicht geladen werden.';
+      goalText.className = 'progress-row-text progress-row-text-muted';
+      goalBtn.disabled = true;
+      nextText.textContent = 'Nächster Schritt konnte nicht geladen werden.';
+      nextText.className = 'progress-row-text progress-row-text-muted';
+      nextBtn.disabled = true;
+    } else {
+      var goalVal = this.state.goal || '';
+      if (goalVal) {
+        goalText.textContent = goalVal;
+        goalText.className = 'progress-row-text';
+      } else {
+        goalText.textContent = 'Noch kein Zielbild hinterlegt.';
+        goalText.className = 'progress-row-text progress-row-text-empty';
+      }
+      goalBtn.disabled = false;
+
+      var nextVal = this.state.nextStep || '';
+      if (nextVal) {
+        nextText.textContent = nextVal;
+        nextText.className = 'progress-row-text';
+      } else {
+        nextText.textContent = 'Noch kein nächster Schritt notiert.';
+        nextText.className = 'progress-row-text progress-row-text-empty';
+      }
+      nextBtn.disabled = false;
+    }
+
+    goalRow.appendChild(goalText);
+    goalRow.appendChild(goalBtn);
+    nextRow.appendChild(nextText);
+    nextRow.appendChild(nextBtn);
+    head.appendChild(goalRow);
+    head.appendChild(nextRow);
+  };
+
+  /** Zeitstrahl-Körper. Beschreibt ausschließlich `.progress-timeline-body`. */
+  TimelineInstance.prototype.renderBody = function () {
     var wrap = this.listWrapEl;
     wrap.innerHTML = '';
 
@@ -551,11 +750,10 @@
     }
 
     if (!this.state.entries.length) {
-      var empty = el('div', { class: 'progress-empty-state' });
-      empty.appendChild(el('p', {}, 'Für dieses Vorhaben gibt es noch keinen Zwischenstand.'));
-      var cta = el('button', { type: 'button', class: 'progress-btn progress-btn-primary', 'data-action': 'empty-cta' }, '+ Ersten Zwischenstand erfassen');
-      empty.appendChild(cta);
-      wrap.appendChild(empty);
+      // Kein CTA-Button mehr (siehe Vertrag): der Composer steht permanent
+      // sichtbar direkt oberhalb dieses Bereichs — ein zweiter Erfassungsweg
+      // wäre redundant.
+      wrap.appendChild(el('p', { class: 'progress-empty-hint' }, 'Noch kein Zwischenstand erfasst — trag oben deinen ersten ein.'));
       return;
     }
 
@@ -583,16 +781,47 @@
       }
     }
     wrap.appendChild(footer);
+  };
+
+  // Divider ist kein Nachfahre von head/body und wird daher außerhalb von
+  // renderHead()/renderBody() separat sichtbar/unsichtbar geschaltet.
+  TimelineInstance.prototype.updateDividerVisibility = function () {
+    var wrap = this.listWrapEl;
+    var hasContent = !!(wrap && wrap.textContent && wrap.textContent.trim().length > 0);
+    this.dividerEl.style.display = hasContent ? '' : 'none';
+  };
+
+  TimelineInstance.prototype.render = function () {
+    if (this.destroyed) return;
+    // Invariante: render() beschreibt ausschließlich .progress-section-head
+    // und .progress-timeline-body — die Slot-Hosts (Composer/Reentry) und ihr
+    // Inhalt werden hier in KEINEM Zustand angefasst.
+    this.renderHead();
+    this.renderBody();
+    this.updateDividerVisibility();
 
     var self = this;
-    (window.requestAnimationFrame || function (fn) { setTimeout(fn, 0); })(function () { self.checkOverflow(); });
+    var raf = (typeof window !== 'undefined' && window.requestAnimationFrame) ? window.requestAnimationFrame : function (fn) { setTimeout(fn, 0); };
+    raf(function () { if (!self.destroyed) self.checkOverflow(); });
   };
+
+  TimelineInstance.prototype.getGoal = function () { return this.state.goal || ''; };
+  TimelineInstance.prototype.getNextStep = function () { return this.state.nextStep || ''; };
 
   TimelineInstance.prototype.reload = function () { this.load(true); };
   TimelineInstance.prototype.destroy = function () {
     if (this.destroyed) return;
     this.destroyed = true;
     this.rootEl.removeEventListener('click', this._onClick);
+    // Invariante: beide Slots werden ZUERST an ihre Heimatposition
+    // zurückgehängt, DANACH erst wird der Container geleert — sonst würden
+    // sie beim innerHTML-Reset mit zerstört.
+    if (this.composerSlot && this._composerHome) {
+      this._composerHome.insertBefore(this.composerSlot, this._composerNext || null);
+    }
+    if (this.reentrySlot && this._reentryHome) {
+      this._reentryHome.insertBefore(this.reentrySlot, this._reentryNext || null);
+    }
     if (this.container) this.container.innerHTML = '';
   };
 
@@ -604,10 +833,20 @@
     opts = opts || {};
     if (!isValidRefType(opts.refType) || !isValidRefId(opts.refId)) {
       renderError(container, 'Ungültiger Aufruf: refType/refId fehlen oder sind ungültig.', null);
-      return { reload: function () {}, destroy: function () { container.innerHTML = ''; } };
+      return {
+        reload: function () {},
+        destroy: function () { container.innerHTML = ''; },
+        getGoal: function () { return ''; },
+        getNextStep: function () { return ''; }
+      };
     }
     var inst = new TimelineInstance(container, opts);
-    return { reload: inst.reload.bind(inst), destroy: inst.destroy.bind(inst) };
+    return {
+      reload: inst.reload.bind(inst),
+      destroy: inst.destroy.bind(inst),
+      getGoal: inst.getGoal.bind(inst),
+      getNextStep: inst.getNextStep.bind(inst)
+    };
   }
 
   // ==========================================================================
@@ -618,6 +857,7 @@
     this.container = container;
     this.refType = opts.refType;
     this.refId = opts.refId;
+    this.onRequestCompose = (typeof opts.onRequestCompose === 'function') ? opts.onRequestCompose : null;
     this.destroyed = false;
     this.state = { loading: true, error: null, detail: null, aiLoading: false, aiError: null, aiText: null };
     this.rootEl = el('div', { class: 'progress-reentry-wrap' });
@@ -657,34 +897,15 @@
       }
       this.render(true);
     } else if (action === 'reentry-primary-cta') {
-      this.openEntryDialog();
+      // Kein Dialog mehr: ausschließlich der vom Host übergebene Callback
+      // (siehe Vertrag) — die frühere interne openEntryDialog-Aufrufstelle
+      // dieser Instanz ist ersatzlos entfallen.
+      if (this.onRequestCompose) this.onRequestCompose();
     } else if (action === 'reentry-ai') {
       this.loadAi();
     } else if (action === 'retry-load') {
       this.load(true);
     }
-  };
-
-  ReentryInstance.prototype.openEntryDialog = function () {
-    var host = getHost();
-    if (!host || !host.progress || typeof host.progress.openEntryDialog !== 'function') return;
-    var detail = this.state.detail || {};
-    var self = this;
-    host.progress.openEntryDialog({
-      refType: this.refType,
-      refId: this.refId,
-      entryId: null,
-      source: 'manual',
-      prefillHtml: '',
-      goal: detail.goal || '',
-      lastEntryHtml: (detail.entries && detail.entries[0] && detail.entries[0].bodyHtml) || ''
-    }).then(function (result) {
-      if (self.destroyed) return;
-      if (result === 'saved') {
-        self.load(true);
-        if (host.progress.onProgressChanged) host.progress.onProgressChanged(self.refType, self.refId);
-      }
-    }).catch(function () { /* Dialog kommuniziert eigene Fehler */ });
   };
 
   ReentryInstance.prototype.loadAi = function () {
@@ -724,7 +945,6 @@
     var reentry = detail.reentry;
     if (!reentry || !reentry.show) return;
 
-    var host = getHost();
     if (!skipDismissCheck && isReentryDismissed(this.refType, this.refId, reentry.dormantSince)) return;
 
     var host2 = getHost();
@@ -744,8 +964,10 @@
 
     if (reentry.empty === true) {
       body.appendChild(el('p', { class: 'progress-reentry-hint' }, 'Für dieses Vorhaben liegen noch kein Zielbild und keine Zwischenstände vor.'));
-      var cta0 = el('button', { type: 'button', class: 'progress-btn progress-btn-primary', 'data-action': 'reentry-primary-cta' }, '+ Zwischenstand erfassen');
-      body.appendChild(cta0);
+      if (this.onRequestCompose) {
+        var cta0 = el('button', { type: 'button', class: 'progress-btn progress-btn-primary', 'data-action': 'reentry-primary-cta' }, '+ Zwischenstand erfassen');
+        body.appendChild(cta0);
+      }
     } else {
       if (detail.goal) {
         var goalEl = el('blockquote', { class: 'progress-reentry-goal' });
@@ -785,9 +1007,11 @@
         }
       }
 
-      var ctaWrap = el('div', { class: 'progress-reentry-cta-row' });
-      ctaWrap.appendChild(el('button', { type: 'button', class: 'progress-btn progress-btn-primary', 'data-action': 'reentry-primary-cta' }, '+ Zwischenstand erfassen'));
-      body.appendChild(ctaWrap);
+      if (this.onRequestCompose) {
+        var ctaWrap = el('div', { class: 'progress-reentry-cta-row' });
+        ctaWrap.appendChild(el('button', { type: 'button', class: 'progress-btn progress-btn-primary', 'data-action': 'reentry-primary-cta' }, '+ Zwischenstand erfassen'));
+        body.appendChild(ctaWrap);
+      }
     }
 
     card.appendChild(body);
@@ -807,6 +1031,10 @@
     if (this.destroyed) return;
     this.destroyed = true;
     this.rootEl.removeEventListener('click', this._onClick);
+    // Leert nur den Inhalt des übergebenen Containers, nicht den Container-
+    // Knoten selbst — der Container gehört dem Host (bei Nutzung als
+    // reentrySlot von mountTimeline wird er von dessen destroy() an seine
+    // Heimatposition zurückgehängt, siehe dort).
     if (this.container) this.container.innerHTML = '';
   };
 
@@ -836,7 +1064,9 @@
     isUndocumented: isUndocumented,
     formatAbsolute: formatAbsolute,
     formatRelative: formatRelative,
-    invalidate: invalidate
+    invalidate: invalidate,
+    deriveEntrySource: deriveEntrySource,
+    isEffectivelyEmptyHtml: isEffectivelyEmptyHtml
   };
 
   if (typeof window !== 'undefined') {
@@ -859,7 +1089,9 @@
       dismissStorageKey: dismissStorageKey,
       isValidRefType: isValidRefType,
       isValidRefId: isValidRefId,
-      escHtml: escHtml
+      escHtml: escHtml,
+      deriveEntrySource: deriveEntrySource,
+      isEffectivelyEmptyHtml: isEffectivelyEmptyHtml
     };
   }
 })(typeof window !== 'undefined' ? window : this);
