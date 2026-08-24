@@ -1692,23 +1692,23 @@ body.ai-disabled .ai-action { display: none !important; }
   padding:.05rem .3rem; font-size:.6875rem; font-family:var(--font-mono);
 }
 
-/* ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W1) ──────────
+/* ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W2) ──────────
    Eigene Klassen mit "ts-progress-*"-Präfix, um Kollisionen mit den
-   "progress-*"-Klassen aus public/progress.css (Arbeitspaket W2) zu
-   vermeiden — jenes Modul besitzt die Klassen ohne "ts-"-Präfix. */
-.ts-progress-panel-inner { width:760px; padding:0; display:flex; flex-direction:column; }
-.ts-progress-panel-sticky { position:sticky; top:0; z-index:2; background:#fff; border-radius:16px 16px 0 0; }
-.ts-progress-panel-goal-row {
-  display:flex; align-items:flex-start; gap:.75rem; justify-content:space-between;
-  padding:0 22px 14px; border-bottom:1px solid var(--border);
+   "progress-*"-Klassen aus public/progress.js (mountTimeline/mountReentryCard)
+   zu vermeiden — jenes Modul besitzt die Klassen ohne "ts-"-Präfix. Der
+   Fortschrittsverlauf ist fest in die Todo-/Themen-Bearbeiten-Ansicht
+   eingebettet (kein separates Panel mehr, siehe Arbeitspaket W2). */
+.ts-progress-section {
+  margin-top:1.125rem; padding-top:1.125rem; border-top:1px solid var(--border);
 }
-.ts-progress-panel-goal-text {
-  flex:1; min-width:0; font-size:.8125rem; color:var(--text); white-space:pre-wrap; word-break:break-word; line-height:1.45;
-}
-.ts-progress-panel-goal-text.is-empty { color:var(--text-muted); font-style:italic; }
-.ts-progress-panel-goal-edit-btn { flex-shrink:0; }
-.ts-progress-panel-reentry-mount:not(:empty) { padding:14px 22px 0; border-bottom:1px solid var(--border); }
-.ts-progress-panel-body { padding:1.375rem 1.5rem; min-height:140px; }
+.ts-progress-section-title { font-size:.8125rem; font-weight:600; color:var(--text); margin-bottom:.625rem; }
+/* Heimatposition der Composer-/Reentry-Slot-Knoten (siehe mountTimeline-
+   Vertrag: darf kein Nachfahre des Mount-Containers sein). Wird beim Mounten
+   in den Fortschrittsbereich verschoben, daher hier ohne eigene Darstellung. */
+.ts-progress-slot-home { display:none; }
+.ts-progress-composer { margin-bottom:.75rem; }
+.ts-progress-composer .form-label { margin-bottom:.375rem; }
+.ts-progress-snooze-hint { font-size:.75rem; color:var(--text-muted); margin-top:.375rem; line-height:1.4; }
 .ts-progress-entry-context {
   background:var(--card2); border:1px solid var(--border); border-radius:8px;
   padding:.5rem .75rem; margin-bottom:.75rem; font-size:.75rem; color:var(--text-muted);
@@ -1716,7 +1716,6 @@ body.ai-disabled .ai-action { display: none !important; }
 .ts-progress-entry-context strong { color:var(--text); }
 .ts-progress-entry-context .ts-progress-entry-context-body { margin-top:.25rem; max-height:5.5em; overflow:hidden; }
 .ts-progress-char-hint { font-size:.6875rem; color:var(--text-light); text-align:right; margin-top:.25rem; }
-.ts-progress-panel-btn { }
 .ts-progress-retry-toast { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
 .ts-progress-retry-toast button {
   background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.45); color:inherit;
@@ -1732,7 +1731,6 @@ body.ai-disabled .ai-action { display: none !important; }
 .todos-toolbar label { font-size:.75rem; color:var(--text-muted); white-space:nowrap; }
 .todos-toolbar select.form-control { width:auto; min-width:190px; padding:.3rem .5rem; font-size:.8125rem; }
 .todos-toolbar .toggle-row { margin:0; gap:.4rem; }
-.ts-progress-snooze-field { margin-top:.75rem; }
 </style>
 <link rel="stylesheet" href="/assets/graph.css">
 <script defer src="/assets/graph.js"></script>
@@ -1922,11 +1920,11 @@ body.ai-disabled .ai-action { display: none !important; }
 </div>
 
 <!-- ── Topic Modal ─────────────────────────────────────────────── -->
-<div id="topic-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'topic-modal')">
+<div id="topic-modal" class="modal-overlay" style="display:none" onclick="topicModalOverlayClick(event)">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-header">
       <h2 id="tm-title">Neues Thema</h2>
-      <button class="modal-close" onclick="closeTopicModal()">×</button>
+      <button class="modal-close" onclick="requestCloseTopicModal()">×</button>
     </div>
     <div class="modal-body">
       <div class="form-group">
@@ -1940,6 +1938,26 @@ body.ai-disabled .ai-action { display: none !important; }
           <div class="rt-content" id="t-desc" contenteditable="true" data-placeholder="Details zum Thema …"></div>
         </div>
       </div>
+      <div id="t-progress-section" class="ts-progress-section" style="display:none">
+        <div class="ts-progress-section-title">📈 Fortschritt</div>
+        <div id="t-progress-timeline-mount"></div>
+        <!-- Heimatposition der stabilen Slot-Knoten: NICHT innerhalb des Mount-Containers -->
+        <div id="t-progress-slot-home" class="ts-progress-slot-home">
+          <div id="t-progress-composer-slot" class="ts-progress-composer">
+            <label class="form-label" for="t-progress-note">Neuer Zwischenstand</label>
+            <div class="rt-wrapper">
+              <div class="rt-toolbar" id="t-progress-note-tb"></div>
+              <div class="rt-content" id="t-progress-note" contenteditable="true" oninput="updateProgressComposerCharHint('topic')"></div>
+            </div>
+            <div class="ts-progress-char-hint" id="t-progress-note-hint" style="display:none"></div>
+            <div class="ts-progress-snooze-hint" id="t-progress-snooze-hint" style="display:none"
+                 aria-describedby="t-progress-note">Wird beim Speichern als Zwischenstand zu deiner Ruhephase geführt, weil du „Schlafen bis" gesetzt hast.</div>
+            <div class="form-error" id="t-progress-note-error" style="display:none"></div>
+            <button type="button" class="btn btn-secondary btn-sm" id="t-progress-note-save-btn" onclick="saveTopicProgressComposerBtn()">Zwischenstand speichern</button>
+          </div>
+          <div id="t-progress-reentry-mount"></div>
+        </div>
+      </div>
       <div class="form-group">
         <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Schlafen bis <span class="opt">(optional)</span></label>
         <input type="date" class="form-control" id="t-snooze" onchange="onTopicSnoozeChange()">
@@ -1949,13 +1967,6 @@ body.ai-disabled .ai-action { display: none !important; }
         </div>
         <input type="time" class="form-control" id="t-snooze-time" style="display:none;margin-top:.5rem">
         <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
-        <div class="ts-progress-snooze-field">
-          <label class="form-label">Wo stehe ich gerade? <span class="opt">(optional, wird beim Schlafenlegen als Zwischenstand gespeichert)</span></label>
-          <div class="rt-wrapper">
-            <div class="rt-toolbar" id="t-progress-snooze-note-tb"></div>
-            <div class="rt-content" id="t-progress-snooze-note" contenteditable="true" data-placeholder="Kurzer Stand, bevor du das Thema schlafen legst …"></div>
-          </div>
-        </div>
       </div>
       <div id="topic-attach-slot"></div>
       <div id="t-result-section" style="display:none">
@@ -1980,7 +1991,7 @@ body.ai-disabled .ai-action { display: none !important; }
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeTopicModal()">Abbrechen</button>
+      <button class="btn btn-secondary" onclick="requestCloseTopicModal()">Abbrechen</button>
       <button class="btn btn-primary" id="tm-save-btn" onclick="saveTopicModal()">Speichern</button>
     </div>
   </div>
@@ -2117,11 +2128,11 @@ body.ai-disabled .ai-action { display: none !important; }
 </div>
 
 <!-- ── Todo Modal ─────────────────────────────────────────────── -->
-<div id="todo-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'todo-modal')">
+<div id="todo-modal" class="modal-overlay" style="display:none" onclick="todoModalOverlayClick(event)">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-header">
       <h2 id="todo-modal-title">Neues Todo</h2>
-      <button class="modal-close" onclick="closeTodoModal()">×</button>
+      <button class="modal-close" onclick="requestCloseTodoModal()">×</button>
     </div>
     <div class="modal-body">
       <div id="todo-modal-context-hint" class="form-hint" style="display:none"></div>
@@ -2134,6 +2145,26 @@ body.ai-disabled .ai-action { display: none !important; }
         <div class="rt-wrapper">
           <div class="rt-toolbar" id="todo-desc-tb"></div>
           <div class="rt-content" id="todo-desc" contenteditable="true" data-placeholder="Details, Links …"></div>
+        </div>
+      </div>
+      <div id="todo-progress-section" class="ts-progress-section" style="display:none">
+        <div class="ts-progress-section-title">📈 Fortschritt</div>
+        <div id="todo-progress-timeline-mount"></div>
+        <!-- Heimatposition der stabilen Slot-Knoten: NICHT innerhalb des Mount-Containers -->
+        <div id="todo-progress-slot-home" class="ts-progress-slot-home">
+          <div id="todo-progress-composer-slot" class="ts-progress-composer">
+            <label class="form-label" for="todo-progress-note">Neuer Zwischenstand</label>
+            <div class="rt-wrapper">
+              <div class="rt-toolbar" id="todo-progress-note-tb"></div>
+              <div class="rt-content" id="todo-progress-note" contenteditable="true" oninput="updateProgressComposerCharHint('todo')"></div>
+            </div>
+            <div class="ts-progress-char-hint" id="todo-progress-note-hint" style="display:none"></div>
+            <div class="ts-progress-snooze-hint" id="todo-progress-snooze-hint" style="display:none"
+                 aria-describedby="todo-progress-note">Wird beim Speichern als Zwischenstand zu deiner Ruhephase geführt, weil du „Schlafen bis" gesetzt hast.</div>
+            <div class="form-error" id="todo-progress-note-error" style="display:none"></div>
+            <button type="button" class="btn btn-secondary btn-sm" id="todo-progress-note-save-btn" onclick="saveTodoProgressComposerBtn()">Zwischenstand speichern</button>
+          </div>
+          <div id="todo-progress-reentry-mount"></div>
         </div>
       </div>
       <div class="form-group">
@@ -2157,13 +2188,6 @@ body.ai-disabled .ai-action { display: none !important; }
         </div>
         <input type="time" class="form-control" id="todo-snooze-time" style="display:none;margin-top:.5rem">
         <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
-        <div class="ts-progress-snooze-field">
-          <label class="form-label">Wo stehe ich gerade? <span class="opt">(optional, wird beim Schlafenlegen als Zwischenstand gespeichert)</span></label>
-          <div class="rt-wrapper">
-            <div class="rt-toolbar" id="todo-progress-snooze-note-tb"></div>
-            <div class="rt-content" id="todo-progress-snooze-note" contenteditable="true" data-placeholder="Kurzer Stand, bevor du das Todo schlafen legst …"></div>
-          </div>
-        </div>
       </div>
       <div id="todo-attach-slot"></div>
       <div id="todo-done-row" style="display:none">
@@ -2188,7 +2212,7 @@ body.ai-disabled .ai-action { display: none !important; }
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeTodoModal()">Abbrechen</button>
+      <button class="btn btn-secondary" onclick="requestCloseTodoModal()">Abbrechen</button>
       <button class="btn btn-primary" id="todo-save-btn" onclick="saveTodoModal()">Speichern</button>
     </div>
   </div>
@@ -2975,33 +2999,6 @@ body.ai-disabled .ai-action { display: none !important; }
   </div>
 </div>
 
-<!-- ── Fortschrittsverlauf: Verlaufs-Panel (Arbeitspaket W1) ─────── -->
-<div id="progress-panel-modal" class="modal-overlay" style="display:none" onclick="progressPanelOverlayClick(event)">
-  <div class="modal modal-wide ts-progress-panel-inner" onclick="event.stopPropagation()">
-    <div class="ts-progress-panel-sticky">
-      <div class="modal-header">
-        <h2 id="progress-panel-title">📈 Fortschritt</h2>
-        <button class="modal-close" onclick="closeProgressPanelModal()">×</button>
-      </div>
-      <div class="ts-progress-panel-goal-row">
-        <div class="ts-progress-panel-goal-text is-empty" id="progress-panel-goal-text">Zielbild wird geladen …</div>
-        <button type="button" class="btn btn-secondary btn-sm ts-progress-panel-goal-edit-btn" id="progress-panel-goal-edit-btn" onclick="openProgressGoalFromPanel()" disabled>🎯 Zielbild</button>
-      </div>
-      <div class="ts-progress-panel-goal-row ts-progress-panel-nextstep-row">
-        <div class="ts-progress-panel-goal-text is-empty" id="progress-panel-nextstep-text">Nächster Schritt wird geladen …</div>
-        <button type="button" class="btn btn-secondary btn-sm ts-progress-panel-goal-edit-btn" id="progress-panel-nextstep-edit-btn" onclick="openProgressNextStepFromPanel()" disabled>➡️ Nächster Schritt</button>
-      </div>
-      <div class="ts-progress-panel-reentry-mount" id="progress-panel-reentry-mount"></div>
-    </div>
-    <div class="ts-progress-panel-body">
-      <div id="progress-panel-timeline-mount"></div>
-    </div>
-    <div class="modal-footer ts-progress-panel-footer">
-      <button type="button" class="btn btn-primary" onclick="openProgressEntryFromPanel()">+ Zwischenstand erfassen</button>
-    </div>
-  </div>
-</div>
-
 <!-- ── Fortschrittsverlauf: Zielbild bearbeiten ─────────────────── -->
 <div id="progress-goal-modal" class="modal-overlay" style="display:none" onclick="progressGoalOverlayClick(event)">
   <div class="modal" onclick="event.stopPropagation()">
@@ -3054,15 +3051,11 @@ body.ai-disabled .ai-action { display: none !important; }
 <div id="progress-entry-modal" class="modal-overlay" style="display:none" onclick="progressEntryOverlayClick(event)">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-header">
-      <h2 id="progress-entry-modal-title">Zwischenstand erfassen</h2>
+      <h2>Zwischenstand bearbeiten</h2>
       <button class="modal-close" onclick="closeProgressEntryDialog('cancelled')">×</button>
     </div>
     <div class="modal-body">
       <div class="ts-progress-entry-context" id="progress-entry-goal-context" style="display:none"></div>
-      <div class="ts-progress-entry-context" id="progress-entry-last-context" style="display:none">
-        <strong>Letzter Zwischenstand</strong>
-        <div class="ts-progress-entry-context-body rt-display" id="progress-entry-last-context-body"></div>
-      </div>
       <div class="form-group">
         <label class="form-label">Wo stehst du gerade? <span class="opt">(max. 5.000 Zeichen)</span></label>
         <div class="rt-wrapper">
@@ -3292,6 +3285,7 @@ window.TSHost = {
 window.TSHost.progress = {
   openEntryDialog: (ctx) => openProgressEntryDialog(ctx),
   openGoalDialog: (ctx) => openProgressGoalDialog(ctx),
+  openNextStepDialog: (ctx) => openProgressNextStepDialog(ctx),
   confirmDelete: ({ title, message }) => genericConfirm(title, message, 'Löschen', 'Abbrechen'),
   aiReentry: (frameId) => runProgressAiReentry(frameId),
   aiEnabled: () => aiFeatureOn('reentry'),
@@ -4778,16 +4772,14 @@ function renderTodosView(el) {
     </div><!-- /full-width-view -->`;
 }
 
-// ── Fortschrittsverlauf: Badge + Panel-Button für Todo-/Themen-Karten
-//    (Arbeitspaket W1) — Badge-Markup liefert ausschließlich TSProgress
-//    (public/progress.js), hier nur defensiv abgesichert für den Fall, dass
-//    das Modul (noch) nicht geladen ist (z. B. sehr frühes render() vor dem
-//    "defer"-Laden des Scripts).
+// ── Fortschrittsverlauf: Badge für Todo-/Themen-Karten (Arbeitspaket W1) ──
+//    Badge-Markup liefert ausschließlich TSProgress (public/progress.js),
+//    hier nur defensiv abgesichert für den Fall, dass das Modul (noch) nicht
+//    geladen ist (z. B. sehr frühes render() vor dem "defer"-Laden des
+//    Scripts). Der Zeitstrahl selbst ist fest in die Bearbeiten-Ansicht
+//    eingebettet (kein Panel-Button mehr, siehe Arbeitspaket W2).
 function progressBadgeHtml(progress) {
   return (window.TSProgress && typeof TSProgress.badgeHtml === 'function') ? TSProgress.badgeHtml(progress) : '';
-}
-function progressPanelButtonHtml(refType, refId) {
-  return `<button class="btn btn-ghost btn-sm btn-icon ts-progress-panel-btn" onclick="openProgressPanel('${refType}','${refId}')" title="Fortschrittsverlauf ansehen">📈</button>`;
 }
 
 function renderPersonalTodoCard(t, isDone, themeMap) {
@@ -4815,7 +4807,6 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
             <button class="btn btn-success btn-sm" onclick="openCompleteTodoModal('${t.id}')">${SVG.check} Erledigt</button>
             <button class="btn btn-ghost btn-sm btn-icon" onclick="openStackPushModal('todo','${t.id}')" title="Auf Stack legen (⌘⇧P)">📚</button>` : `
             <button class="btn btn-secondary btn-sm" onclick="reopenPersonalTodo('${t.id}')">↺ Öffnen</button>`}
-          ${progressPanelButtonHtml('todo', t.id)}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
@@ -4885,7 +4876,6 @@ function renderMeetingTopicTodo(m, t, themeMap) {
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${m.id}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
           <button class="btn btn-success btn-sm" onclick="openCompleteModal('${m.id}','${t.id}')">${SVG.check} Erledigt</button>
           <button class="btn btn-ghost btn-sm btn-icon" onclick="openStackPushModal('topic','${t.id}')" title="Auf Stack legen">📚</button>
-          ${progressPanelButtonHtml('topic', t.id)}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
@@ -4962,7 +4952,6 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
           ${!t.done ? `<button class="btn btn-ghost btn-sm btn-icon"
             onclick="openStackPushModal('topic','${t.id}')"
             title="Auf Stack legen (⌘⇧P)">📚</button>` : ''}
-          ${progressPanelButtonHtml('topic', t.id)}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
@@ -5349,7 +5338,6 @@ function openTodoModal(id, presetThemeId) {
   const todoSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
   document.getElementById('todo-snooze-has-time').checked = todoSnoozeHasTime;
   document.getElementById('todo-snooze-time').value = todoSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
-  setRT('todo-progress-snooze-note', '');
   onTodoSnoozeChange();
   document.getElementById('todo-due').value = t?.dueDate?.slice(0, 10) || '';
   document.getElementById('todo-private').checked = !!t?.isPrivate;
@@ -5373,9 +5361,54 @@ function openTodoModal(id, presetThemeId) {
     attachSlot.innerHTML = '';
   }
   document.getElementById('todo-modal').style.display = 'flex';
-  setTimeout(() => document.getElementById('todo-title').focus(), 50);
+  // Fortschrittsbereich erscheint nur beim Bearbeiten eines bestehenden Todos
+  // (Arbeitspaket W2) — Erst-Fokus bleibt auf dem Titelfeld, das Mounten des
+  // Fortschrittsbereichs erfolgt danach, um den Fokus nicht zu stören.
+  setTimeout(() => {
+    document.getElementById('todo-title').focus();
+    if (id) openProgressEmbed('todo', 'todo', id); else closeProgressEmbed('todo');
+  }, 50);
 }
-function closeTodoModal() { document.getElementById('todo-modal').style.display = 'none'; }
+function closeTodoModal() {
+  document.getElementById('todo-modal').style.display = 'none';
+  closeProgressEmbed('todo');
+}
+
+// Datenverlustschutz (Arbeitspaket W2): ersetzt ALLE direkten Schließ-
+// Aufrufe für das Todo-Modal (×, Abbrechen, Overlay-Klick, Escape) — bei
+// nicht-leerem Fortschritts-Composer wird vor dem Verwerfen nachgefragt.
+function requestCloseTodoModal() {
+  const html = getRT('todo-progress-note');
+  if (window.TSProgress && !TSProgress.isEffectivelyEmptyHtml(html)) {
+    genericConfirm(
+      'Zwischenstand verwerfen?',
+      'Dein eingetippter Zwischenstand-Text ist noch nicht gespeichert und geht verloren, wenn du fortfährst.',
+      'Verwerfen', 'Weiterbearbeiten'
+    ).then((confirmed) => {
+      if (confirmed) { setRT('todo-progress-note', ''); closeTodoModal(); }
+    });
+    return;
+  }
+  closeTodoModal();
+}
+
+function todoModalOverlayClick(e) {
+  if (e.target.id !== 'todo-modal') return;
+  const modal = document.getElementById('todo-modal');
+  const progressSection = document.getElementById('todo-progress-section');
+  // Analog zu overlayClick(): bei bereits eingegebenem Text in Titel/
+  // Beschreibung/etc. nicht versehentlich schließen. Der Fortschritts-
+  // Composer wird hier bewusst ausgeklammert — für ihn gilt stattdessen die
+  // Verwerfen-Rückfrage aus requestCloseTodoModal().
+  const hasText =
+    [...modal.querySelectorAll('input[type="text"], input[type="email"], textarea')]
+      .some(el => el.value.trim() !== '') ||
+    [...modal.querySelectorAll('.rt-content')]
+      .filter(el => !(progressSection && progressSection.contains(el)))
+      .some(el => (el.textContent || '').trim() !== '');
+  if (hasText) return;
+  requestCloseTodoModal();
+}
 
 async function saveTodoModal() {
   const title = document.getElementById('todo-title').value.trim();
@@ -5400,9 +5433,6 @@ async function saveTodoModal() {
       result: isDone ? getRT('todo-result') : '',
       resultDate: isDone ? document.getElementById('todo-result-date').value : '',
     } : {}) };
-  // Vorab erfassen (siehe submitStackPop): Feld wird nach dem Schließen des
-  // Dialogs zurückgesetzt, daher vor dem Request sichern.
-  const progressSnoozeNoteHtml = data.snoozedUntil ? getRT('todo-progress-snooze-note') : '';
   setBusy('todo-save-btn', true);
   let savedTodoId = null;
   try {
@@ -5425,11 +5455,22 @@ async function saveTodoModal() {
       }
     }
     todoModalPresetThemeId = null;
-    closeTodoModal(); render();
+
+    // Fortschritts-Composer NACH erfolgreichem Speichern des Todos, VOR dem
+    // Schließen des Modals committen (Arbeitspaket W2). Schlägt das fehl,
+    // bleibt das Modal offen und der Text im Composer erhalten — das bereits
+    // gespeicherte Todo selbst ist davon unberührt.
+    const progressResult = await commitProgressComposer('todo', 'todo', savedTodoId, data.snoozedUntil);
+
+    if (progressResult === 'failed') {
+      toast('Todo gespeichert — der Zwischenstand konnte noch nicht gespeichert werden.', 'error');
+    } else {
+      closeTodoModal();
+      toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
+    }
+    render();
     await loadThemeDetail(); render();
-    toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
     if (savedTodoId && !data.done) triggerThemeSuggestions('todo', savedTodoId);
-    if (savedTodoId && progressSnoozeNoteHtml) submitProgressEntryBackground('todo', savedTodoId, progressSnoozeNoteHtml, 'snooze');
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('todo-save-btn', false); }
 }
@@ -5753,7 +5794,6 @@ function openTopicModal(mid, tid) {
   const topicSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
   document.getElementById('t-snooze-has-time').checked = topicSnoozeHasTime;
   document.getElementById('t-snooze-time').value = topicSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
-  setRT('t-progress-snooze-note', '');
   onTopicSnoozeChange();
   const rs = document.getElementById('t-result-section');
   if (t) {
@@ -5771,10 +5811,50 @@ function openTopicModal(mid, tid) {
     attachSlot.innerHTML = '';
   }
   document.getElementById('topic-modal').style.display = 'flex';
-  setTimeout(() => document.getElementById('t-title').focus(), 50);
+  // Fortschrittsbereich erscheint nur beim Bearbeiten eines bestehenden
+  // Themas (Arbeitspaket W2) — Erst-Fokus bleibt auf dem Titelfeld, das
+  // Mounten des Fortschrittsbereichs erfolgt danach.
+  setTimeout(() => {
+    document.getElementById('t-title').focus();
+    if (tid) openProgressEmbed('topic', 'topic', tid); else closeProgressEmbed('topic');
+  }, 50);
 }
 
-function closeTopicModal() { document.getElementById('topic-modal').style.display = 'none'; }
+function closeTopicModal() {
+  document.getElementById('topic-modal').style.display = 'none';
+  closeProgressEmbed('topic');
+}
+
+// Datenverlustschutz (Arbeitspaket W2): ersetzt ALLE direkten Schließ-
+// Aufrufe für das Topic-Modal (×, Abbrechen, Overlay-Klick, Escape).
+function requestCloseTopicModal() {
+  const html = getRT('t-progress-note');
+  if (window.TSProgress && !TSProgress.isEffectivelyEmptyHtml(html)) {
+    genericConfirm(
+      'Zwischenstand verwerfen?',
+      'Dein eingetippter Zwischenstand-Text ist noch nicht gespeichert und geht verloren, wenn du fortfährst.',
+      'Verwerfen', 'Weiterbearbeiten'
+    ).then((confirmed) => {
+      if (confirmed) { setRT('t-progress-note', ''); closeTopicModal(); }
+    });
+    return;
+  }
+  closeTopicModal();
+}
+
+function topicModalOverlayClick(e) {
+  if (e.target.id !== 'topic-modal') return;
+  const modal = document.getElementById('topic-modal');
+  const progressSection = document.getElementById('t-progress-section');
+  const hasText =
+    [...modal.querySelectorAll('input[type="text"], input[type="email"], textarea')]
+      .some(el => el.value.trim() !== '') ||
+    [...modal.querySelectorAll('.rt-content')]
+      .filter(el => !(progressSection && progressSection.contains(el)))
+      .some(el => (el.textContent || '').trim() !== '');
+  if (hasText) return;
+  requestCloseTopicModal();
+}
 
 async function saveTopicModal() {
   const title = document.getElementById('t-title').value.trim();
@@ -5799,9 +5879,6 @@ async function saveTopicModal() {
       done:       document.getElementById('t-done').checked,
     } : {}),
   };
-  // Vorab erfassen (siehe submitStackPop): Feld wird nach dem Schließen des
-  // Dialogs zurückgesetzt, daher vor dem Request sichern.
-  const progressSnoozeNoteHtml = data.snoozedUntil ? getRT('t-progress-snooze-note') : '';
   setBusy('tm-save-btn', true);
   let savedTopicId = null;
   try {
@@ -5819,10 +5896,20 @@ async function saveTopicModal() {
       getMeeting(editTopicMid).topics.push(t);
       savedTopicId = t.id;
     }
-    closeTopicModal(); render();
-    toast(editTopicId ? 'Thema aktualisiert' : 'Thema hinzugefügt');
+
+    // Fortschritts-Composer NACH erfolgreichem Speichern des Themas, VOR dem
+    // Schließen des Modals committen (Arbeitspaket W2). Schlägt das fehl,
+    // bleibt das Modal offen und der Text im Composer erhalten.
+    const progressResult = await commitProgressComposer('topic', 'topic', savedTopicId, data.snoozedUntil);
+
+    if (progressResult === 'failed') {
+      toast('Thema gespeichert — der Zwischenstand konnte noch nicht gespeichert werden.', 'error');
+    } else {
+      closeTopicModal();
+      toast(editTopicId ? 'Thema aktualisiert' : 'Thema hinzugefügt');
+    }
+    render();
     if (savedTopicId && !data.done) triggerThemeSuggestions('topic', savedTopicId);
-    if (savedTopicId && progressSnoozeNoteHtml) submitProgressEntryBackground('topic', savedTopicId, progressSnoozeNoteHtml, 'snooze');
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('tm-save-btn', false); }
 }
@@ -7948,6 +8035,10 @@ function onTodoSnoozeChange() {
   cb.disabled = !hasDate;
   if (!hasDate) cb.checked = false;
   document.getElementById('todo-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
+  // Hinweis im Fortschritts-Composer ein-/ausblenden (Arbeitspaket W2) — kein
+  // Seiteneffekt auf den Composer-Text selbst.
+  const snoozeHint = document.getElementById('todo-progress-snooze-hint');
+  if (snoozeHint) snoozeHint.style.display = hasDate ? '' : 'none';
 }
 function onTopicSnoozeChange() {
   const hasDate = !!document.getElementById('t-snooze').value;
@@ -7955,6 +8046,8 @@ function onTopicSnoozeChange() {
   cb.disabled = !hasDate;
   if (!hasDate) cb.checked = false;
   document.getElementById('t-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
+  const snoozeHint = document.getElementById('t-progress-snooze-hint');
+  if (snoozeHint) snoozeHint.style.display = hasDate ? '' : 'none';
 }
 
 function onPopResolutionChange() {
@@ -8120,20 +8213,17 @@ async function runReentryFor(frameId) {
   }
 }
 
-// ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W1) ──────────
+// ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W1/W2) ────────
 // Implementiert window.TSHost.progress (siehe Zuweisung weiter oben) sowie
 // den umgebenden Modal-/Formular-Rahmen. Anzeige-Bausteine (Zeitstrahl,
 // Wiedereinstiegskarte, Badge, Sortier-Comparator) liefert ausschließlich
-// window.TSProgress (public/progress.js, Arbeitspaket W2) — hier wird NICHTS
-// davon dupliziert.
+// window.TSProgress (public/progress.js) — hier wird NICHTS davon dupliziert.
+// Der Fortschrittsverlauf ist fest in die Todo-/Themen-Bearbeiten-Ansicht
+// eingebettet (kein separates Panel mehr, siehe Arbeitspaket W2).
 
-let progressEntryDialogCtx = null;  // { refType, refId, entryId, clientToken, resolve }
+let progressEntryDialogCtx = null;  // { refType, refId, entryId, resolve }
 let progressGoalDialogCtx  = null;  // { refType, refId, resolve }
 let progressNextStepDialogCtx = null;  // { refType, refId, resolve }
-let progressPanelCtx       = null;  // { refType, refId }
-let progressPanelHandles   = null;  // { timeline, reentry } — Handles von TSProgress.mount*
-let progressPanelGoalCache = '';    // zuletzt geladenes Zielbild des offenen Panels
-let progressPanelNextStepCache = ''; // zuletzt geladener Nächster-Schritt-Text des offenen Panels
 
 function isValidProgressRefType(t) { return t === 'todo' || t === 'topic'; }
 
@@ -8144,18 +8234,18 @@ function makeProgressClientToken() {
   return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
 }
 
-// ── Zwischenstand erfassen/bearbeiten (TSHost.progress.openEntryDialog) ──
+// ── Zwischenstand bearbeiten (TSHost.progress.openEntryDialog) ──
+// Wird ausschließlich zum Bearbeiten EXISTIERENDER Einträge aufgerufen
+// (ausgelöst durch data-action="edit-entry" mit entryId aus mountTimeline,
+// siehe Vertrag) — das Neu-Erfassen läuft seit Arbeitspaket W2 über den
+// permanent eingebetteten Composer (commitProgressComposer), nicht mehr über
+// diesen Dialog.
 function openProgressEntryDialog(ctx) {
   return new Promise((resolve) => {
     const refType = ctx && ctx.refType, refId = ctx && ctx.refId;
-    if (!isValidProgressRefType(refType) || !refId) { resolve('cancelled'); return; }
     const entryId = (ctx && ctx.entryId) || null;
-    progressEntryDialogCtx = {
-      refType, refId, entryId, resolve,
-      clientToken: entryId ? null : makeProgressClientToken(),
-    };
-    document.getElementById('progress-entry-modal-title').textContent =
-      entryId ? 'Zwischenstand bearbeiten' : 'Zwischenstand erfassen';
+    if (!isValidProgressRefType(refType) || !refId || !entryId) { resolve('cancelled'); return; }
+    progressEntryDialogCtx = { refType, refId, entryId, resolve };
     setRT('progress-entry-body', (ctx && ctx.prefillHtml) || '');
     updateProgressEntryCharHint();
 
@@ -8165,19 +8255,6 @@ function openProgressEntryDialog(ctx) {
       goalBox.style.display = '';
     } else {
       goalBox.style.display = 'none';
-    }
-
-    const lastBox = document.getElementById('progress-entry-last-context');
-    if (!entryId && ctx && ctx.lastEntryHtml) {
-      // lastEntryHtml kommt laut Vertrag bereits server-seitig sanitisiert an
-      // (identisch zu entry.bodyHtml, siehe public/progress.js) — zusätzlich
-      // durch displayHtml() geführt, analog zur bestehenden Konvention für
-      // alle anderen rt-display-Stellen in dieser Datei (Verteidigung in der
-      // Tiefe, ändert an bereits sauberem HTML nichts).
-      document.getElementById('progress-entry-last-context-body').innerHTML = displayHtml(ctx.lastEntryHtml);
-      lastBox.style.display = '';
-    } else {
-      lastBox.style.display = 'none';
     }
 
     document.getElementById('progress-entry-error').style.display = 'none';
@@ -8220,13 +8297,7 @@ async function submitProgressEntryDialog() {
   }
   setBusy('progress-entry-save-btn', true);
   try {
-    if (ctx.entryId) {
-      await TSHost.api('PUT', `/api/progress/entries/${encodeURIComponent(ctx.entryId)}`, { body: bodyHtml });
-    } else {
-      await TSHost.api('POST', `/api/progress/${encodeURIComponent(ctx.refType)}/${encodeURIComponent(ctx.refId)}/entries`, {
-        body: bodyHtml, source: 'manual', clientToken: ctx.clientToken,
-      });
-    }
+    await TSHost.api('PUT', `/api/progress/entries/${encodeURIComponent(ctx.entryId)}`, { body: bodyHtml });
     // Text bleibt bei Erfolg NICHT erhalten (Dialog schließt) — bei Fehler
     // bleibt der Dialog inkl. eingegebenem Text offen (siehe catch-Zweig),
     // die Promise wird erst bei tatsächlichem Erfolg aufgelöst.
@@ -8397,129 +8468,164 @@ function showProgressRetryToast(msg, retryFn) {
   setTimeout(() => el.remove(), 9000);
 }
 
-// ── Verlaufs-Panel (Story: Zeitstrahl/Wiedereinstiegskarte pro Vorhaben) ──
-function progressPanelTitleIcon(refType) { return refType === 'topic' ? '💬' : '✓'; }
+// ── Fortschrittsbereich eingebettet in Todo-/Themen-Modal (Arbeitspaket W2) ──
+// Ersetzt das frühere separate Verlaufs-Panel: der Zeitstrahl (inkl. Composer
+// für einen neuen Zwischenstand, Zielbild/Nächster-Schritt-Kopf und
+// Wiedereinstiegskarte) ist fest unterhalb der Beschreibung im jeweiligen
+// Bearbeiten-Modal eingebettet und nur beim Bearbeiten eines bestehenden
+// Todos/Themas sichtbar.
 
-function openProgressPanel(refType, refId) {
-  if (!isValidProgressRefType(refType) || !refId) return;
-  if (!window.TSProgress) { toast('Fortschrittsmodul ist noch nicht geladen — bitte kurz warten.', 'error'); return; }
-  const title = refDisplayTitle(refType, refId);
-  document.getElementById('progress-panel-title').textContent = `📈 ${progressPanelTitleIcon(refType)} ${title}`;
+const progressComposerToken = {}; // key ('todo'|'topic') -> pending clientToken des Composers
+const timelineHandles = {};       // key -> Handle von TSProgress.mountTimeline
+const reentryHandles  = {};       // key -> Handle von TSProgress.mountReentryCard
 
-  if (progressPanelHandles) {
-    progressPanelHandles.timeline?.destroy();
-    progressPanelHandles.reentry?.destroy();
-    progressPanelHandles = null;
-  }
-  progressPanelCtx = { refType, refId };
-  progressPanelGoalCache = '';
-  progressPanelNextStepCache = '';
-  renderProgressPanelGoalText(null, true);
-  renderProgressPanelNextStepText(null, true);
-  document.getElementById('progress-panel-goal-edit-btn').disabled = true;
-  document.getElementById('progress-panel-nextstep-edit-btn').disabled = true;
+// Die Feld-Ids im Topic-Modal folgen der bestehenden Namenskonvention dieses
+// Modals (z. B. "t-title" statt "todo-title") — deshalb hier eine Zuordnung
+// von "key" auf den tatsächlichen Id-Präfix, statt den Key direkt als
+// Präfix zu verwenden.
+const PROGRESS_EMBED_ID_PREFIX = { todo: 'todo', topic: 't' };
 
-  const timelineMount = document.getElementById('progress-panel-timeline-mount');
-  const reentryMount  = document.getElementById('progress-panel-reentry-mount');
-  progressPanelHandles = {
-    timeline: TSProgress.mountTimeline(timelineMount, { refType, refId }),
-    reentry:  TSProgress.mountReentryCard(reentryMount, { refType, refId }),
+function progressEmbedIds(key) {
+  const p = PROGRESS_EMBED_ID_PREFIX[key] || key;
+  return {
+    section: `${p}-progress-section`,
+    timelineMount: `${p}-progress-timeline-mount`,
+    composerSlot: `${p}-progress-composer-slot`,
+    note: `${p}-progress-note`,
+    noteHint: `${p}-progress-note-hint`,
+    noteError: `${p}-progress-note-error`,
+    noteSaveBtn: `${p}-progress-note-save-btn`,
+    reentryMount: `${p}-progress-reentry-mount`,
   };
-
-  document.getElementById('progress-panel-modal').style.display = 'flex';
-  loadProgressPanelGoal(refType, refId);
 }
 
-async function loadProgressPanelGoal(refType, refId) {
-  // Laedt in EINEM Request sowohl Zielbild als auch Nächster-Schritt (beide
-  // stecken bereits im Detail-Payload) — dauerhaft sichtbar/editierbar im
-  // Panel-Kopf, unabhaengig vom Stack-Zustand (Story 5, Tester-Fund).
-  const editBtn = document.getElementById('progress-panel-goal-edit-btn');
-  const nextStepEditBtn = document.getElementById('progress-panel-nextstep-edit-btn');
+// Bettet den Fortschrittsverlauf für ein bestehendes Vorhaben ein. `key`
+// identifiziert die Composer-/Handle-Instanz ('todo'|'topic'), `refType`/
+// `refId` das Vorhaben selbst (siehe TSProgress.mountTimeline-Vertrag).
+function openProgressEmbed(key, refType, refId) {
+  if (!isValidProgressRefType(refType) || !refId) return;
+  closeProgressEmbed(key); // vorherigen Mount-Zustand (anderes Vorhaben) sicher aufräumen
+  const ids = progressEmbedIds(key);
+  const section = document.getElementById(ids.section);
+  const composerSlotEl = document.getElementById(ids.composerSlot);
+  const reentryMountEl = document.getElementById(ids.reentryMount);
+  const timelineMountEl = document.getElementById(ids.timelineMount);
+  if (!section || !composerSlotEl || !reentryMountEl || !timelineMountEl) return;
+
+  section.style.display = '';
+  setRT(ids.note, '');
+  const errEl = document.getElementById(ids.noteError);
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  const hintEl = document.getElementById(ids.noteHint);
+  if (hintEl) hintEl.style.display = 'none';
+  delete progressComposerToken[key];
+
+  if (!window.TSProgress) { toast('Fortschrittsmodul ist noch nicht geladen — bitte kurz warten.', 'error'); return; }
+
+  // Reihenfolge gemäß mountTimeline-Vertrag: mountReentryCard zuerst separat
+  // mounten, den befüllten Container danach unverändert als reentrySlot an
+  // mountTimeline übergeben (siehe progress-dev.html).
+  reentryHandles[key] = TSProgress.mountReentryCard(reentryMountEl, {
+    refType, refId,
+    onRequestCompose: () => {
+      const noteEl = document.getElementById(ids.note);
+      if (noteEl) {
+        noteEl.focus();
+        if (typeof noteEl.scrollIntoView === 'function') noteEl.scrollIntoView({ block: 'nearest' });
+      }
+    },
+  });
+  timelineHandles[key] = TSProgress.mountTimeline(timelineMountEl, {
+    refType, refId,
+    composerSlot: composerSlotEl,
+    reentrySlot: reentryMountEl,
+  });
+}
+
+// Hängt beide Handles aus (Reentry zuerst, dann Timeline, siehe W1-Hinweis)
+// und blendet den Fortschrittsbereich wieder aus. Sicher mehrfach aufrufbar.
+function closeProgressEmbed(key) {
+  const ids = progressEmbedIds(key);
+  if (reentryHandles[key]) { reentryHandles[key].destroy(); delete reentryHandles[key]; }
+  if (timelineHandles[key]) { timelineHandles[key].destroy(); delete timelineHandles[key]; }
+  delete progressComposerToken[key];
+  const section = document.getElementById(ids.section);
+  if (section) section.style.display = 'none';
+}
+
+function updateProgressComposerCharHint(key) {
+  const ids = progressEmbedIds(key);
+  const el = document.getElementById(ids.note);
+  const hintEl = document.getElementById(ids.noteHint);
+  if (!el || !hintEl) return;
+  const len = (el.textContent || '').length;
+  if (len > 0) {
+    hintEl.textContent = `${len} / 5.000 Zeichen (ungefähr)`;
+    hintEl.style.display = '';
+  } else {
+    hintEl.style.display = 'none';
+  }
+}
+
+// Committet den Inhalt des Composers als neuen Zwischenstand. Liefert
+// 'noop' (kein Inhalt, kein Request), 'saved' oder 'failed'. Wird sowohl vom
+// eigenständigen "Zwischenstand speichern"-Button als auch nach erfolgreichem
+// Todo-/Themen-Speichern aufgerufen — nach einem erfolgreichen Commit ist der
+// Composer leer, ein zweiter Aufruf ist daher automatisch ein no-op (kein
+// doppelter Eintrag bei Composer-Save gefolgt von Formular-Speichern).
+async function commitProgressComposer(key, refType, refId, snoozedUntilValue) {
+  const ids = progressEmbedIds(key);
+  const html = getRT(ids.note);
+  if (!window.TSProgress || TSProgress.isEffectivelyEmptyHtml(html)) return 'noop';
+  if (!isValidProgressRefType(refType) || !refId) return 'noop';
+  const errEl = document.getElementById(ids.noteError);
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  const source = TSProgress.deriveEntrySource({ snoozedUntil: snoozedUntilValue });
+  if (!progressComposerToken[key]) progressComposerToken[key] = makeProgressClientToken();
   try {
-    const detail = await TSHost.api('GET', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}`);
-    // Panel könnte inzwischen für ein anderes Vorhaben erneut geöffnet worden
-    // sein — veraltete Antwort verwerfen.
-    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
-    progressPanelGoalCache = typeof detail.goal === 'string' ? detail.goal : '';
-    progressPanelNextStepCache = typeof detail.nextStep === 'string' ? detail.nextStep : '';
-    renderProgressPanelGoalText(progressPanelGoalCache, false);
-    renderProgressPanelNextStepText(progressPanelNextStepCache, false);
+    await TSHost.api('POST', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}/entries`, {
+      body: html, source, clientToken: progressComposerToken[key],
+    });
+    setRT(ids.note, '');
+    updateProgressComposerCharHint(key);
+    delete progressComposerToken[key];
+    if (timelineHandles[key]) timelineHandles[key].reload();
+    if (reentryHandles[key]) reentryHandles[key].reload();
+    onProgressChangedHost(refType, refId);
+    return 'saved';
   } catch (e) {
-    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
-    renderProgressPanelGoalText(null, false, true);
-    renderProgressPanelNextStepText(null, false, true);
-  } finally {
-    if (progressPanelCtx && progressPanelCtx.refType === refType && progressPanelCtx.refId === refId) {
-      editBtn.disabled = false;
-      nextStepEditBtn.disabled = false;
+    if (errEl) {
+      errEl.textContent = e.message || 'Zwischenstand konnte nicht gespeichert werden.';
+      errEl.style.display = '';
     }
+    return 'failed';
   }
 }
 
-function renderProgressPanelGoalText(goal, loading, failed) {
-  const el = document.getElementById('progress-panel-goal-text');
-  if (loading) { el.textContent = 'Zielbild wird geladen …'; el.classList.add('is-empty'); return; }
-  if (failed) { el.textContent = 'Zielbild konnte nicht geladen werden.'; el.classList.add('is-empty'); return; }
-  if (goal) { el.textContent = goal; el.classList.remove('is-empty'); }
-  else { el.textContent = 'Noch kein Zielbild hinterlegt.'; el.classList.add('is-empty'); }
-}
-
-function renderProgressPanelNextStepText(nextStep, loading, failed) {
-  const el = document.getElementById('progress-panel-nextstep-text');
-  if (loading) { el.textContent = 'Nächster Schritt wird geladen …'; el.classList.add('is-empty'); return; }
-  if (failed) { el.textContent = 'Nächster Schritt konnte nicht geladen werden.'; el.classList.add('is-empty'); return; }
-  if (nextStep) { el.textContent = nextStep; el.classList.remove('is-empty'); }
-  else { el.textContent = 'Noch kein nächster Schritt notiert.'; el.classList.add('is-empty'); }
-}
-
-function openProgressGoalFromPanel() {
-  if (!progressPanelCtx) return;
-  const { refType, refId } = progressPanelCtx;
-  TSHost.progress.openGoalDialog({ refType, refId, goal: progressPanelGoalCache || '' }).then((result) => {
-    if (result !== 'saved') return;
-    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
-    loadProgressPanelGoal(refType, refId);
-    if (progressPanelHandles && progressPanelHandles.reentry) progressPanelHandles.reentry.reload();
-  });
-}
-
-function openProgressNextStepFromPanel() {
-  if (!progressPanelCtx) return;
-  const { refType, refId } = progressPanelCtx;
-  openProgressNextStepDialog({ refType, refId, nextStep: progressPanelNextStepCache || '' }).then((result) => {
-    if (result !== 'saved') return;
-    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
-    loadProgressPanelGoal(refType, refId);
-    TSHost.progress.onProgressChanged(refType, refId);
-  });
-}
-
-function openProgressEntryFromPanel() {
-  if (!progressPanelCtx) return;
-  const { refType, refId } = progressPanelCtx;
-  TSHost.progress.openEntryDialog({ refType, refId, goal: progressPanelGoalCache || '' }).then((result) => {
-    if (result !== 'saved') return;
-    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
-    if (progressPanelHandles && progressPanelHandles.timeline) progressPanelHandles.timeline.reload();
-    if (progressPanelHandles && progressPanelHandles.reentry) progressPanelHandles.reentry.reload();
-    TSHost.progress.onProgressChanged(refType, refId);
-  });
-}
-
-function closeProgressPanelModal() {
-  document.getElementById('progress-panel-modal').style.display = 'none';
-  if (progressPanelHandles) {
-    progressPanelHandles.timeline?.destroy();
-    progressPanelHandles.reentry?.destroy();
-    progressPanelHandles = null;
+// Eigenständiger Composer-Speichern-Button: speichert NUR den Zwischenstand,
+// ohne das gesamte Todo/Thema-Formular zu speichern.
+async function saveTodoProgressComposerBtn() {
+  if (!editTodoId) return;
+  const ids = progressEmbedIds('todo');
+  setBusy(ids.noteSaveBtn, true);
+  try {
+    const r = await commitProgressComposer('todo', 'todo', editTodoId, document.getElementById('todo-snooze').value);
+    if (r === 'saved') toast('Zwischenstand gespeichert');
+  } finally {
+    setBusy(ids.noteSaveBtn, false);
   }
-  progressPanelCtx = null;
 }
 
-function progressPanelOverlayClick(e) {
-  if (e.target.id !== 'progress-panel-modal') return;
-  closeProgressPanelModal();
+async function saveTopicProgressComposerBtn() {
+  if (!editTopicId) return;
+  const ids = progressEmbedIds('topic');
+  setBusy(ids.noteSaveBtn, true);
+  try {
+    const r = await commitProgressComposer('topic', 'topic', editTopicId, document.getElementById('t-snooze').value);
+    if (r === 'saved') toast('Zwischenstand gespeichert');
+  } finally {
+    setBusy(ids.noteSaveBtn, false);
+  }
 }
 
 // ── End-of-Day Review & Stack History views ─────────────────
@@ -8877,12 +8983,16 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('search-overlay').classList.contains('open')) { closeSearch(); return; }
     closeMobileSidebar();
     closeHelp();
-    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
+    ['meeting-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    // todo-modal/topic-modal: nicht direkt schließen, sondern über die
+    // Request-Funktionen routen (Datenverlustschutz für den Fortschritts-
+    // Composer, Arbeitspaket W2).
+    if (document.getElementById('todo-modal').style.display !== 'none') requestCloseTodoModal();
+    if (document.getElementById('topic-modal').style.display !== 'none') requestCloseTopicModal();
     if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
     if (document.getElementById('progress-entry-modal').style.display !== 'none') closeProgressEntryDialog('cancelled');
     if (document.getElementById('progress-goal-modal').style.display !== 'none') closeProgressGoalDialog('cancelled');
-    if (document.getElementById('progress-panel-modal').style.display !== 'none') closeProgressPanelModal();
     closeConfirm();
     return;
   }
@@ -8919,7 +9029,7 @@ document.getElementById('login-user').addEventListener('keydown', e => { if (e.k
 
 // ── Init ─────────────────────────────────────────────────────
 ['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc',
-  'progress-entry-body','todo-progress-snooze-note','t-progress-snooze-note','pop-progress-note']
+  'progress-entry-body','todo-progress-note','t-progress-note','pop-progress-note']
   .forEach(id => initRtToolbar(id+'-tb', id));
 initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });
 initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });
