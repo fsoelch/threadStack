@@ -2233,7 +2233,12 @@ app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
   // Best-effort: darf den Pop selbst NIEMALS scheitern lassen (z.B. wenn wegen
   // idx_progress_result_frame bereits ein Ergebnis-Eintrag für diesen Frame
   // existiert — dann bewusst ein No-Op statt Fehler).
-  if (resolution === 'done') {
+  // Nur anlegen, wenn in DIESEM Pop tatsächlich ein Ergebnis übergeben wurde
+  // (applied.resultSaved) — sonst würde bei "Erledigt" ohne neues Ergebnis
+  // ein scheinbar frischer Zeitstrahl-Eintrag mit dem alten, unveränderten
+  // Ergebnistext und dem aktuellen Pop-Zeitstempel entstehen (Tester-Fund,
+  // irreführend datiert).
+  if (resolution === 'done' && applied.resultSaved) {
     try {
       progress.insertEntry(db, {
         userId: req.session.uid,

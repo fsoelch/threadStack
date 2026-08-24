@@ -11,6 +11,10 @@ struct MeetingDetailView: View {
     @State private var showBrief   = false
     @State private var showCapture = false
     @State private var cmiExpanded = false
+    // Story 9 ("Ruhende Vorhaben gezielt wiederfinden") — bislang nur im Web
+    // vorhanden (Tester-Fund), hier analog nachgezogen.
+    @State private var sortOldestProgressFirst = false
+    @State private var showOnlyUndocumented = false
 
     private var current: Meeting { state.meetings.first(where: { $0.id == meeting.id }) ?? meeting }
 
@@ -22,7 +26,25 @@ struct MeetingDetailView: View {
         }
     }
 
-    private var openTopics:    [Topic] { filtered.filter { !$0.done && !$0.isSnoozed } }
+    // Identisch zum Web-Comparator TSProgress.compareByProgress (public/progress.js).
+    private func sortByOldestProgress(_ list: [Topic]) -> [Topic] {
+        list.sorted { a, b in
+            let aKey = a.progress?.orderKey
+            let bKey = b.progress?.orderKey
+            if (aKey == nil) != (bKey == nil) { return aKey != nil }
+            guard let ak = aKey, let bk = bKey else { return false }
+            return ak < bk
+        }
+    }
+
+    private var openTopicsBase: [Topic] {
+        var list = filtered.filter { !$0.done && !$0.isSnoozed }
+        if showOnlyUndocumented { list = list.filter { $0.progress?.undocumented == true } }
+        return list
+    }
+    private var openTopics: [Topic] {
+        sortOldestProgressFirst ? sortByOldestProgress(openTopicsBase) : openTopicsBase
+    }
     private var snoozedTopics: [Topic] { filtered.filter { !$0.done &&  $0.isSnoozed } }
     private var doneTopics:    [Topic] { filtered.filter {  $0.done }.sorted { $0.resultDate > $1.resultDate } }
 
@@ -40,8 +62,23 @@ struct MeetingDetailView: View {
                 meetingHeader
             }
 
+            Section {
+                Picker("Sortierung", selection: $sortOldestProgressFirst) {
+                    Text("Standard").tag(false)
+                    Text("Ältester Stand zuerst").tag(true)
+                }
+                Toggle("Länger nicht dokumentiert", isOn: $showOnlyUndocumented)
+            }
+
             // Offen
-            if !openTopics.isEmpty {
+            if openTopics.isEmpty && showOnlyUndocumented {
+                Section {
+                    Text("✓ Alles aktuell dokumentiert")
+                        .foregroundStyle(.secondary).font(.subheadline)
+                        .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                }
+            } else if !openTopics.isEmpty {
                 Section(header: sectionHeader("Offen", count: openTopics.count, color: DS.accent)) {
                     ForEach(openTopics) { t in
                         TopicRowView(topic: t, meetingId: current.id)

@@ -87,6 +87,33 @@ test('Pop mit resolution=done erzeugt genau einen kind=result-Eintrag mit source
   assert.equal(resultEntry.editable, false);
 });
 
+test('Pop mit resolution=done OHNE neues result erzeugt KEINEN kind=result-Eintrag (Tester-Fund: Stale-Ergebnis)', async (t) => {
+  // Ein Todo/Thema kann bereits VOR diesem Pop ein result haben (z.B. schon
+  // einmal erledigt und wieder geoeffnet). Wird es erneut ueber den Stack mit
+  // resolution=done geschlossen, OHNE dass in diesem Request ein neues
+  // result uebergeben wird, darf KEIN Zeitstrahl-Eintrag entstehen - sonst
+  // erscheint der alte, unveraenderte Ergebnistext mit dem aktuellen
+  // Pop-Zeitstempel als scheinbar frischer Eintrag.
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  const { agent, todoId } = await bootstrapStackFixture(request, app, db);
+
+  await agent.put(`/api/todos/${todoId}`).send({ done: true, result: 'Alter Ergebnistext', resultDate: '2026-08-01' });
+  await agent.put(`/api/todos/${todoId}`).send({ done: false });
+
+  const push = await agent.post('/api/stack/push').send({ refType: 'todo', refId: todoId, nextStepNote: 'note' });
+  const frameId = push.body.frame.id;
+
+  const pop = await agent.post(`/api/stack/pop/${frameId}`).send({ resolution: 'done' });
+  assert.equal(pop.status, 200);
+  assert.equal(pop.body.applied.resultSaved, undefined);
+
+  const entries = await agent.get(`/api/progress/todo/${todoId}/entries`);
+  assert.equal(entries.status, 200);
+  assert.equal(entries.body.entries.length, 0, 'kein Eintrag ohne neues Ergebnis in diesem Pop');
+});
+
 test('Pop mit resolution=snoozed erzeugt KEINEN automatischen Progress-Eintrag', async (t) => {
   const dir = setupEnv();
   const { app, db } = loadServer(REPO_ROOT);

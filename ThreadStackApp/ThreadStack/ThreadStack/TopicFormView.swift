@@ -16,6 +16,10 @@ struct TopicFormView: View {
     @State private var error: String?
     @State private var showLinkSheet = false
     @State private var showProgressHistory = false // A3
+    // Story 6 (Tester-Fund): optionaler Zwischenstand beim direkten Snoozen
+    // (außerhalb des Stacks) — analog zum Checkpoint-Feld in StackPopSheet.
+    @State private var whereAmI = ""
+    @State private var checkpointError: String?
 
     var body: some View {
         NavigationStack {
@@ -49,6 +53,16 @@ struct TopicFormView: View {
                 } footer: {
                     Text(snoozeHasTime ? "Wacht exakt zu dieser Uhrzeit auf — mit Benachrichtigung." : "Bis zu diesem Datum ausblenden.")
                 }
+                if hasSnooze {
+                    Section("Wo stehe ich gerade? (optional)") {
+                        TextEditor(text: $whereAmI).frame(minHeight: 80)
+                        Text("\(whereAmI.count) / \(ProgressEntryCharLimit.maxLength)")
+                            .scaledFont(.caption).foregroundStyle(.secondary)
+                        if let checkpointError {
+                            Text(checkpointError).scaledFont(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                }
                 // A3: Verlaufs-Zugriff nur für bereits gespeicherte Topics (id vorhanden).
                 if topic != nil {
                     Section {
@@ -67,7 +81,8 @@ struct TopicFormView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { save() }
-                        .disabled(title.isEmpty || loading)
+                        .disabled(title.isEmpty || loading
+                                  || (hasSnooze && ProgressEntryCharLimit.isOverLimit(length: whereAmI.count)))
                 }
             }
             .onAppear { populate() }
@@ -124,6 +139,7 @@ struct TopicFormView: View {
         let fireAt: Date? = (hasSnooze && snoozeHasTime) ? snoozeDate : nil
         Task {
             do {
+                var savedId = topic?.id
                 if let t = topic {
                     try await state.updateTopic(
                         meetingId: meetingId, id: t.id,
@@ -138,13 +154,32 @@ struct TopicFormView: View {
                         description: description, isTodo: isTodo,
                         snoozedUntil: snooze
                     )
+                    savedId = created.id
                     NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(created.id)", title: notificationTitle, fireAt: fireAt)
                 }
-                dismiss()
+                // Story 6 (Tester-Fund): der Snooze ist bereits serverseitig
+                // erfolgt — ein Fehler beim optionalen Zwischenstand darf ihn
+                // NICHT als fehlgeschlagen erscheinen lassen.
+                let checkpointOK = await saveCheckpointIfNeeded(refId: savedId)
+                loading = false
+                if checkpointOK { dismiss() }
             } catch {
                 self.error = error.localizedDescription
                 loading = false
             }
+        }
+    }
+
+    private func saveCheckpointIfNeeded(refId: String?) async -> Bool {
+        guard hasSnooze, let refId else { return true }
+        let trimmed = whereAmI.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+        do {
+            _ = try await progressStore.addEntry(refType: "topic", refId: refId, bodyHTML: trimmed, source: "snooze")
+            return true
+        } catch {
+            checkpointError = "Zwischenstand konnte nicht gespeichert werden — dein Text bleibt oben erhalten."
+            return false
         }
     }
 }

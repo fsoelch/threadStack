@@ -2987,10 +2987,17 @@ body.ai-disabled .ai-action { display: none !important; }
         <div class="ts-progress-panel-goal-text is-empty" id="progress-panel-goal-text">Zielbild wird geladen …</div>
         <button type="button" class="btn btn-secondary btn-sm ts-progress-panel-goal-edit-btn" id="progress-panel-goal-edit-btn" onclick="openProgressGoalFromPanel()" disabled>🎯 Zielbild</button>
       </div>
+      <div class="ts-progress-panel-goal-row ts-progress-panel-nextstep-row">
+        <div class="ts-progress-panel-goal-text is-empty" id="progress-panel-nextstep-text">Nächster Schritt wird geladen …</div>
+        <button type="button" class="btn btn-secondary btn-sm ts-progress-panel-goal-edit-btn" id="progress-panel-nextstep-edit-btn" onclick="openProgressNextStepFromPanel()" disabled>➡️ Nächster Schritt</button>
+      </div>
       <div class="ts-progress-panel-reentry-mount" id="progress-panel-reentry-mount"></div>
     </div>
     <div class="ts-progress-panel-body">
       <div id="progress-panel-timeline-mount"></div>
+    </div>
+    <div class="modal-footer ts-progress-panel-footer">
+      <button type="button" class="btn btn-primary" onclick="openProgressEntryFromPanel()">+ Zwischenstand erfassen</button>
     </div>
   </div>
 </div>
@@ -3015,6 +3022,30 @@ body.ai-disabled .ai-action { display: none !important; }
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeProgressGoalDialog('cancelled')">Abbrechen</button>
       <button class="btn btn-primary" id="progress-goal-save-btn" onclick="submitProgressGoalDialog()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fortschrittsverlauf: Nächster Schritt bearbeiten ─────────── -->
+<div id="progress-nextstep-modal" class="modal-overlay" style="display:none" onclick="progressNextStepOverlayClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>➡️ Nächster Schritt</h2>
+      <button class="modal-close" onclick="closeProgressNextStepDialog('cancelled')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Was ist der nächste Schritt? <span class="opt">(optional)</span></label>
+        <textarea class="form-control" id="progress-nextstep-input" rows="3" maxlength="1000"
+          placeholder="Wird auch als Notiz vorbelegt, wenn du dieses Vorhaben auf den Stack legst."
+          oninput="document.getElementById('progress-nextstep-char-hint').textContent = this.value.length + ' / 1.000 Zeichen'"></textarea>
+        <div class="ts-progress-char-hint" id="progress-nextstep-char-hint">0 / 1.000 Zeichen</div>
+      </div>
+      <div id="progress-nextstep-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeProgressNextStepDialog('cancelled')">Abbrechen</button>
+      <button class="btn btn-primary" id="progress-nextstep-save-btn" onclick="submitProgressNextStepDialog()">Speichern</button>
     </div>
   </div>
 </div>
@@ -8098,9 +8129,11 @@ async function runReentryFor(frameId) {
 
 let progressEntryDialogCtx = null;  // { refType, refId, entryId, clientToken, resolve }
 let progressGoalDialogCtx  = null;  // { refType, refId, resolve }
+let progressNextStepDialogCtx = null;  // { refType, refId, resolve }
 let progressPanelCtx       = null;  // { refType, refId }
 let progressPanelHandles   = null;  // { timeline, reentry } — Handles von TSProgress.mount*
 let progressPanelGoalCache = '';    // zuletzt geladenes Zielbild des offenen Panels
+let progressPanelNextStepCache = ''; // zuletzt geladener Nächster-Schritt-Text des offenen Panels
 
 function isValidProgressRefType(t) { return t === 'todo' || t === 'topic'; }
 
@@ -8257,6 +8290,60 @@ async function submitProgressGoalDialog() {
   }
 }
 
+// ── Nächster Schritt bearbeiten (dauerhaft am Vorhaben, Story 5) ──
+// Eigenständiger Dialog analog zum Zielbild-Dialog oben — dauerhaft im
+// Verlaufs-Panel sichtbar/editierbar, unabhaengig vom Stack-Zustand
+// (Tester-Fund: bislang nur transient im Push-Dialog vorbelegt).
+function openProgressNextStepDialog(ctx) {
+  return new Promise((resolve) => {
+    const refType = ctx && ctx.refType, refId = ctx && ctx.refId;
+    if (!isValidProgressRefType(refType) || !refId) { resolve('cancelled'); return; }
+    progressNextStepDialogCtx = { refType, refId, resolve };
+    const ta = document.getElementById('progress-nextstep-input');
+    ta.value = (ctx && ctx.nextStep) || '';
+    document.getElementById('progress-nextstep-char-hint').textContent = `${ta.value.length} / 1.000 Zeichen`;
+    document.getElementById('progress-nextstep-error').style.display = 'none';
+    document.getElementById('progress-nextstep-modal').style.display = 'flex';
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 50);
+  });
+}
+
+function closeProgressNextStepDialog(result) {
+  document.getElementById('progress-nextstep-modal').style.display = 'none';
+  const ctx = progressNextStepDialogCtx;
+  progressNextStepDialogCtx = null;
+  if (ctx && typeof ctx.resolve === 'function') ctx.resolve(result);
+}
+
+function progressNextStepOverlayClick(e) {
+  if (e.target.id !== 'progress-nextstep-modal') return;
+  if (document.getElementById('progress-nextstep-input').value.trim() !== '') return;
+  closeProgressNextStepDialog('cancelled');
+}
+
+async function submitProgressNextStepDialog() {
+  const ctx = progressNextStepDialogCtx;
+  if (!ctx) return;
+  const nextStep = document.getElementById('progress-nextstep-input').value;
+  const errEl = document.getElementById('progress-nextstep-error');
+  errEl.style.display = 'none';
+  if (nextStep.length > 1000) {
+    errEl.textContent = 'Der nächste Schritt darf maximal 1.000 Zeichen haben.';
+    errEl.style.display = '';
+    return;
+  }
+  setBusy('progress-nextstep-save-btn', true);
+  try {
+    await TSHost.api('PUT', `/api/progress/${encodeURIComponent(ctx.refType)}/${encodeURIComponent(ctx.refId)}/next-step`, { nextStep });
+    closeProgressNextStepDialog('saved');
+  } catch (e) {
+    errEl.textContent = e.message || 'Speichern fehlgeschlagen. Bitte erneut versuchen.';
+    errEl.style.display = '';
+  } finally {
+    setBusy('progress-nextstep-save-btn', false);
+  }
+}
+
 // ── KI-Re-Entry-Zusammenfassung für die Wiedereinstiegskarte ──
 // Eigenständige Variante von runReentryFor() oben: liefert das Ergebnis als
 // String zurück statt es in ein Banner zu schreiben (TSProgress rendert die
@@ -8326,8 +8413,11 @@ function openProgressPanel(refType, refId) {
   }
   progressPanelCtx = { refType, refId };
   progressPanelGoalCache = '';
+  progressPanelNextStepCache = '';
   renderProgressPanelGoalText(null, true);
+  renderProgressPanelNextStepText(null, true);
   document.getElementById('progress-panel-goal-edit-btn').disabled = true;
+  document.getElementById('progress-panel-nextstep-edit-btn').disabled = true;
 
   const timelineMount = document.getElementById('progress-panel-timeline-mount');
   const reentryMount  = document.getElementById('progress-panel-reentry-mount');
@@ -8341,20 +8431,28 @@ function openProgressPanel(refType, refId) {
 }
 
 async function loadProgressPanelGoal(refType, refId) {
+  // Laedt in EINEM Request sowohl Zielbild als auch Nächster-Schritt (beide
+  // stecken bereits im Detail-Payload) — dauerhaft sichtbar/editierbar im
+  // Panel-Kopf, unabhaengig vom Stack-Zustand (Story 5, Tester-Fund).
   const editBtn = document.getElementById('progress-panel-goal-edit-btn');
+  const nextStepEditBtn = document.getElementById('progress-panel-nextstep-edit-btn');
   try {
     const detail = await TSHost.api('GET', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}`);
     // Panel könnte inzwischen für ein anderes Vorhaben erneut geöffnet worden
     // sein — veraltete Antwort verwerfen.
     if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
     progressPanelGoalCache = typeof detail.goal === 'string' ? detail.goal : '';
+    progressPanelNextStepCache = typeof detail.nextStep === 'string' ? detail.nextStep : '';
     renderProgressPanelGoalText(progressPanelGoalCache, false);
+    renderProgressPanelNextStepText(progressPanelNextStepCache, false);
   } catch (e) {
     if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
     renderProgressPanelGoalText(null, false, true);
+    renderProgressPanelNextStepText(null, false, true);
   } finally {
     if (progressPanelCtx && progressPanelCtx.refType === refType && progressPanelCtx.refId === refId) {
       editBtn.disabled = false;
+      nextStepEditBtn.disabled = false;
     }
   }
 }
@@ -8367,6 +8465,14 @@ function renderProgressPanelGoalText(goal, loading, failed) {
   else { el.textContent = 'Noch kein Zielbild hinterlegt.'; el.classList.add('is-empty'); }
 }
 
+function renderProgressPanelNextStepText(nextStep, loading, failed) {
+  const el = document.getElementById('progress-panel-nextstep-text');
+  if (loading) { el.textContent = 'Nächster Schritt wird geladen …'; el.classList.add('is-empty'); return; }
+  if (failed) { el.textContent = 'Nächster Schritt konnte nicht geladen werden.'; el.classList.add('is-empty'); return; }
+  if (nextStep) { el.textContent = nextStep; el.classList.remove('is-empty'); }
+  else { el.textContent = 'Noch kein nächster Schritt notiert.'; el.classList.add('is-empty'); }
+}
+
 function openProgressGoalFromPanel() {
   if (!progressPanelCtx) return;
   const { refType, refId } = progressPanelCtx;
@@ -8375,6 +8481,29 @@ function openProgressGoalFromPanel() {
     if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
     loadProgressPanelGoal(refType, refId);
     if (progressPanelHandles && progressPanelHandles.reentry) progressPanelHandles.reentry.reload();
+  });
+}
+
+function openProgressNextStepFromPanel() {
+  if (!progressPanelCtx) return;
+  const { refType, refId } = progressPanelCtx;
+  openProgressNextStepDialog({ refType, refId, nextStep: progressPanelNextStepCache || '' }).then((result) => {
+    if (result !== 'saved') return;
+    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
+    loadProgressPanelGoal(refType, refId);
+    TSHost.progress.onProgressChanged(refType, refId);
+  });
+}
+
+function openProgressEntryFromPanel() {
+  if (!progressPanelCtx) return;
+  const { refType, refId } = progressPanelCtx;
+  TSHost.progress.openEntryDialog({ refType, refId, goal: progressPanelGoalCache || '' }).then((result) => {
+    if (result !== 'saved') return;
+    if (!progressPanelCtx || progressPanelCtx.refType !== refType || progressPanelCtx.refId !== refId) return;
+    if (progressPanelHandles && progressPanelHandles.timeline) progressPanelHandles.timeline.reload();
+    if (progressPanelHandles && progressPanelHandles.reentry) progressPanelHandles.reentry.reload();
+    TSHost.progress.onProgressChanged(refType, refId);
   });
 }
 

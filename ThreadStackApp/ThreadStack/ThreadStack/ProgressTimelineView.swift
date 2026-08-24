@@ -150,12 +150,20 @@ struct ProgressTimelineView: View {
 
     // MARK: - Loaded content
 
+    // Zielbild/Nächster Schritt bleiben FIXIERT sichtbar, nur der eigentliche
+    // Verlauf scrollt darunter (Tester-Fund: Zielbild scrollte bislang mit
+    // dem restlichen Inhalt mit statt fixiert zu bleiben, wie es die Web-
+    // Variante per `position:sticky` bereits tut).
     private func loadedContent(detail: ProgressDetail) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            goalSection(detail: detail)
-            nextStepSection(detail: detail)
-            Divider()
-            entriesSection(detail: detail)
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 16) {
+                goalSection(detail: detail)
+                nextStepSection(detail: detail)
+            }
+            Divider().padding(.vertical, 12)
+            ScrollView {
+                entriesSection(detail: detail)
+            }
         }
         .sheet(isPresented: $showGoalEditor) {
             ProgressGoalEditorSheet(refType: refType, refId: refId, store: store)

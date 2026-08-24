@@ -31,12 +31,16 @@ struct ProgressHistorySheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    ProgressReentryCardView(refType: refType, refId: refId, store: store)
-                    ProgressTimelineView(refType: refType, refId: refId, store: store)
-                }
-                .padding()
+            // Kein äußeres ScrollView mehr: ProgressTimelineView scrollt jetzt
+            // intern NUR seinen Verlaufsbereich, damit Zielbild/Nächster
+            // Schritt (und diese Karte hier) fixiert sichtbar bleiben, statt
+            // mit langen Verläufen aus dem Blick zu scrollen.
+            VStack(alignment: .leading, spacing: 12) {
+                ProgressReentryCardView(refType: refType, refId: refId, store: store)
+                    .padding(.horizontal)
+                    .padding(.top)
+                ProgressTimelineView(refType: refType, refId: refId, store: store)
+                    .padding(.horizontal)
             }
             .navigationTitle("Fortschritt")
             .inlineTitle()
