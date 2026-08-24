@@ -4,7 +4,7 @@ struct TopicFormView: View {
     let meetingId: String
     var topic: Topic? = nil
     @EnvironmentObject var state: AppState
-    @EnvironmentObject var progressStore: ProgressStore // A3: Fortschrittsverlauf-Zugriff
+    @EnvironmentObject var progressStore: ProgressStore // Fortschrittsverlauf-Zugriff
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
     @State private var description = ""
@@ -15,11 +15,12 @@ struct TopicFormView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var showLinkSheet = false
-    @State private var showProgressHistory = false // A3
-    // Story 6 (Tester-Fund): optionaler Zwischenstand beim direkten Snoozen
-    // (außerhalb des Stacks) — analog zum Checkpoint-Feld in StackPopSheet.
-    @State private var whereAmI = ""
-    @State private var checkpointError: String?
+    // Immer sichtbare Eingabe für einen neuen Zwischenstand (Paket A1),
+    // direkt unter der Beschreibung eingebettet (Paket A2 dieser
+    // Nachbesserung). Ersetzt den bisherigen "Wo stehe ich gerade?"-Block.
+    @StateObject private var progressComposer = ProgressEntryComposer()
+    @FocusState private var progressComposerFocused: Bool
+    @State private var showDiscardConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -38,6 +39,9 @@ struct TopicFormView: View {
                     .buttonStyle(.bordered)
                     .accessibilityHint("Öffnet einen Dialog zum Einfügen eines Links, optional mit KI-Zusammenfassung.")
                 }
+                Section("Fortschritt") {
+                    progressSection
+                }
                 Section {
                     Toggle("Als Todo markieren", isOn: $isTodo)
                 }
@@ -53,24 +57,6 @@ struct TopicFormView: View {
                 } footer: {
                     Text(snoozeHasTime ? "Wacht exakt zu dieser Uhrzeit auf — mit Benachrichtigung." : "Bis zu diesem Datum ausblenden.")
                 }
-                if hasSnooze {
-                    Section("Wo stehe ich gerade? (optional)") {
-                        TextEditor(text: $whereAmI).frame(minHeight: 80)
-                        Text("\(whereAmI.count) / \(ProgressEntryCharLimit.maxLength)")
-                            .scaledFont(.caption).foregroundStyle(.secondary)
-                        if let checkpointError {
-                            Text(checkpointError).scaledFont(.caption).foregroundStyle(.orange)
-                        }
-                    }
-                }
-                // A3: Verlaufs-Zugriff nur für bereits gespeicherte Topics (id vorhanden).
-                if topic != nil {
-                    Section {
-                        Button { showProgressHistory = true } label: {
-                            Label("Fortschrittsverlauf", systemImage: "chart.line.uptrend.xyaxis")
-                        }
-                    }
-                }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
                 }
@@ -78,25 +64,65 @@ struct TopicFormView: View {
             .navigationTitle(topic == nil ? "Neues Thema" : "Thema bearbeiten")
             .inlineTitle()
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Abbrechen") { handleCancelTapped() }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { save() }
-                        .disabled(title.isEmpty || loading
-                                  || (hasSnooze && ProgressEntryCharLimit.isOverLimit(length: whereAmI.count)))
+                        .disabled(title.isEmpty || loading || progressComposer.isOverLimit)
                 }
             }
             .onAppear { populate() }
+            .interactiveDismissDisabled(progressComposer.isDirty)
+            .confirmationDialog(
+                "Zwischenstand verwerfen? Dein eingegebener Text ist noch nicht gespeichert.",
+                isPresented: $showDiscardConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Verwerfen", role: .destructive) {
+                    progressComposer.discard(store: progressStore, refType: "topic", refId: topic?.id)
+                    dismiss()
+                }
+                Button("Weiter bearbeiten", role: .cancel) {}
+            }
             .sheet(isPresented: $showLinkSheet) {
                 LinkInsertSheet(onInsert: { text in
                     description += (description.isEmpty ? "" : "\n\n") + text
                 })
             }
-            // A3: Fortschrittsverlauf-Sheet, nur für bereits gespeicherte Topics.
-            .sheet(isPresented: $showProgressHistory) {
-                if let t = topic {
-                    ProgressHistorySheet(refType: "topic", refId: t.id, store: progressStore)
+        }
+    }
+
+    @ViewBuilder
+    private var progressSection: some View {
+        if let t = topic {
+            ProgressTimelineView(refType: "topic", refId: t.id, store: progressStore) {
+                ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused) {
+                    Task { await commitProgressComposer(refId: t.id) }
+                }
+            } reentry: {
+                ProgressReentryCardView(refType: "topic", refId: t.id, store: progressStore) {
+                    progressComposerFocused = true
                 }
             }
+        } else {
+            // Noch keine refId — nur der Composer, ohne Zielbild/Verlauf/
+            // Wiedereinstiegskarte (ergeben für ein noch nicht existierendes
+            // Thema keinen Sinn). Der eigentliche Commit erfolgt erst in
+            // save(), sobald die id feststeht.
+            ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused, onSave: {})
+        }
+    }
+
+    private func commitProgressComposer(refId: String) async {
+        await progressComposer.commit(store: progressStore, refType: "topic", refId: refId, hasSnooze: hasSnooze)
+    }
+
+    private func handleCancelTapped() {
+        if progressComposer.isDirty {
+            showDiscardConfirm = true
+        } else {
+            dismiss()
         }
     }
 
@@ -157,29 +183,21 @@ struct TopicFormView: View {
                     savedId = created.id
                     NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(created.id)", title: notificationTitle, fireAt: fireAt)
                 }
-                // Story 6 (Tester-Fund): der Snooze ist bereits serverseitig
-                // erfolgt — ein Fehler beim optionalen Zwischenstand darf ihn
-                // NICHT als fehlgeschlagen erscheinen lassen.
-                let checkpointOK = await saveCheckpointIfNeeded(refId: savedId)
+                // Das Anlegen/Aktualisieren ist an dieser Stelle bereits
+                // serverseitig erfolgt — ein Fehler beim optionalen
+                // Zwischenstand darf es NICHT als fehlgeschlagen erscheinen
+                // lassen, das Sheet bleibt aber offen (Text bleibt erhalten).
+                let progressResult = await progressComposer.commit(
+                    store: progressStore, refType: "topic", refId: savedId, hasSnooze: hasSnooze
+                )
                 loading = false
-                if checkpointOK { dismiss() }
+                if progressResult != .failed {
+                    dismiss()
+                }
             } catch {
                 self.error = error.localizedDescription
                 loading = false
             }
-        }
-    }
-
-    private func saveCheckpointIfNeeded(refId: String?) async -> Bool {
-        guard hasSnooze, let refId else { return true }
-        let trimmed = whereAmI.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return true }
-        do {
-            _ = try await progressStore.addEntry(refType: "topic", refId: refId, bodyHTML: trimmed, source: "snooze")
-            return true
-        } catch {
-            checkpointError = "Zwischenstand konnte nicht gespeichert werden — dein Text bleibt oben erhalten."
-            return false
         }
     }
 }
