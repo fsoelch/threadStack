@@ -28,6 +28,11 @@ function buildDb() {
     CREATE TABLE contacts(id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT, role TEXT NOT NULL DEFAULT '', created_at TEXT);
     CREATE TABLE graph_node_positions(user_id TEXT NOT NULL, node_type TEXT NOT NULL, node_id TEXT NOT NULL, x REAL, y REAL, updated_at TEXT, PRIMARY KEY(user_id, node_type, node_id));
   `);
+  // Archiv-Kernmodul (Paket B1): `graph/index.js` (Paket B3) kennzeichnet
+  // Topic-Knoten archivierter Meetings über `archive.archivedFlags()`, was
+  // die Tabelle `archive_state` voraussetzt. Migration wiederverwenden statt
+  // das Schema hier eigenständig nachzubauen (Wiederverwendungsgebot).
+  require('../lib/archive').runArchiveMigrations(db);
   return db;
 }
 
