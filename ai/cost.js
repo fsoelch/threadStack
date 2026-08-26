@@ -24,6 +24,12 @@ const FEATURE_MAX_OUTPUT_TOKENS = {
   // wird hier der größte mögliche Wert als konservative Obergrenze verwendet,
   // analog zum bestehenden Muster dieser Tabelle (ein Wert pro Feature).
   link_summary:   800,
+  // S2: Kurz-Zusammenfassungen für die Todo/Task-Übersicht (Schnittstelle 6).
+  // Werte sind Teil des bindenden Schnittstellenvertrags (ai/index.js
+  // summarizeProgress/summarizeDescription) und dürfen nicht ohne Rücksprache
+  // mit den konsumierenden Paketen (lib/summaries/) geändert werden.
+  progress_summary:    200,
+  description_summary: 150,
   test:             1,
 };
 
