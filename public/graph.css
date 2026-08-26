@@ -100,6 +100,13 @@
 .tsg-done-badge { fill: var(--tsg-green); }
 .tsg-done-badge path { stroke: #fff; stroke-width: 2; fill: none; }
 
+/* Archiv-Feature (Arbeitspaket W1): gleiches Badge-Muster wie .tsg-done-badge
+   (Kreis + Icon), eigene Farbe/Icon (Archiv-Box statt Haken), am
+   gegenüberliegenden Eck positioniert (siehe graph.js renderNode). */
+.tsg-archived-badge { fill: var(--tsg-amber); }
+.tsg-archived-badge path { stroke: #fff; stroke-width: 1.4; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.tsg-node.tsg-archived .tsg-shape { opacity: .7; }
+
 /* Edges */
 .tsg-edge {
   fill: none;

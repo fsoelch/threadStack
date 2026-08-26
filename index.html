@@ -1731,6 +1731,41 @@ body.ai-disabled .ai-action { display: none !important; }
 .todos-toolbar label { font-size:.75rem; color:var(--text-muted); white-space:nowrap; }
 .todos-toolbar select.form-control { width:auto; min-width:190px; padding:.3rem .5rem; font-size:.8125rem; }
 .todos-toolbar .toggle-row { margin:0; gap:.4rem; }
+
+/* ── Archiv (Arbeitspaket W1: "Meetings archivieren statt löschen") ── */
+.archive-badge {
+  display:inline-flex; align-items:center; gap:.3rem;
+  background:var(--card2); border:1px solid var(--border-md); border-radius:999px;
+  padding:.15rem .6rem; font-size:.75rem; color:var(--text-muted); white-space:nowrap;
+}
+.archive-badge-inline { margin-left:.4rem; vertical-align:middle; }
+.archive-card { display:flex; align-items:stretch; gap:.5rem; padding:.75rem 1rem; }
+.archive-card-body {
+  flex:1; min-width:0; display:flex; align-items:center; gap:.75rem;
+  background:none; border:none; padding:0; margin:0; text-align:left; cursor:pointer;
+  font:inherit; color:inherit;
+}
+.archive-card-body:hover .archive-card-title { color:var(--primary); }
+.archive-card-body:focus-visible { outline:2px solid var(--primary); outline-offset:2px; border-radius:6px; }
+.archive-card-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:.3rem; }
+.archive-card-title { font-size:.9375rem; font-weight:600; letter-spacing:-.015em; }
+.archive-card-meta { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.archive-card-actions { display:flex; align-items:center; gap:.375rem; flex-shrink:0; }
+.archive-readonly-banner {
+  display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
+  background:var(--card2); border:1px solid var(--border-md); border-radius:10px;
+  padding:.5rem .75rem; margin:.5rem 0 .75rem;
+}
+.archive-readonly-banner-text { font-size:.8125rem; font-weight:600; color:var(--text); }
+/* Fortschrittsverlauf im Archiv-Detail (Nur-Lesen): TSProgress.mountTimeline
+   wird ohne composerSlot eingebettet (kein Eingabefeld) — die pro Eintrag
+   gerenderten Bearbeiten-/Löschen-Icons blendet diese Regel zusätzlich aus
+   und entfernt sie damit auch aus dem Tab-Fokus (display:none), ohne das
+   Modul selbst um eine readOnly-Option erweitern zu müssen. */
+.progress-readonly { margin-top:.75rem; }
+.progress-readonly .progress-entry-actions { display:none; }
+.progress-readonly .progress-composer,
+.progress-readonly .progress-reentry-wrap { display:none; }
 </style>
 <link rel="stylesheet" href="/assets/graph.css">
 <script defer src="/assets/graph.js"></script>
@@ -1739,7 +1774,7 @@ body.ai-disabled .ai-action { display: none !important; }
 </head>
 <body>
 
-<div id="toast-container"></div>
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <!-- ── Login ──────────────────────────────────────────────────── -->
 <div id="login-screen" style="display:none">
@@ -3099,7 +3134,7 @@ body.ai-disabled .ai-action { display: none !important; }
 </div>
 
 <!-- ── Confirm ─────────────────────────────────────────────────── -->
-<div id="confirm-dialog" class="confirm-overlay" style="display:none">
+<div id="confirm-dialog" class="confirm-overlay" style="display:none" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
   <div class="confirm-box">
     <h3 id="confirm-title">Sind Sie sicher?</h3>
     <p id="confirm-message"></p>
@@ -4440,6 +4475,13 @@ function renderTodosNav() {
     <div class="todo-nav-item ai-action ${selectedId === '__digest__' ? 'active' : ''}" onclick="selectView('__digest__')">
       <div class="todo-nav-icon digest-icon">${ic('<path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>')}</div>
       <span class="todo-nav-label">Wochen-Digest</span>
+    </div>
+    <div class="todo-nav-item archive-nav-item ${selectedId === '__archive__' || selectedId === '__archive_detail__' ? 'active' : ''}"
+         role="button" tabindex="0"
+         onclick="selectView('__archive__')"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectView('__archive__');}">
+      <div class="todo-nav-icon archive-icon">${ic('<path d="M3 7.5V6a1.5 1.5 0 011.5-1.5h15A1.5 1.5 0 0121 6v1.5M3 7.5v10.5A1.5 1.5 0 004.5 19.5h15a1.5 1.5 0 001.5-1.5V7.5M3 7.5h18M10 12h4"/>')}</div>
+      <span class="todo-nav-label">Archiv</span>
     </div>`;
 }
 
@@ -4521,12 +4563,17 @@ function renderMain() {
     const gr = document.getElementById('graph-root');
     if (gr) { window.TSGraph?.unmount?.(); gr.hidden = true; gr.innerHTML = ''; }
   }
+  // Fortschritts-Timelines der Archiv-Detailansicht sauber abhängen, sobald
+  // die Ansicht verlassen wird (vermeidet verwaiste Mounts/Requests).
+  if (selectedId !== '__archive_detail__') { destroyArchiveDetailTimelines(); archiveDetailMountedForId = null; }
   if (selectedId === '__themes__')   { renderThemesView(el); return; }
   if (selectedId === '__contacts__') { renderContactsView(el); return; }
   if (selectedId === '__todos__')    { renderTodosView(el); return; }
   if (selectedId === '__eod__')      { renderEodView(el); return; }
   if (selectedId === '__stack_history__') { renderStackHistoryView(el); return; }
   if (selectedId === '__digest__')   { renderDigestView(el); return; }
+  if (selectedId === '__archive__')  { renderArchiveView(el); return; }
+  if (selectedId === '__archive_detail__') { renderArchiveDetailView(el); return; }
   if (!selectedId) {
     el.innerHTML = `
       <div class="empty-state">
@@ -4539,7 +4586,17 @@ function renderMain() {
   }
   const m = getMeeting(selectedId);
   if (!m) { selectedId = null; renderMain(); return; }
+  el.innerHTML = renderMeetingDetailHtml(m, { readOnly: false });
+}
 
+// ── Meeting-Detail-Markup (aktiv + Archiv-Nur-Lese) ─────────────────────
+// Arbeitspaket W1 (Archiv-Feature): um einen readOnly-Zweig erweitert statt
+// eines zweiten Detail-Renderers (siehe CLAUDE.md "Wiederverwendung vor
+// Neuentwicklung" und Schnittstellenvertrag Punkt 3). Im readOnly-Modus
+// werden alle schreibenden Kopfzeilen-/Themen-Aktionen entfernt und durch
+// ein Archiv-Hinweisbanner (Wiederherstellen/Endgültig löschen) ersetzt.
+function renderMeetingDetailHtml(m, opts) {
+  const readOnly = !!(opts && opts.readOnly);
   const groupMap = buildGroupMap();
   const themeMap = buildThemeMap();
   const lct = topicFilter.toLowerCase();
@@ -4551,22 +4608,29 @@ function renderMain() {
   const done    = (m.topics||[]).filter(t =>  t.done && matchesTopic(t))
     .sort((a,b) => new Date(b.resultDate||b.createdAt) - new Date(a.resultDate||a.createdAt));
   const past = isPast(m.nextDate);
-  // Fortschritt: Sortierung/Filter analog zur Todo-Übersicht (Story 9)
+  // Fortschritt: Sortierung/Filter analog zur Todo-Übersicht (Story 9) —
+  // im readOnly-Modus bewusst deaktiviert (kein Werkzeug-Zustand nötig,
+  // Standardreihenfolge genügt für die Ansicht eines archivierten Meetings).
   const openBeforeTopicProgressFilter = open.length;
-  if (topicProgressFilterUndocumented && window.TSProgress) {
+  if (!readOnly && topicProgressFilterUndocumented && window.TSProgress) {
     open = open.filter(t => TSProgress.isUndocumented(t));
   }
-  if (topicProgressSortOldest && window.TSProgress) {
+  if (!readOnly && topicProgressSortOldest && window.TSProgress) {
     open = open.slice().sort(TSProgress.compareByProgress);
   }
 
-  el.innerHTML = `
+  return `
     <div class="full-width-view">
       <div class="meeting-header">
         <div class="meeting-header-accent" style="background:${m.color||'#1D6FE8'}"></div>
         <div class="meeting-header-body">
           <div class="meeting-header-info">
             <h1 class="meeting-title">${escHtml(m.title)}</h1>
+            ${readOnly ? `
+              <div class="archive-readonly-banner" role="status">
+                <span class="archive-readonly-banner-text">🗃️ Archiviert am ${escHtml(fmtDateOnly(m.archivedAt))}</span>
+                <button class="btn btn-secondary btn-sm" onclick="restoreArchivedMeeting('${m.id}', true)">↺ Wiederherstellen</button>
+              </div>` : ''}
             ${m.description ? `<div class="meeting-description rt-display">${displayHtml(m.description)}</div>` : ''}
             <div class="meeting-meta-chips">
               ${(m.participants||[]).length > 0 ? `
@@ -4584,16 +4648,20 @@ function renderMain() {
             </div>
           </div>
           <div class="meeting-header-actions">
-            ${aiFeatureOn('brief')   ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiBrief()">${SVG.sparkle} Briefing</button>` : ''}
-            ${aiFeatureOn('capture') ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiCapture()">${SVG.notes} Notizen</button>` : ''}
-            ${m.isRecurring && m.nextDate ? `<button class="btn btn-secondary btn-sm" onclick="doAdvanceDate('${m.id}')">${SVG.repeat} Nächster Termin</button>` : ''}
-            <button class="btn btn-secondary btn-sm" onclick="openMeetingModal('${m.id}')">${SVG.pencil} Bearbeiten</button>
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDelete('meeting','${m.id}')" title="Meeting löschen">🗑️</button>
+            ${readOnly ? `
+              <button class="btn btn-danger btn-sm" onclick="confirmPermanentlyDeleteMeeting('${m.id}','${escJsAttr(m.title)}', true)">🗑️ Endgültig löschen</button>
+            ` : `
+              ${aiFeatureOn('brief')   ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiBrief()">${SVG.sparkle} Briefing</button>` : ''}
+              ${aiFeatureOn('capture') ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiCapture()">${SVG.notes} Notizen</button>` : ''}
+              ${m.isRecurring && m.nextDate ? `<button class="btn btn-secondary btn-sm" onclick="doAdvanceDate('${m.id}')">${SVG.repeat} Nächster Termin</button>` : ''}
+              <button class="btn btn-secondary btn-sm" onclick="openMeetingModal('${m.id}')">${SVG.pencil} Bearbeiten</button>
+              <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmArchiveMeeting('${m.id}')" title="Meeting archivieren">🗃️</button>
+            `}
           </div>
         </div>
       </div>
 
-      ${renderCmiBanner(m.id)}
+      ${readOnly ? '' : renderCmiBanner(m.id)}
 
       <div class="topics-section">
         <div class="topics-header">
@@ -4604,11 +4672,11 @@ function renderMain() {
           <input type="search" class="topic-search" id="topic-search-input"
             placeholder="Suchen …" value="${escHtml(topicFilter)}"
             oninput="onTopicSearch(this.value)" onclick="event.stopPropagation()">
-          <button class="btn btn-primary btn-sm" onclick="openTopicModal('${m.id}')">+ Thema</button>
+          ${readOnly ? '' : `<button class="btn btn-primary btn-sm" onclick="openTopicModal('${m.id}')">+ Thema</button>`}
         </div>
         ${(m.topics||[]).length === 0 ? `
-          <div class="empty-topics">Noch keine Themen — fügen Sie das erste hinzu.</div>` : ''}
-        ${openBeforeTopicProgressFilter > 0 ? `
+          <div class="empty-topics">Noch keine Themen${readOnly ? '.' : ' — fügen Sie das erste hinzu.'}</div>` : ''}
+        ${!readOnly && openBeforeTopicProgressFilter > 0 ? `
         <div class="todos-toolbar">
           <div class="todos-toolbar-field">
             <label for="topic-progress-sort-select">Sortierung</label>
@@ -4622,7 +4690,7 @@ function renderMain() {
             <label class="toggle"><input type="checkbox"${topicProgressFilterUndocumented ? ' checked' : ''} onchange="topicProgressFilterUndocumented = this.checked; renderMain()"><span class="toggle-slider"></span></label>
           </div>
         </div>` : ''}
-        ${topicProgressFilterUndocumented && open.length === 0 && openBeforeTopicProgressFilter > 0 ? `
+        ${!readOnly && topicProgressFilterUndocumented && open.length === 0 && openBeforeTopicProgressFilter > 0 ? `
           <div class="empty-topics">✅ Alles aktuell dokumentiert — kein offenes Thema ohne Zwischenstand.</div>` : ''}
         ${open.length > 0 ? `
           <div class="topic-group-header">
@@ -4630,21 +4698,21 @@ function renderMain() {
             <span class="topic-group-label-text" style="color:var(--text-light)">${open.length}</span>
             <div class="topic-group-header-line"></div>
           </div>
-          ${open.map(t => renderTopicCard(m.id, t, groupMap, themeMap)).join('')}` : ''}
+          ${open.map(t => renderTopicCard(m.id, t, groupMap, themeMap, readOnly)).join('')}` : ''}
         ${snoozed.length > 0 ? `
           <div class="topic-group-header">
             <span class="topic-group-label-text sleep-label">${SVG.moon} Schlafend</span>
             <span class="topic-group-label-text" style="color:var(--text-light)">${snoozed.length}</span>
             <div class="topic-group-header-line"></div>
           </div>
-          ${snoozed.map(t => renderTopicCard(m.id, t, groupMap, themeMap)).join('')}` : ''}
+          ${snoozed.map(t => renderTopicCard(m.id, t, groupMap, themeMap, readOnly)).join('')}` : ''}
         ${done.length > 0 ? `
           <div class="topic-group-header">
             <span class="topic-group-label-text done-label">Erledigt</span>
             <span class="topic-group-label-text" style="color:var(--text-light)">${done.length}</span>
             <div class="topic-group-header-line"></div>
           </div>
-          ${done.map(t => renderTopicCard(m.id, t, groupMap, themeMap)).join('')}` : ''}
+          ${done.map(t => renderTopicCard(m.id, t, groupMap, themeMap, readOnly)).join('')}` : ''}
       </div>
     </div><!-- /full-width-view -->`;
 }
@@ -4927,28 +4995,36 @@ function renderMeetingTopicTodo(m, t, themeMap) {
     </div>`;
 }
 
-function renderTopicCard(mid, t, groupMap, themeMap) {
+function renderTopicCard(mid, t, groupMap, themeMap, readOnly) {
   const sleeping = isSnoozed(t);
   const grp = t.done ? 'done' : 'open';
   const groupMembers = (t.groupId && groupMap) ? (groupMap[t.groupId] || []).filter(x => x.meeting.id !== mid) : [];
   const themeEntries = themeMap ? (themeMap[t.id] || []) : [];
   const drifted     = !t.done && driftTopics.has(t.id);
   const suggestionsHtml = themeSuggestionsCache[refKey('topic', t.id)] || null;
-  return `
-    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}" data-tid="${t.id}"
+  // readOnly (Arbeitspaket W1, Archiv-Detail): keine Drag-Handles, keine
+  // schreibenden Aktionen (Bearbeiten/Erledigen/Verschieben/Teilen/Snooze-
+  // Aufwecken/Overflow/Löschen/"+ Thema") — vollständig aus dem Markup
+  // entfernt statt nur deaktiviert, damit sie auch aus dem Tab-Fokus
+  // verschwinden. Fortschrittsverlauf bleibt sichtbar (siehe
+  // renderReadOnlyTopicExtras), Anhänge sind als Downloads eingebettet.
+  const dragAttrs = readOnly ? '' : `
          draggable="true"
          ondragstart="topicDragStart(event,'${mid}','${t.id}','${grp}')"
          ondragend="topicDragEnd(event)"
          ondragover="topicDragOver(event,'${mid}','${t.id}','${grp}')"
          ondragleave="topicDragLeave(event)"
-         ondrop="topicDrop(event,'${mid}','${t.id}','${grp}')">
+         ondrop="topicDrop(event,'${mid}','${t.id}','${grp}')"`;
+  return `
+    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}" data-tid="${t.id}"${dragAttrs}>
       <div class="topic-card-header">
         <div class="topic-info">
-          <span class="drag-handle" title="Reihenfolge ändern">⠿</span>
+          ${readOnly ? '' : `<span class="drag-handle" title="Reihenfolge ändern">⠿</span>`}
           <span class="topic-status-icon ${grp}">${t.done ? '✓' : ''}</span>
           <h4 class="topic-title ${t.done ? 'done-text' : ''}">${escHtml(t.title)}</h4>
           ${progressBadgeHtml(t.progress)}
         </div>
+        ${readOnly ? '' : `
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${mid}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
           ${!t.done
@@ -4981,13 +5057,13 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
               </button>
             </div>
           </details>
-        </div>
+        </div>`}
       </div>
       ${t.description ? `<div class="topic-description rt-display">${displayHtml(t.description)}</div>` : ''}
       ${sleeping ? `
         <div class="snooze-info">
           ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
-          <button class="snooze-wake-btn" onclick="wakeUpTopic('${mid}','${t.id}')">🔔 Jetzt wecken</button>
+          ${readOnly ? '' : `<button class="snooze-wake-btn" onclick="wakeUpTopic('${mid}','${t.id}')">🔔 Jetzt wecken</button>`}
         </div>` : ''}
       ${groupMembers.length > 0 ? `
         <div class="topic-group-chips">
@@ -5015,11 +5091,24 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
             ? `<div class="result-text rt-display">${displayHtml(t.result)}</div>`
             : `<p class="result-empty">Kein Ergebnis eingetragen</p>`}
         </div>` : ''}
+      ${readOnly ? renderReadOnlyTopicExtras(t) : `
       ${(() => { const c = (attachCache['topic/'+t.id]||[]).length; return c > 0 ? `<span class="attach-badge" data-attach-ref="topic/${t.id}">📎 ${c}</span>` : `<span class="attach-badge" data-attach-ref="topic/${t.id}" style="display:none">📎 0</span>`; })()}
       ${!t.done && suggestionsHtml ? `
         <div id="theme-suggest-topic-${t.id}">${renderThemeSuggestionMarkup(suggestionsHtml, 'topic', t.id)}</div>
-      ` : ''}
+      ` : ''}`}
     </div>`;
+}
+
+// readOnly-Zusatzbereiche einer Themenkarte (Archiv-Detail): Fortschritts-
+// verlauf (nur wenn bereits Zwischenstände existieren — sonst kein Mount,
+// um nicht für jede Themenkarte unnötig einen Leerzustand nachzuladen) und
+// Anhänge als reine Download-Liste (Wiederverwendung von attachSectionHtml/
+// loadAttachments, siehe dortiger readOnly-Parameter).
+function renderReadOnlyTopicExtras(t) {
+  const hasProgress = !!(t.progress && t.progress.entryCount > 0);
+  return `
+      ${hasProgress ? `<div class="progress-readonly" id="ro-progress-topic-${t.id}"></div>` : ''}
+      ${attachSectionHtml('topic', t.id, true)}`;
 }
 
 function renderThemeSuggestionMarkup(suggestions, refType, refId) {
@@ -5204,7 +5293,7 @@ async function saveMoveModal() {
 // ── Attachments ──────────────────────────────────────────────
 const attachCache = {};   // key: "refType/refId" → attachment[]
 
-async function loadAttachments(refType, refId) {
+async function loadAttachments(refType, refId, readOnly) {
   const key = `${refType}/${refId}`;
   try {
     const list = await api('GET', `/attachments/${refType}/${refId}`);
@@ -5212,7 +5301,7 @@ async function loadAttachments(refType, refId) {
   } catch(e) {
     attachCache[key] = [];
   }
-  renderAttachSection(refType, refId);
+  renderAttachSection(refType, refId, readOnly);
 }
 
 async function uploadAttachment(refType, refId, file) {
@@ -5252,7 +5341,7 @@ async function deleteAttachment(id, refType, refId) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-function renderAttachSection(refType, refId) {
+function renderAttachSection(refType, refId, readOnly) {
   const key = `${refType}/${refId}`;
   const list = attachCache[key] || [];
   const listEl = document.getElementById(`attach-list-${refType}-${refId}`);
@@ -5264,7 +5353,7 @@ function renderAttachSection(refType, refId) {
       <span class="attach-icon">${icon}</span>
       <a class="attach-name" href="${base}/api/attachments/download/${a.id}" target="_blank" download="${escHtml(a.filename)}">${escHtml(a.filename)}</a>
       <span class="attach-size">${fmtFileSize(a.size)}</span>
-      <button class="attach-del" title="Löschen" onclick="deleteAttachment('${a.id}','${refType}','${refId}')">✕</button>
+      ${readOnly ? '' : `<button class="attach-del" title="Löschen" onclick="deleteAttachment('${a.id}','${refType}','${refId}')">✕</button>`}
     </div>`;
   }).join('');
 }
@@ -5299,18 +5388,18 @@ function fmtFileSize(bytes) {
   return `${(bytes/(1024*1024)).toFixed(1)} MB`;
 }
 
-function attachSectionHtml(refType, refId) {
+function attachSectionHtml(refType, refId, readOnly) {
   return `
     <div class="attach-section" id="attach-section-${refType}-${refId}">
       <div class="attach-section-title">📎 Anhänge</div>
-      <label class="attach-drop-zone" id="attach-drop-${refType}-${refId}"
+      ${readOnly ? '' : `<label class="attach-drop-zone" id="attach-drop-${refType}-${refId}"
         ondragover="event.preventDefault();this.classList.add('drag-over')"
         ondragleave="this.classList.remove('drag-over')"
         ondrop="this.classList.remove('drag-over');event.preventDefault();[...event.dataTransfer.files].forEach(f=>uploadAttachment('${refType}','${refId}',f))">
         <input type="file" multiple
           onchange="[...this.files].forEach(f=>uploadAttachment('${refType}','${refId}',f));this.value=''">
         <span>Dateien hierher ziehen oder <u>auswählen</u></span>
-      </label>
+      </label>`}
       <div class="attach-list" id="attach-list-${refType}-${refId}"></div>
     </div>`;
 }
@@ -5538,7 +5627,7 @@ async function markMeetingTopicDone(mid, tid) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest', '__graph__':'Graph' };
+const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest', '__graph__':'Graph', '__archive__':'Archiv', '__archive_detail__':'Archiv' };
 function updateTopbar(title) {
   const el = document.getElementById('topbar-title');
   if (el) el.textContent = title || '—';
@@ -7289,39 +7378,33 @@ function confirmDeleteUser(id, name) {
 }
 
 // ── Confirm ──────────────────────────────────────────────────
+// Hinweis (Arbeitspaket W1, Archiv-Feature): confirmDelete() behandelt seit
+// der Umstellung auf "Meetings archivieren statt löschen" ausschließlich noch
+// den Themen-Zweig ('topic'). Der frühere 'meeting'-Zweig (DELETE
+// /api/meetings/:id, echtes/sofortiges Löschen) ist ersatzlos entfernt — der
+// Papierkorb-Button in der Meeting-Kopfzeile ruft jetzt confirmArchiveMeeting()
+// auf. Der Server-Endpunkt DELETE /api/meetings/:id bleibt laut Vertrag
+// unverändert bestehen, wird von der Web-UI aber nicht mehr aufgerufen.
 function confirmDelete(type, ...args) {
-  if (type === 'meeting') {
-    const m = getMeeting(args[0]);
-    confirmCallback = async () => {
-      try {
-        await api('DELETE', `/meetings/${args[0]}`);
-        meetings = meetings.filter(x => x.id !== args[0]);
-        if (selectedId === args[0]) selectedId = null;
-        render(); toast('Meeting gelöscht');
-      } catch(e) { toast(e.message, 'error'); }
-    };
-    document.getElementById('confirm-title').textContent   = 'Meeting löschen?';
-    document.getElementById('confirm-message').textContent = `„${m?.title}" und alle zugehörigen Themen werden unwiderruflich gelöscht.`;
-  } else {
-    const t = getTopic(args[0], args[1]);
-    const isShared = !!t?.groupId;
-    confirmCallback = async () => {
-      try {
-        await api('DELETE', `/meetings/${args[0]}/topics/${args[1]}`);
-        if (isShared) {
-          await loadMeetings();
-        } else {
-          const m = getMeeting(args[0]);
-          if (m) m.topics = m.topics.filter(x => x.id !== args[1]);
-        }
-        render(); toast('Thema gelöscht');
-      } catch(e) { toast(e.message, 'error'); }
-    };
-    document.getElementById('confirm-title').textContent   = 'Thema löschen?';
-    document.getElementById('confirm-message').textContent = isShared
-      ? `„${t?.title}" wird aus diesem Meeting entfernt. In anderen Meetings bleibt das Thema erhalten.`
-      : `„${t?.title}" wird unwiderruflich gelöscht.`;
-  }
+  if (type !== 'topic') return; // defensiv: unbekannter/entfallener Typ, keine Aktion
+  const t = getTopic(args[0], args[1]);
+  const isShared = !!t?.groupId;
+  confirmCallback = async () => {
+    try {
+      await api('DELETE', `/meetings/${args[0]}/topics/${args[1]}`);
+      if (isShared) {
+        await loadMeetings();
+      } else {
+        const m = getMeeting(args[0]);
+        if (m) m.topics = m.topics.filter(x => x.id !== args[1]);
+      }
+      render(); toast('Thema gelöscht');
+    } catch(e) { toast(e.message, 'error'); }
+  };
+  document.getElementById('confirm-title').textContent   = 'Thema löschen?';
+  document.getElementById('confirm-message').textContent = isShared
+    ? `„${t?.title}" wird aus diesem Meeting entfernt. In anderen Meetings bleibt das Thema erhalten.`
+    : `„${t?.title}" wird unwiderruflich gelöscht.`;
   document.getElementById('confirm-dialog').style.display = 'flex';
 }
 
@@ -7341,7 +7424,14 @@ async function executeConfirm() { const cb = confirmCallback; closeConfirm(); if
 
 // Generische Promise-basierte Bestätigung mit anpassbaren Button-Labels (nutzt
 // den bestehenden confirm-dialog, stellt Standard-Labels/-Klassen danach wieder her).
-function genericConfirm(title, message, confirmLabel, cancelLabel) {
+// `opts` (Arbeitspaket W1, Archiv-Feature, Punkt 6): optionales Objekt
+// { danger?: boolean, focus?: 'cancel'|'confirm' } — Default unverändert
+// (Bestätigen-Button ist "btn-primary" und erhält den Fokus). Damit bleibt
+// EIN gemeinsamer Dialog-Mechanismus statt eines zweiten für den
+// "Endgültig löschen"-Sonderfall (Fokus auf Abbrechen, danger-Styling).
+function genericConfirm(title, message, confirmLabel, cancelLabel, opts) {
+  const danger = !!(opts && opts.danger);
+  const focusTarget = (opts && opts.focus === 'cancel') ? 'cancel' : 'confirm';
   return new Promise(resolve => {
     document.getElementById('confirm-title').textContent = title;
     document.getElementById('confirm-message').textContent = message;
@@ -7352,7 +7442,7 @@ function genericConfirm(title, message, confirmLabel, cancelLabel) {
     const origConfirmClass = confirmBtn.className;
     cancelBtn.textContent = cancelLabel || 'Abbrechen';
     confirmBtn.textContent = confirmLabel || 'Bestätigen';
-    confirmBtn.className = 'btn btn-primary';
+    confirmBtn.className = danger ? 'btn btn-danger' : 'btn btn-primary';
     // Läuft jetzt zentral in closeConfirm() (Fund 3), damit Labels/Klasse
     // auch bei einem Schließen von außen (z. B. Escape) zuverlässig
     // zurückgesetzt werden statt dauerhaft "hängen zu bleiben".
@@ -7364,7 +7454,7 @@ function genericConfirm(title, message, confirmLabel, cancelLabel) {
     confirmCallback = async () => { resolve(true); };
     cancelBtn.onclick = () => { closeConfirm(); resolve(false); cancelBtn.onclick = () => closeConfirm(); };
     document.getElementById('confirm-dialog').style.display = 'flex';
-    confirmBtn.focus();
+    (focusTarget === 'cancel' ? cancelBtn : confirmBtn).focus();
   });
 }
 
@@ -9038,6 +9128,334 @@ function pickDigest(artifactId) {
   if (a) { digestState.current = { artifact_id: a.artifact_id, content: a.content, week: a.week, cached: true }; render(); }
 }
 
+// ── Archiv: "Meetings archivieren statt löschen" (Arbeitspaket W1) ──────
+// Server-Grundlage (bereits gemergt): lib/archive/*, Server-Integration in
+// server.js (Pakete B1-B3). Diese Sektion implementiert ausschließlich den
+// Web-Client (index.html) gegen den dort festgelegten Schnittstellenvertrag.
+//
+// ---- ARCHIVE_PURE_HELPERS_START -----------------------------------------
+// Reine, DOM-/Netzwerk-freie Formatierungsfunktionen. Werden von
+// test/archive_web_helpers.test.js per Regex aus dieser Datei extrahiert und
+// in einer Sandbox ausgeführt (index.html ist kein eigenständiges CommonJS-
+// Modul wie public/progress.js). Diese Funktionen dürfen daher AUSSCHLIESSLICH
+// mit ihren Argumenten arbeiten — keine Referenzen auf window/document/fetch/
+// beliebige äußere Variablen dieser Datei.
+
+// Chip-Text einer Archiv-Karte: "{N} Themen · {N} erledigt".
+function archiveTopicChipText(topicCount, openTopicCount) {
+  const total = Number.isFinite(topicCount) ? Math.max(0, topicCount) : 0;
+  const open  = Number.isFinite(openTopicCount) ? Math.max(0, Math.min(openTopicCount, total)) : 0;
+  const done  = total - open;
+  return `${total} Themen · ${done} erledigt`;
+}
+
+// Text des Archiv-Badges (Icon + Text, niemals nur Farbe). `dateLabel` ist
+// bereits fertig formatiert (siehe fmtDateOnly) — diese Funktion fügt nur
+// Icon/Label zusammen und bleibt damit unabhängig von Locale-/Datumslogik.
+function archiveBadgeText(dateLabel) {
+  const label = (typeof dateLabel === 'string' && dateLabel.trim()) ? dateLabel.trim() : '—';
+  return `🗃 Archiviert am ${label}`;
+}
+
+// Zahlen-Text für den "Endgültig löschen"-Dialog aus dem preflight-`impact`.
+function archiveImpactText(impact) {
+  const i = impact || {};
+  const num = (v) => Number.isFinite(v) ? Math.max(0, v) : 0;
+  const topics    = num(i.topics);
+  const entries   = num(i.progressEntries);
+  const files     = num(i.attachments);
+  const parts = [
+    topics  === 1 ? '1 Thema'                : `${topics} Themen`,
+    entries === 1 ? '1 Fortschrittseintrag'  : `${entries} Fortschrittseinträge`,
+    files   === 1 ? '1 Anhang'               : `${files} Anhänge`,
+  ];
+  return parts.join(', ');
+}
+
+// Kommagetrennte Themen-Titel aus conflicts.openFrames für die Stack-
+// Konflikt-Warnung. Ungültige/fehlende Einträge werden defensiv übersprungen.
+function archiveStackConflictText(openFrames) {
+  const list = Array.isArray(openFrames) ? openFrames : [];
+  return list
+    .map(f => (f && typeof f.topicTitle === 'string') ? f.topicTitle.trim() : '')
+    .filter(Boolean)
+    .join(', ');
+}
+// ---- ARCHIVE_PURE_HELPERS_END -------------------------------------------
+
+if (typeof window !== 'undefined') {
+  window.TSArchive = { archiveTopicChipText, archiveBadgeText, archiveImpactText, archiveStackConflictText };
+}
+
+// ---- State ----------------------------------------------------------------
+let archiveState = { items: [], total: 0, q: '', offset: 0, loaded: false, loading: false, error: null };
+const ARCHIVE_PAGE_SIZE = 50;
+let _archiveSearchTimer = null;
+
+let archiveDetailState = { id: null, data: null, loading: false, error: null };
+const archiveDetailTimelineHandles = {}; // topicId -> Handle von TSProgress.mountTimeline
+let archiveDetailMountedForId = null;    // verhindert Remount bei jedem renderMain() (z. B. Themen-Suche)
+
+function destroyArchiveDetailTimelines() {
+  Object.keys(archiveDetailTimelineHandles).forEach(k => {
+    try { archiveDetailTimelineHandles[k].destroy(); } catch (_) { /* best effort */ }
+    delete archiveDetailTimelineHandles[k];
+  });
+}
+
+// ---- Archiv-Liste -----------------------------------------------------
+
+async function loadArchiveList(reset) {
+  if (reset) { archiveState.offset = 0; archiveState.items = []; }
+  archiveState.loading = true;
+  archiveState.error = null;
+  if (selectedId === '__archive__') render();
+  try {
+    const qParam = archiveState.q ? `&q=${encodeURIComponent(archiveState.q)}` : '';
+    const r = await api('GET', `/archive/meetings?limit=${ARCHIVE_PAGE_SIZE}&offset=${archiveState.offset}${qParam}`);
+    archiveState.items = Array.isArray(r.items) ? r.items : [];
+    archiveState.total = Number.isFinite(r.total) ? r.total : archiveState.items.length;
+    archiveState.loaded = true;
+  } catch (e) {
+    archiveState.error = 'Archiv konnte nicht geladen werden.';
+  } finally {
+    archiveState.loading = false;
+    if (selectedId === '__archive__') render();
+  }
+}
+
+function onArchiveSearch(val) {
+  archiveState.q = val;
+  clearTimeout(_archiveSearchTimer);
+  _archiveSearchTimer = setTimeout(() => loadArchiveList(true), 200);
+}
+
+function renderArchiveView(el) {
+  if (!archiveState.loaded && !archiveState.loading && !archiveState.error) loadArchiveList(true);
+  el.innerHTML = `
+    <div class="full-width-view">
+      <div class="meeting-header">
+        <div class="meeting-header-accent" style="background:var(--primary)"></div>
+        <div class="meeting-header-body">
+          <div class="meeting-header-info">
+            <h1 class="meeting-title">Archiv</h1>
+            <p class="meeting-description" style="color:var(--text-muted)">Archivierte Meetings</p>
+          </div>
+        </div>
+      </div>
+      <div class="topics-section">
+        <div class="topics-header">
+          <div class="topics-header-left"><h2>Meetings</h2>
+            <span class="topic-count-badge">${archiveState.total}</span>
+          </div>
+          <input type="search" class="topic-search" id="archive-search-input"
+            aria-label="Archiv nach Titel durchsuchen" placeholder="Suchen …"
+            value="${escHtml(archiveState.q)}" oninput="onArchiveSearch(this.value)">
+        </div>
+        ${renderArchiveListBody()}
+      </div>
+    </div>`;
+}
+
+function renderArchiveListBody() {
+  if (archiveState.loading && !archiveState.loaded) {
+    return `<div class="empty-topics"><span class="ai-spinner"></span></div>`;
+  }
+  if (archiveState.error) {
+    return `<div class="empty-topics">
+      🗃 ${escHtml(archiveState.error)}
+      <div style="margin-top:.75rem"><button class="btn btn-secondary btn-sm" onclick="loadArchiveList(true)">Erneut versuchen</button></div>
+    </div>`;
+  }
+  if (archiveState.items.length === 0) {
+    return archiveState.q
+      ? `<div class="empty-topics">Keine Treffer im Archiv.</div>`
+      : `<div class="empty-topics">
+          <div style="font-size:1.75rem;margin-bottom:.5rem">🗃</div>
+          Noch keine archivierten Meetings.<br>
+          <span style="font-size:.8125rem;color:var(--text-light)">Archivierte Meetings landen hier — du kannst sie jederzeit wiederherstellen oder endgültig löschen.</span>
+        </div>`;
+  }
+  return archiveState.items.map(m => renderArchiveCard(m)).join('');
+}
+
+function renderArchiveCard(m) {
+  return `
+    <div class="topic-card archive-card">
+      <button type="button" class="archive-card-body" onclick="selectArchiveDetail('${m.id}')">
+        <span class="meeting-color-dot" style="background:${m.color||'#1D6FE8'}"></span>
+        <span class="archive-card-main">
+          <span class="archive-card-title">${escHtml(m.title)}</span>
+          <span class="archive-card-meta">
+            <span class="pill pill-open">${escHtml(archiveTopicChipText(m.topicCount, m.openTopicCount))}</span>
+            <span class="archive-badge">${escHtml(archiveBadgeText(fmtDateOnly(m.archivedAt)))}</span>
+          </span>
+        </span>
+      </button>
+      <div class="archive-card-actions">
+        <button class="btn btn-secondary btn-sm" onclick="restoreArchivedMeeting('${m.id}', false)">↺ Wiederherstellen</button>
+        <details class="topic-overflow" onclick="event.stopPropagation()">
+          <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
+          <div class="topic-overflow-menu">
+            <button class="danger" onclick="closeAllOverflow(); confirmPermanentlyDeleteMeeting('${m.id}','${escJsAttr(m.title)}', false)">
+              <span class="icon">🗑️</span><span>Endgültig löschen</span>
+            </button>
+          </div>
+        </details>
+      </div>
+    </div>`;
+}
+
+// ---- Archiv-Detail (Nur-Lesen) ------------------------------------------
+
+async function selectArchiveDetail(id) {
+  archiveDetailState = { id, data: null, loading: true, error: null };
+  selectedId = '__archive_detail__';
+  topicFilter = '';
+  closeMobileSidebar();
+  updateTopbar('Archiv');
+  render();
+  try {
+    const m = await api('GET', `/archive/meetings/${id}`);
+    if (archiveDetailState.id !== id) return; // zwischenzeitlich weiternavigiert
+    archiveDetailState.data = m;
+  } catch (e) {
+    if (archiveDetailState.id !== id) return;
+    archiveDetailState.error = 'Archiv konnte nicht geladen werden.';
+  } finally {
+    if (archiveDetailState.id === id) archiveDetailState.loading = false;
+    if (selectedId === '__archive_detail__') render();
+  }
+}
+
+function renderArchiveDetailView(el) {
+  const st = archiveDetailState;
+  if (st.loading && !st.data) {
+    el.innerHTML = `<div class="full-width-view"><div class="empty-topics"><span class="ai-spinner"></span></div></div>`;
+    return;
+  }
+  if (st.error) {
+    el.innerHTML = `<div class="full-width-view"><div class="empty-topics">
+      🗃 ${escHtml(st.error)}
+      <div style="margin-top:.75rem"><button class="btn btn-secondary btn-sm" onclick="selectArchiveDetail('${st.id}')">Erneut versuchen</button></div>
+    </div></div>`;
+    return;
+  }
+  if (!st.data) { el.innerHTML = ''; return; }
+  el.innerHTML = renderMeetingDetailHtml(st.data, { readOnly: true });
+  mountArchiveDetailExtras(st.data);
+}
+
+// Bindet Anhänge (Downloads) und Fortschrittsverlauf (falls vorhanden) in die
+// bereits gerenderten Themenkarten ein — Wiederverwendung der bestehenden
+// Mechanismen (loadAttachments/attachSectionHtml mit readOnly=true,
+// TSProgress.mountTimeline ohne composerSlot/reentrySlot). Läuft nur einmal
+// pro geladenem Meeting (siehe archiveDetailMountedForId), damit z. B. die
+// Themen-Suche im readOnly-Modus nicht bei jedem Tastendruck neu mountet.
+function mountArchiveDetailExtras(m) {
+  if (archiveDetailMountedForId === m.id) return;
+  destroyArchiveDetailTimelines();
+  archiveDetailMountedForId = m.id;
+  (m.topics || []).forEach(t => {
+    loadAttachments('topic', t.id, true);
+    if (t.progress && t.progress.entryCount > 0 && window.TSProgress) {
+      const mountEl = document.getElementById(`ro-progress-topic-${t.id}`);
+      if (mountEl) archiveDetailTimelineHandles[t.id] = TSProgress.mountTimeline(mountEl, { refType: 'topic', refId: t.id });
+    }
+  });
+}
+
+// ---- Aktionen: Archivieren / Wiederherstellen / Endgültig löschen -------
+
+async function confirmArchiveMeeting(id) {
+  const m = getMeeting(id);
+  if (!m) return;
+  const ok = await genericConfirm(
+    'Meeting archivieren?',
+    `„${m.title}" wird archiviert und ist danach im Archiv-Bereich zu finden. Alle Themen, Ergebnisse und Anhänge bleiben erhalten.`,
+    'Archivieren', 'Abbrechen'
+  );
+  if (!ok) return;
+  await runArchiveMeeting(id);
+}
+
+async function confirmArchiveStackConflict(conflicts) {
+  const openFrames = (conflicts && Array.isArray(conflicts.openFrames)) ? conflicts.openFrames : [];
+  const names = archiveStackConflictText(openFrames);
+  return genericConfirm(
+    'Offenes Stack-Frame im Meeting',
+    `${names ? `Betroffene Themen: „${names}". ` : ''}Das offene Stack-Frame wird beim Archivieren NICHT automatisch geschlossen.`,
+    'Trotzdem archivieren', 'Abbrechen'
+  );
+}
+
+async function runArchiveMeeting(id, acknowledgeStackConflict) {
+  let res;
+  try {
+    res = await api('POST', `/archive/meeting/${id}`, acknowledgeStackConflict ? { acknowledgeStackConflict: true } : {});
+  } catch (e) {
+    if (e.status === 409 && e.body && e.body.code === 'ARCHIVE_STACK_CONFLICT') {
+      const proceed = await confirmArchiveStackConflict(e.body.conflicts);
+      if (proceed) await runArchiveMeeting(id, true);
+      return;
+    }
+    toast('Meeting konnte nicht archiviert werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  meetings = meetings.filter(x => x.id !== id);
+  if (selectedId === id) selectedId = null;
+  archiveState.loaded = false; // nächster Archiv-Besuch lädt frische Liste
+  render();
+  toast('Meeting archiviert — im Archiv wiederzufinden.');
+  document.querySelector('.sidebar-new-btn')?.focus?.();
+}
+
+async function restoreArchivedMeeting(id, fromDetail) {
+  try {
+    await api('DELETE', `/archive/meeting/${id}`);
+  } catch (e) {
+    toast('Meeting konnte nicht wiederhergestellt werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  archiveState.items = archiveState.items.filter(x => x.id !== id);
+  archiveState.total = Math.max(0, archiveState.total - 1);
+  await loadMeetings();
+  // Aus der Nur-Lese-Detailansicht führt Wiederherstellen direkt in die
+  // jetzt wieder normal bearbeitbare Meeting-Ansicht (nicht zurück ins
+  // Archiv) — aus der Archiv-Liste bleibt man in der Liste.
+  if (fromDetail) { selectMeeting(id); }
+  else { render(); }
+  toast('Meeting wiederhergestellt.');
+}
+
+async function confirmPermanentlyDeleteMeeting(id, title, fromDetail) {
+  let preflight;
+  try {
+    preflight = await api('GET', `/archive/meeting/${id}/preflight`);
+  } catch (e) {
+    toast('Löschumfang konnte nicht ermittelt werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  const ok = await genericConfirm(
+    'Meeting endgültig löschen?',
+    `„${title}" wird unwiderruflich gelöscht: ${archiveImpactText(preflight.impact)}.`,
+    'Endgültig löschen', 'Abbrechen',
+    { danger: true, focus: 'cancel' }
+  );
+  if (!ok) return;
+  try {
+    await api('DELETE', `/archive/meeting/${id}/permanent`);
+  } catch (e) {
+    toast('Meeting konnte nicht endgültig gelöscht werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  archiveState.items = archiveState.items.filter(x => x.id !== id);
+  archiveState.total = Math.max(0, archiveState.total - 1);
+  if (fromDetail) { selectView('__archive__'); }
+  else { render(); }
+  toast(`„${title}" endgültig gelöscht.`);
+}
+
 // ── Keyboard shortcut matcher ────────────────────────────────
 function eventMatchesShortcut(e, combo) {
   const parts = combo.toLowerCase().split('+').map(s => s.trim());
@@ -9218,6 +9636,20 @@ function _hl(text, tokens) {
 // überholten Anfrage das Ergebnis einer neueren nicht mehr überschreiben kann.
 let _searchRequestSeq = 0;
 
+// Cache für archivierte Meeting-Details, die für Suchtreffer nachgeladen
+// werden müssen (GET /api/meetings enthält seit dem Archiv-Feature keine
+// archivierten Meetings mehr — Treffer mit archived:true sind daher NICHT
+// im lokalen `meetings`-Array auffindbar, siehe Schnittstellenvertrag).
+const _archiveSearchDetailCache = {}; // meetingId -> Ergebnis von GET /api/archive/meetings/:id
+async function _fetchArchivedMeetingForSearch(id) {
+  if (_archiveSearchDetailCache[id]) return _archiveSearchDetailCache[id];
+  try {
+    const m = await api('GET', `/archive/meetings/${id}`);
+    _archiveSearchDetailCache[id] = m;
+    return m;
+  } catch { return null; }
+}
+
 async function _runSearch(raw) {
   const tokens = _parseSearchQuery(raw);
   if (!tokens.length) { _renderSearchEmpty(); return; }
@@ -9229,15 +9661,19 @@ async function _runSearch(raw) {
   if (seq !== _searchRequestSeq) return; // veraltete Antwort verwerfen
 
   const byType = {};
+  const pendingArchived = [];
   for (const h of hits) {
     if (h.type === 'meeting') {
       const m = meetings.find(x => x.id === h.id);
       if (m) (byType.meeting ??= []).push(m);
+      else if (h.archived) pendingArchived.push(h);
     } else if (h.type === 'topic') {
+      let found = false;
       for (const m of meetings) {
         const t = (m.topics || []).find(x => x.id === h.id);
-        if (t) { (byType.topic ??= []).push({ topic: t, meeting: m }); break; }
+        if (t) { (byType.topic ??= []).push({ topic: t, meeting: m }); found = true; break; }
       }
+      if (!found && h.archived && h.meetingId) pendingArchived.push(h);
     } else if (h.type === 'todo') {
       const t = todos.find(x => x.id === h.id);
       if (t) (byType.todo ??= []).push(t);
@@ -9250,6 +9686,25 @@ async function _runSearch(raw) {
     } else if (h.type === 'contact') {
       const c = contacts.find(x => x.id === h.id);
       if (c) (byType.contact ??= []).push(c);
+    }
+  }
+
+  // Archivierte Treffer werden laut Vertrag NICHT gefiltert — daher hier per
+  // GET /api/archive/meetings/:id nachladen (dedupliziert je Meeting-Id).
+  if (pendingArchived.length) {
+    const meetingIds = [...new Set(pendingArchived.map(h => h.type === 'meeting' ? h.id : h.meetingId).filter(Boolean))];
+    const details = await Promise.all(meetingIds.map(id => _fetchArchivedMeetingForSearch(id)));
+    if (seq !== _searchRequestSeq) return; // veraltete Antwort verwerfen
+    const detailMap = new Map(meetingIds.map((id, i) => [id, details[i]]));
+    for (const h of pendingArchived) {
+      if (h.type === 'meeting') {
+        const m = detailMap.get(h.id);
+        if (m) (byType.meeting ??= []).push(m);
+      } else {
+        const m = detailMap.get(h.meetingId);
+        const t = m && (m.topics || []).find(x => x.id === h.id);
+        if (t) (byType.topic ??= []).push({ topic: t, meeting: m });
+      }
     }
   }
 
@@ -9314,14 +9769,15 @@ function _renderSearchResults(groups, tokens) {
       const idx = _searchItems.length;
       let title = '', context = '', snippet = '', nav = '';
 
-      let srType = g.type, srId = '', srMid = '';
+      let srType = g.type, srId = '', srMid = '', srArchived = false;
       if (g.type === 'meeting') {
         const m = item;
         title   = _hl(m.title, tokens);
         context = (m.participants||[]).length ? escHtml(m.participants.join(', ')) : '';
         snippet = _hl(_snippet(m.description, tokens), tokens);
         srId = m.id;
-        nav  = `navigateSearchResult('meeting','${m.id}')`;
+        srArchived = m.archived === true;
+        nav  = srArchived ? `navigateSearchResult('meeting','${m.id}','',true)` : `navigateSearchResult('meeting','${m.id}')`;
       } else if (g.type === 'topic') {
         const { topic: t, meeting: m } = item;
         title   = _hl(t.title, tokens);
@@ -9332,7 +9788,8 @@ function _renderSearchResults(groups, tokens) {
         }) || t.description;
         snippet = _hl(_snippet(snipSrc, tokens), tokens);
         srId = t.id; srMid = m.id;
-        nav  = `navigateSearchResult('topic','${t.id}','${m.id}')`;
+        srArchived = m.archived === true;
+        nav  = `navigateSearchResult('topic','${t.id}','${m.id}',${srArchived})`;
       } else if (g.type === 'todo') {
         const t = item;
         title   = _hl(t.title, tokens);
@@ -9367,11 +9824,11 @@ function _renderSearchResults(groups, tokens) {
         nav  = `navigateSearchResult('knowledge','${k.id}')`;
       }
 
-      _searchItems.push({ type: srType, id: srId, meetingId: srMid });
+      _searchItems.push({ type: srType, id: srId, meetingId: srMid, archived: srArchived });
       html += `<div class="search-result-item" data-sr-idx="${idx}" onclick="${nav}; closeSearch()">
         ${_searchIcon(g.type)}
         <div class="search-result-body">
-          <div class="search-result-title">${title}</div>
+          <div class="search-result-title">${title}${srArchived ? ` <span class="archive-badge archive-badge-inline">🗃 Archiviert</span>` : ''}</div>
           ${context ? `<div class="search-result-context">${context}</div>` : ''}
           ${snippet  ? `<div class="search-result-snippet">${snippet}</div>`  : ''}
         </div>
@@ -9390,9 +9847,16 @@ function _setSearchFocus(idx) {
   _searchFocusIdx = idx;
 }
 
-function navigateSearchResult(type, id, meetingId) {
-  if (type === 'meeting') {
+function navigateSearchResult(type, id, meetingId, archived) {
+  if (type === 'meeting' && archived) {
+    selectArchiveDetail(id);
+  } else if (type === 'meeting') {
     selectMeeting(id);
+  } else if (type === 'topic' && archived) {
+    // Archivierte Themen führen laut Vertrag NICHT in den normalen
+    // Bearbeiten-Modal, sondern in die Archiv-Detail-Nur-Lese-Ansicht des
+    // zugehörigen Meetings (über meetingId).
+    selectArchiveDetail(meetingId);
   } else if (type === 'topic') {
     selectMeeting(meetingId);
     setTimeout(() => openTopicModal(meetingId, id), 120);
@@ -9428,7 +9892,7 @@ function onSearchKey(e) {
   } else if (e.key === 'Enter' && _searchFocusIdx >= 0) {
     e.preventDefault();
     const sr = _searchItems[_searchFocusIdx];
-    if (sr) { navigateSearchResult(sr.type, sr.id, sr.meetingId); closeSearch(); }
+    if (sr) { navigateSearchResult(sr.type, sr.id, sr.meetingId, sr.archived); closeSearch(); }
   }
 }
 
