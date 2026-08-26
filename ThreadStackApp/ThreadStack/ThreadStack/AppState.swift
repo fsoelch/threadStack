@@ -27,6 +27,16 @@ struct APIAIError: LocalizedError {
     var budgetExceeded:    Bool { status == 402 || code == "budget_exceeded" }
 }
 
+// v2.2: dedicated conflict error for POST /api/archive/meeting/:id — thrown on
+// 409 ARCHIVE_STACK_CONFLICT while `acknowledgeStackConflict == false`. Kept as a
+// narrow, purpose-built type (same style as APIAIError/KnowledgeAPIError above)
+// rather than widening the generic `request` helper, which only surfaces a flat
+// `APIError.server(String)` and would otherwise lose the structured conflict list.
+struct ArchiveConflictError: LocalizedError {
+    let openFrames: [ArchiveStackConflict]
+    var errorDescription: String? { "Offenes Stack-Frame im Meeting" }
+}
+
 // MARK: - AppState
 
 @MainActor
@@ -48,6 +58,10 @@ final class AppState: ObservableObject {
     @Published var aiSettings:   AISettings?
     @Published var driftIds:     Set<String> = []
     @Published var cmiByMeeting: [String: CMIContent] = [:]
+
+    // v2.2: Archiv (Paket A1)
+    @Published var archivedMeetings: [ArchivedMeetingListItem] = []
+    @Published var archiveTotal: Int = 0
 
     // App-Lock (Face ID / Touch ID)
     @Published var isLocked: Bool = false
@@ -330,6 +344,122 @@ final class AppState: ObservableObject {
         let s = toAPIDate(next)
         try await requestOK("PUT", "/meetings/\(id)", body: ["nextDate": s])
         if let i = meetings.firstIndex(where: { $0.id == id }) { meetings[i].nextDate = s }
+    }
+
+    // MARK: - v2.2: Archiv (Meetings archivieren statt löschen)
+    // Server-Vertrag (bereits gemergt, Paket B1-B3): /api/archive/meeting/:id[...].
+    // `DELETE /api/meetings/:id` bleibt unverändert bestehen (echtes, sofortiges
+    // Löschen) und wird von dieser App absichtlich nicht mehr aus der UI heraus
+    // aufgerufen (siehe SidebarView) — `deleteMeeting(_:)` oben bleibt aber als
+    // Methode bestehen, da der Server-Endpunkt selbst nicht umgewidmet wird.
+
+    private struct ArchiveErrorBody: Decodable {
+        let error: String?
+        let code: String?
+        let conflicts: ArchiveConflicts?
+    }
+
+    /// Like `aiRequest`/`knowledgeRequest`, but preserves the structured 409
+    /// `ARCHIVE_STACK_CONFLICT` body (`{ conflicts: { openFrames: [...] } }`) as
+    /// `ArchiveConflictError` instead of collapsing it into `APIError.server(String)`.
+    /// 401 still surfaces as `APIError.unauthorized`, matching the shared contract.
+    private func archiveRequest<T: Decodable>(_ method: String, _ path: String,
+                                               body: [String: Any]? = nil) async throws -> T {
+        var req = URLRequest(url: try url(path))
+        req.httpMethod = method
+        if let body, !body.isEmpty {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse else { throw APIError.network }
+        if http.statusCode == 401 { throw APIError.unauthorized }
+        if http.statusCode >= 400 {
+            if http.statusCode == 409,
+               let errBody = try? decoder.decode(ArchiveErrorBody.self, from: data),
+               let conflicts = errBody.conflicts {
+                throw ArchiveConflictError(openFrames: conflicts.openFrames)
+            }
+            let msg = (try? decoder.decode([String: String].self, from: data))?["error"]
+                      ?? "HTTP \(http.statusCode)"
+            throw APIError.server(msg)
+        }
+        return try decoder.decode(T.self, from: data)
+    }
+
+    private struct ArchiveActionResponse: Decodable {
+        let ok: Bool?; let refType: String?; let refId: String?
+        let archived: Bool?; let archivedAt: String?
+        let alreadyArchived: Bool?; let alreadyActive: Bool?
+    }
+
+    /// Archiviert ein Meeting. Wirft `ArchiveConflictError`, wenn der Server 409
+    /// ARCHIVE_STACK_CONFLICT meldet und `acknowledgeStackConflict == false` war.
+    /// Entfernt das Meeting bei Erfolg optimistisch aus `meetings` (der Server
+    /// liefert es über `GET /meetings` ohnehin nicht mehr) und storniert alle
+    /// lokalen Erinnerungen seiner Themen — analog zu `deleteTopic`/`deleteMeeting`
+    /// oben, die dasselbe `NotificationScheduler`-Muster für ihre jeweiligen IDs nutzen.
+    func archiveMeeting(_ id: String, acknowledgeStackConflict: Bool = false) async throws {
+        var body: [String: Any] = [:]
+        if acknowledgeStackConflict { body["acknowledgeStackConflict"] = true }
+        let _: ArchiveActionResponse = try await archiveRequest("POST", "/archive/meeting/\(id)", body: body)
+        if let m = meetings.first(where: { $0.id == id }) {
+            for t in m.topics {
+                NotificationScheduler.shared.cancel(id: "topic-\(id)-\(t.id)")
+            }
+        }
+        meetings.removeAll { $0.id == id }
+    }
+
+    /// Stellt ein archiviertes Meeting wieder her. Löst danach `refreshAll()`
+    /// aus — das lädt u.a. die Meetings neu und plant über das darin enthaltene
+    /// `resyncSnoozeNotifications()`-Äquivalent Snooze-Erinnerungen für das nun
+    /// wieder aktive Meeting neu ein (idempotent, gleiches Muster wie beim Login).
+    func restoreMeeting(_ id: String) async throws {
+        let _: ArchiveActionResponse = try await archiveRequest("DELETE", "/archive/meeting/\(id)")
+        archivedMeetings.removeAll { $0.id == id }
+        await refreshAll(showSpinner: false)
+    }
+
+    func archivePreflight(_ id: String) async throws -> ArchivePreflight {
+        try await archiveRequest("GET", "/archive/meeting/\(id)/preflight")
+    }
+
+    private struct ArchivePermanentDeleteResponse: Decodable {
+        struct Deleted: Decodable {
+            let topics, progressEntries, attachments, themeLinks, stackFrames, aiArtifacts: Int
+        }
+        let ok: Bool?
+        let deleted: Deleted
+    }
+
+    func permanentlyDeleteMeeting(_ id: String) async throws {
+        let _: ArchivePermanentDeleteResponse = try await archiveRequest("DELETE", "/archive/meeting/\(id)/permanent")
+        archivedMeetings.removeAll { $0.id == id }
+    }
+
+    /// Serverseitige Suche (kein lokales Filtern) — analog zum Muster in
+    /// `searchKnowledge`: Query-Encoding über `URLComponents`, "+" wird zusätzlich
+    /// explizit als "%2B" escaped, da `percentEncodedQuery` es sonst unkodiert
+    /// ließe und es serverseitig als Leerzeichen interpretiert werden könnte.
+    func loadArchivedMeetings(q: String = "", offset: Int = 0) async throws {
+        var comps = URLComponents()
+        var items: [URLQueryItem] = []
+        if !q.isEmpty { items.append(URLQueryItem(name: "q", value: q)) }
+        items.append(URLQueryItem(name: "offset", value: String(offset)))
+        comps.queryItems = items
+        let encodedQuery = (comps.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B")
+        let r: ArchiveListResponse = try await archiveRequest("GET", "/archive/meetings?\(encodedQuery)")
+        archivedMeetings = r.items
+        archiveTotal = r.total
+    }
+
+    /// Lädt die Nur-Lesen-Detailansicht eines archivierten Meetings. Die Server-
+    /// Response enthält zusätzlich `readOnly:true`, das `Meeting` (Vertrag oben)
+    /// kennt dieses Feld nicht — unbekannte JSON-Schlüssel werden von `Decodable`
+    /// standardmäßig ignoriert, ein Decode-Fehler entsteht dadurch nicht.
+    func loadArchivedMeetingDetail(_ id: String) async throws -> Meeting {
+        try await archiveRequest("GET", "/archive/meetings/\(id)")
     }
 
     // MARK: - Topics

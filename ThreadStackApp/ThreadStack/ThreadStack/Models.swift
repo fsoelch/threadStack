@@ -14,8 +14,16 @@ struct Meeting: Identifiable, Codable, Equatable {
     var sortOrder: Int?
     var createdAt: String
     var topics: [Topic]
+    // v2.2: Archiv (Paket B1-B3, Server bereits gemergt). Beide Felder optional für
+    // Abwärtskompatibilität mit älteren Server-Ständen — nil == nicht archiviert.
+    var archived: Bool?
+    var archivedAt: String?
 
     var openTopicsCount: Int { topics.filter { !$0.done && !$0.isSnoozed }.count }
+
+    /// Bequemlichkeits-Accessor — `archived` selbst bleibt nil-fähig (Vertrag),
+    /// dieser Getter kapselt nur das `?? false`-Muster für Aufrufer.
+    var isArchived: Bool { archived ?? false }
 
     var nextDateParsed: Date? { parseFlexDate(nextDate) }
     var isPast: Bool { nextDateParsed.map { $0 < Date() } ?? false }
@@ -452,4 +460,47 @@ struct AIErrorDetail: Codable {
 }
 struct AIErrorBody: Codable {
     let error: String; let code: String?; let detail: AIErrorDetail?
+}
+
+// MARK: - v2.2: Archiv (Meetings archivieren statt löschen, Paket A1)
+// Server-Vertrag (bereits gemergt, siehe Paket B1-B3): GET/POST/DELETE /api/archive/meeting/:id[...]
+
+struct ArchivedMeetingListItem: Identifiable, Decodable, Equatable {
+    let id: String
+    let title: String
+    let description: String
+    let color: String
+    let participants: [String]
+    let nextDate: String
+    let createdAt: String
+    let archivedAt: String
+    let topicCount: Int
+    let openTopicCount: Int
+}
+
+struct ArchiveListResponse: Decodable {
+    let items: [ArchivedMeetingListItem]
+    let total: Int
+    let limit: Int
+    let offset: Int
+}
+
+struct ArchiveImpact: Decodable {
+    let topics, progressEntries, attachments, themeLinks, stackFrames, aiArtifacts: Int
+    let attachmentBytes: Int
+}
+
+struct ArchiveStackConflict: Decodable, Equatable {
+    let frameId, topicId, topicTitle, nextStepNote, pushedAt: String
+}
+
+struct ArchiveConflicts: Decodable {
+    let openFrames: [ArchiveStackConflict]
+}
+
+struct ArchivePreflight: Decodable {
+    let archived: Bool
+    let archivedAt: String?
+    let impact: ArchiveImpact
+    let conflicts: ArchiveConflicts
 }
