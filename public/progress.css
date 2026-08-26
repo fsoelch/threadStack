@@ -110,17 +110,18 @@
   align-self: flex-start;
 }
 
-/* ─── Kopfbereich: Zielbild / Nächster Schritt ──────────────────────────
+/* ─── Kopfbereich: Nächster Schritt ──────────────────────────────────────
    Fest im Bereich verankert, direkt unter dem Composer-Slot (siehe
-   DOM-Reihenfolge in progress.js: Composer -> Zielbild -> Nächster Schritt
-   -> Wiedereinstiegskarte -> Verlauf). */
+   DOM-Reihenfolge in progress.js: Composer -> Nächster Schritt ->
+   Wiedereinstiegskarte -> Verlauf). Das Zielbild wurde im Redesign
+   "Übersichtlichere Todos und Tasks" entfernt. */
 .progress-section-head {
   display: flex; flex-direction: column; gap: .5rem;
   padding: .75rem .875rem; margin-bottom: .5rem;
   background: var(--p-card2); border: 1px solid var(--p-border);
   border-radius: var(--p-r);
 }
-.progress-goal-row, .progress-nextstep-row {
+.progress-nextstep-row {
   display: flex; align-items: flex-start; gap: .5rem;
 }
 .progress-row-label {
@@ -240,11 +241,6 @@
 }
 .progress-reentry-dismiss:hover { opacity: 1; background: rgba(146,64,14,.08); }
 
-.progress-reentry-goal {
-  margin: 0; padding: .5rem .75rem; background: rgba(255,255,255,.55);
-  border-left: 2px solid var(--p-amber); border-radius: 0 6px 6px 0;
-  font-size: .8125rem; font-style: italic; color: var(--p-text);
-}
 .progress-reentry-last { font-size: .8125rem; color: var(--p-text); }
 .progress-reentry-last-meta { font-size: .6875rem; color: var(--p-text-light); margin-bottom: .2rem; }
 .progress-reentry-last-body p { margin: 0 0 .35em; }
@@ -260,6 +256,59 @@
 }
 .progress-reentry-hint { font-size: .8125rem; color: var(--p-text-muted); margin: 0; }
 .progress-reentry-cta-row { display: flex; }
+
+/* ─── Kompakte Fortschrittszeile, Inline-Composer, KI-Zusammenfassung
+   (Redesign "Übersichtlichere Todos und Tasks", Story 3/6/7/8) ────────────
+   Eigenständige Bausteine für die Übersichtskarte, unabhängig vom
+   Zeitstrahl/der Wiedereinstiegskarte oben - daher eigene Token-Definition. */
+.progress-line, .progress-inline-composer, .progress-summary-box {
+  --p-card:          var(--card, #ffffff);
+  --p-border:        var(--border, #E8E7E2);
+  --p-text:          var(--text, #111210);
+  --p-text-muted:    var(--text-muted, #5A5850);
+  --p-text-light:    var(--text-light, #9A9890);
+  --p-primary:       var(--primary, #1D6FE8);
+  --p-r:             var(--r, 8px);
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+}
+
+.progress-line {
+  display: inline-flex; align-items: center; gap: .3rem; color: var(--p-text-muted);
+}
+.progress-line-icon { line-height: 1; }
+.progress-line-empty { font-style: italic; }
+.progress-line-stale { color: #92400e; }
+
+.progress-inline-composer { display: inline-flex; width: 100%; }
+.progress-composer-box {
+  width: 100%; display: flex; flex-direction: column; gap: .4rem;
+  border: 1px solid var(--p-border); border-radius: var(--p-r);
+  padding: .5rem .625rem; background: var(--p-card);
+}
+.progress-composer-snooze-hint { margin: 0; font-size: .75rem; color: var(--p-text-muted); }
+.progress-composer-textarea {
+  width: 100%; resize: vertical; min-height: 3.5em; font: inherit;
+  border: 1px solid var(--p-border); border-radius: 6px; padding: .4rem .5rem; box-sizing: border-box;
+}
+.progress-composer-footer { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.progress-composer-counter { font-size: .6875rem; color: var(--p-text-light); }
+.progress-composer-counter-over { color: #b91c1c; font-weight: 600; }
+.progress-composer-actions { display: flex; gap: .4rem; }
+
+.progress-summary-box {
+  display: flex; flex-direction: column; gap: .3rem;
+  padding: .5rem .625rem; border-radius: var(--p-r);
+  background: var(--p-card2, #F9F9F7); margin-top: .35rem;
+}
+.progress-summary-head { display: flex; align-items: center; gap: .3rem; font-size: .6875rem; font-weight: 600; color: var(--p-primary); }
+.progress-summary-text { margin: 0; color: var(--p-text); white-space: pre-wrap; }
+.progress-summary-loading { margin: 0; color: var(--p-text-light); font-style: italic; }
+.progress-summary-stale-hint { margin: 0; font-size: .6875rem; color: var(--p-text-muted); font-style: italic; }
+.progress-link-btn {
+  align-self: flex-start; background: none; border: none; padding: 0; margin: 0;
+  color: var(--p-primary); font-size: .75rem; cursor: pointer; text-decoration: underline;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .progress-timeline *, .progress-reentry-wrap * { transition: none !important; animation: none !important; }

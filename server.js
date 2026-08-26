@@ -531,6 +531,9 @@ db.exec(`
 // existierende todos/topics abgleicht.
 progress.runProgressMigrations(db);
 progress.purgeProgressOrphans(db);
+// ── Migration: Zielbild entfernen (Redesign "Übersichtlichere Todos und
+// Tasks", Arbeitspaket S1) ── Idempotent: zweiter Aufruf ist ein No-Op.
+progress.dropProgressGoal(db);
 
 // ── Migration: Archiv-Kernmodul (Arbeitspaket B1/B2, "Meetings archivieren
 // statt löschen") ────

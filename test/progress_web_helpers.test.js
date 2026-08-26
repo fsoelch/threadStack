@@ -27,7 +27,8 @@ const {
   isValidRefId,
   escHtml,
   deriveEntrySource,
-  isEffectivelyEmptyHtml
+  isEffectivelyEmptyHtml,
+  progressLineHtml
 } = require(path.join('..', 'public', 'progress.js'));
 
 // ---- Fake localStorage für Dismiss-Tests (kein Browser im Node-Test) ------
@@ -348,5 +349,35 @@ test('isEffectivelyEmptyHtml: erkennt inhaltlich leeres Rich-Text-HTML', async (
   });
   await t.test('reiner Text ohne Tags ist NICHT leer', () => {
     assert.equal(isEffectivelyEmptyHtml('nur Text'), false);
+  });
+});
+
+test('progressLineHtml: kompakte Fortschrittsanzeige für Übersichtskarten (Story 3)', async (t) => {
+  await t.test('kein Zwischenstand -> neutraler Leerzustand, kein Fehler-/Warnzustand', () => {
+    const html = progressLineHtml(null);
+    assert.match(html, /Noch kein Zwischenstand/);
+    assert.match(html, /progress-line-empty/);
+  });
+  await t.test('entryCount=0 (aber Objekt vorhanden) -> ebenfalls Leerzustand', () => {
+    const html = progressLineHtml({ entryCount: 0, badgeLabel: null, badgeEmphasis: 'normal' });
+    assert.match(html, /Noch kein Zwischenstand/);
+  });
+  await t.test('normaler Zustand: Icon + Text, kein "veraltet"', () => {
+    const html = progressLineHtml({ entryCount: 3, badgeLabel: '3 Zwischenstände · vor 2 Tagen', badgeEmphasis: 'normal', badgeSuffix: null });
+    assert.match(html, /3 Zwischenstände · vor 2 Tagen/);
+    assert.doesNotMatch(html, /veraltet/);
+    assert.match(html, /progress-line-normal/);
+  });
+  await t.test('veraltet: Icon UND Text ändern sich, nie nur Farbe', () => {
+    const html = progressLineHtml({ entryCount: 5, badgeLabel: '5 Zwischenstände · vor 20 Tagen', badgeEmphasis: 'stale', badgeSuffix: 'länger nicht aktualisiert' });
+    assert.match(html, /progress-line-stale/);
+    assert.match(html, /⏳/);
+    assert.match(html, /länger nicht aktualisiert/);
+    assert.match(html, /aria-label="[^"]*länger nicht aktualisiert[^"]*"/);
+  });
+  await t.test('escaped Label/Suffix gegen XSS', () => {
+    const html = progressLineHtml({ entryCount: 1, badgeLabel: '<img src=x onerror=alert(1)>', badgeEmphasis: 'normal', badgeSuffix: '<b>x</b>' });
+    assert.doesNotMatch(html, /<img/);
+    assert.doesNotMatch(html, /<b>/);
   });
 });

@@ -8,7 +8,7 @@ const Database = require('better-sqlite3');
 
 const { runProgressMigrations } = require('../lib/progress/schema');
 const {
-  refInfo, setGoal, setNextStep, insertEntry, summaryFor, detailStats,
+  refInfo, setNextStep, insertEntry, summaryFor, detailStats,
   DORMANT_DAYS, STALE_DAYS, GAP_DAYS,
 } = require('../lib/progress/queries');
 
@@ -19,12 +19,12 @@ function tempDb() {
   db.exec(`
     CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL, created_at TEXT NOT NULL);
     CREATE TABLE todos (
-      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
       done INTEGER NOT NULL DEFAULT 0, result TEXT NOT NULL DEFAULT '', result_date TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL, snoozed_until TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT ''
     );
     CREATE TABLE topics (
-      id TEXT PRIMARY KEY, title TEXT NOT NULL,
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
       done INTEGER NOT NULL DEFAULT 0, result TEXT NOT NULL DEFAULT '', result_date TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL, snoozed_until TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT ''
     );
@@ -220,16 +220,29 @@ test('detailStats: nicht dormant innerhalb DORMANT_DAYS', (t) => {
   assert.equal(reentry.dormantSince, null);
 });
 
-test('detailStats: reentry.empty=false sobald Zielbild gesetzt ist', (t) => {
+test('detailStats: reentry.empty=false sobald eine Beschreibung vorhanden ist (Redesign: kein Zielbild mehr)', (t) => {
   const { db, dir } = tempDb();
   t.after(() => cleanup(dir));
   const createdAt = daysAgoIso(1);
-  makeTodo(db, { id: 't-goal', createdAt });
-  setGoal(db, 'u1', 'todo', 't-goal', 'MVP live bringen', new Date().toISOString());
-  const ref = refInfo(db, 'todo', 't-goal');
+  const id = 't-desc';
+  db.prepare(
+    'INSERT INTO todos(id,user_id,title,description,done,created_at,snoozed_until) VALUES (?,?,?,?,?,?,?)'
+  ).run(id, 'u1', 'Todo ' + id, '<p>MVP live bringen</p>', 0, createdAt, '');
+  const ref = refInfo(db, 'todo', id);
 
-  const { reentry } = detailStats(db, 'u1', 'todo', 't-goal', ref);
+  const { reentry } = detailStats(db, 'u1', 'todo', id, ref);
   assert.equal(reentry.empty, false);
+});
+
+test('detailStats: reentry.empty=true ohne Beschreibung, ohne Naechsten Schritt, ohne Zwischenstaende', (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => cleanup(dir));
+  const createdAt = daysAgoIso(1);
+  makeTodo(db, { id: 't-empty', createdAt });
+  const ref = refInfo(db, 'todo', 't-empty');
+
+  const { reentry } = detailStats(db, 'u1', 'todo', 't-empty', ref);
+  assert.equal(reentry.empty, true);
 });
 
 test('Konstanten: DORMANT_DAYS=7, STALE_DAYS=14, GAP_DAYS=7', () => {

@@ -92,9 +92,6 @@ test('Abwärtskompatibilität: ohne isRefReadOnly verhalten sich alle Schreib-Ro
   const topicId = makeTopic(db);
   const agent = await loginAgent(app);
 
-  const goal = await agent.put(`/api/progress/topic/${topicId}/goal`).send({ goal: 'Ziel' });
-  assert.equal(goal.status, 200);
-
   const nextStep = await agent.put(`/api/progress/topic/${topicId}/next-step`).send({ nextStep: 'Schritt' });
   assert.equal(nextStep.status, 200);
 
@@ -118,12 +115,8 @@ test('isRefReadOnly=true: JEDE Schreib-Route liefert 409 ARCHIVED_READONLY, NACH
   const agent = await loginAgent(app);
 
   // Ownership-Check greift weiterhin zuerst: fremde/unbekannte Referenz -> 404, nicht 409.
-  const foreign = await agent.put('/api/progress/topic/does-not-exist/goal').send({ goal: 'x' });
+  const foreign = await agent.put('/api/progress/topic/does-not-exist/next-step').send({ nextStep: 'x' });
   assert.equal(foreign.status, 404);
-
-  const goal = await agent.put(`/api/progress/topic/${topicId}/goal`).send({ goal: 'Ziel' });
-  assert.equal(goal.status, 409);
-  assert.equal(goal.body.code, 'ARCHIVED_READONLY');
 
   const nextStep = await agent.put(`/api/progress/topic/${topicId}/next-step`).send({ nextStep: 'Schritt' });
   assert.equal(nextStep.status, 409);
