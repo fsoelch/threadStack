@@ -20,6 +20,9 @@ test('Migrations: zweimal-Start lässt Schema unverändert', async (t) => {
     ai_artifacts: tableInfo(db, 'ai_artifacts'),
     meetings:     tableInfo(db, 'meetings'),
     topics:       tableInfo(db, 'topics'),
+    // Arbeitspaket B1/B2 ("Meetings archivieren statt löschen"): additive
+    // Migration muss beim zweiten Start ebenfalls idempotent sein.
+    archive_state: tableInfo(db, 'archive_state'),
   };
 
   // Drop the cached server module so the next loadServer triggers the init path again
@@ -37,6 +40,7 @@ test('Migrations: zweimal-Start lässt Schema unverändert', async (t) => {
     ai_artifacts: tableInfo(db, 'ai_artifacts'),
     meetings:     tableInfo(db, 'meetings'),
     topics:       tableInfo(db, 'topics'),
+    archive_state: tableInfo(db, 'archive_state'),
   };
 
   assert.deepEqual(snap2, snap1, 'Schema must be identical after a second startup');

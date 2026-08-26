@@ -33,20 +33,18 @@ function makeMockAi({ settings, summarizeProgress, summarizeDescription } = {}) 
   };
 }
 
-function createProgressEntriesTable(db) {
-  db.exec(`
-    CREATE TABLE progress_entries (
-      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, ref_type TEXT NOT NULL, ref_id TEXT NOT NULL,
-      text TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT
-    );
-  `);
-}
+// lib/progress (Paket S1) legt progress_entries bereits per Migration an;
+// reales Schema siehe lib/progress/schema.js (Klartext in `body_text`).
 let entrySeq = 0;
 function addProgressEntries(db, userId, refType, refId, n) {
-  const stmt = db.prepare('INSERT INTO progress_entries(id,user_id,ref_type,ref_id,text,created_at) VALUES (?,?,?,?,?,?)');
+  const stmt = db.prepare(
+    `INSERT INTO progress_entries(id,user_id,ref_type,ref_id,kind,source,body_html,body_text,created_at)
+     VALUES (?,?,?,?,'note','manual',?,?,?)`
+  );
   for (let i = 0; i < n; i++) {
     entrySeq++;
-    stmt.run(`e${refId}-${entrySeq}`, userId, refType, refId, `entry ${entrySeq}`, `2026-01-0${(entrySeq % 9) + 1}T00:00:00.000Z`);
+    const text = `entry ${entrySeq}`;
+    stmt.run(`e${refId}-${entrySeq}`, userId, refType, refId, text, text, `2026-01-0${(entrySeq % 9) + 1}T00:00:00.000Z`);
   }
 }
 
@@ -58,7 +56,6 @@ async function setup(t) {
   t.after(() => cleanup(dir));
   const admin = ensureTestAdmin(db);
   const agent = await login(request, app, admin.username, admin.password);
-  createProgressEntriesTable(db);
   return { db, agent, userId: admin.id };
 }
 

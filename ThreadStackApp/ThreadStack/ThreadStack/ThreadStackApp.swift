@@ -2,7 +2,12 @@ import SwiftUI
 
 @main
 struct ThreadStackApp: App {
-    @StateObject private var state = AppState()
+    @StateObject private var state: AppState
+    // Arbeitspaket A3: zentrale ProgressStore-Instanz, an dieselbe AppState-
+    // Instanz gebunden wie `state` selbst (kein zweiter, unabhängiger
+    // Session-/Cookie-Kontext) — Injektion analog zu `state` per
+    // `.environmentObject(...)`, damit alle Views denselben Muster folgen.
+    @StateObject private var progressStore: ProgressStore
 
     init() {
         // Clear stale NSToolbar configuration from UserDefaults.
@@ -11,12 +16,17 @@ struct ThreadStackApp: App {
         UserDefaults.standard.dictionaryRepresentation().keys
             .filter { $0.hasPrefix("NSToolbar") }
             .forEach { UserDefaults.standard.removeObject(forKey: $0) }
+
+        let appState = AppState()
+        _state = StateObject(wrappedValue: appState)
+        _progressStore = StateObject(wrappedValue: ProgressStore(appState: appState))
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environmentObject(state)
+                .environmentObject(progressStore)
         }
         #if os(macOS)
         .defaultSize(width: 1100, height: 720)

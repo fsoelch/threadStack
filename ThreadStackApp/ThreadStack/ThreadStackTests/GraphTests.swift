@@ -186,6 +186,20 @@ struct GraphLayoutTests {
     }
 }
 
+// Pollt statt fix zu warten: unter Last (z.B. beim parallelen Lauf der
+// gesamten Testsuite) kann eine feste Wartezeit knapp unter der tatsaechlich
+// benoetigten Dauer liegen und faelschlich flaky failen, obwohl das
+// beobachtete Verhalten korrekt ist - siehe die drei Tests unten.
+private func waitUntil(
+    timeout: Duration = .seconds(3), interval: Duration = .milliseconds(5),
+    _ condition: () -> Bool
+) async {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() && ContinuousClock.now < deadline {
+        try? await Task.sleep(for: interval)
+    }
+}
+
 @MainActor
 struct GraphPositionSyncTests {
 
@@ -198,7 +212,7 @@ struct GraphPositionSyncTests {
         sync.enqueue(type: "theme", id: "t1", x: 2, y: 2)
         sync.enqueue(type: "theme", id: "t1", x: 3, y: 3)
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        await waitUntil { flushedBatches.count >= 1 }
 
         #expect(flushedBatches.count == 1)
         #expect(flushedBatches.first?.count == 1)
@@ -225,8 +239,8 @@ struct GraphPositionSyncTests {
         sync.enqueue(type: "todo", id: "d1", x: 5, y: 5)
 
         // First attempt fails, then the automatic retry (no further user
-        // interaction) succeeds — give both cycles enough time.
-        try await Task.sleep(nanoseconds: 300_000_000)
+        // interaction) succeeds — poll until both cycles have completed.
+        await waitUntil { !succeededBatches.isEmpty }
 
         #expect(reportedErrors == 1)
         let allMoves = succeededBatches.flatMap { $0 }
@@ -242,10 +256,10 @@ struct GraphPositionSyncTests {
         }
 
         sync.enqueue(type: "theme", id: "t1", x: 1, y: 1)
-        try await Task.sleep(nanoseconds: 30_000_000) // let first flush start
+        await waitUntil { flushedBatches.count >= 1 } // let first flush start
         sync.enqueue(type: "theme", id: "t1", x: 99, y: 99) // arrives while in flight
 
-        try await Task.sleep(nanoseconds: 250_000_000)
+        await waitUntil { flushedBatches.count >= 2 } // second (overwritten) flush completes
 
         let allMoves = flushedBatches.flatMap { $0 }
         let entriesForNode = allMoves.filter { $0.id == "t1" }

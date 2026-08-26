@@ -7,33 +7,19 @@ const { setupEnv, loadServer, login, ensureTestAdmin, cleanup, REPO_ROOT } = req
 
 const queries = require(path.join(REPO_ROOT, 'lib/summaries/queries'));
 
-// lib/progress existiert in diesem Arbeitsstand noch nicht (Paket S1 läuft
-// parallel) — die Tests legen die laut Abschlussbericht angenommene Tabelle
-// `progress_entries` selbst an, um progressSourceVersions()/
-// loadProgressEntryTexts() gegen ein realistisches (wenn auch anzunehmendes)
-// Schema zu prüfen. Muss beim Merge gegen das tatsächliche Schema von S1
-// verifiziert werden.
-function createProgressEntriesTable(db) {
-  db.exec(`
-    CREATE TABLE progress_entries (
-      id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      ref_type TEXT NOT NULL,
-      ref_id TEXT NOT NULL,
-      text TEXT NOT NULL DEFAULT '',
-      created_at TEXT NOT NULL,
-      updated_at TEXT
-    );
-  `);
-}
-
-function insertEntry(db, { id, userId, refType, refId, text = 'note', createdAt, updatedAt = null }) {
+// lib/progress (Paket S1) legt progress_entries bereits per Migration an
+// (lib/progress/schema.js): Spalten (id, user_id, ref_type, ref_id, kind,
+// source, body_html, body_text, link_frame_id, client_token, created_at,
+// edited_at). Klartext liegt in `body_text`, der Änderungszeitstempel heißt
+// `edited_at` (NULL bis zur ersten Bearbeitung).
+function insertEntry(db, { id, userId, refType, refId, text = 'note', kind = 'note', createdAt, editedAt = null }) {
   db.prepare(
-    'INSERT INTO progress_entries(id,user_id,ref_type,ref_id,text,created_at,updated_at) VALUES (?,?,?,?,?,?,?)'
-  ).run(id, userId, refType, refId, text, createdAt, updatedAt);
+    `INSERT INTO progress_entries(id,user_id,ref_type,ref_id,kind,source,body_html,body_text,created_at,edited_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).run(id, userId, refType, refId, kind, 'manual', text, text, createdAt, editedAt);
 }
 
-test('progressSourceVersions: ohne progress_entries-Tabelle liefert entryCount=0 (kein Absturz)', async (t) => {
+test('progressSourceVersions: liefert entryCount=0 für unbekannte Refs (kein Absturz)', async (t) => {
   const dir = setupEnv();
   const { db } = loadServer(REPO_ROOT);
   t.after(() => cleanup(dir));
@@ -45,19 +31,30 @@ test('progressSourceVersions: ohne progress_entries-Tabelle liefert entryCount=0
   assert.match(v.sourceVersion, /^sha256:[0-9a-f]{16}$/);
 });
 
+test('progressSourceVersions: degradiert defensiv, wenn die Tabelle fehlt (z.B. abweichendes Schema)', async (t) => {
+  const dir = setupEnv();
+  const { db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  db.exec('DROP TABLE progress_entries');
+
+  const map = queries.progressSourceVersions(db, 'u1', [{ refType: 'todo', refId: 't1' }]);
+  assert.equal(map.get('todo:t1').entryCount, 0);
+});
+
 test('progressSourceVersions: zählt Einträge je Ref korrekt (eine Query je refType, kein N+1)', async (t) => {
   const dir = setupEnv();
   const { db } = loadServer(REPO_ROOT);
   t.after(() => cleanup(dir));
-  createProgressEntriesTable(db);
+  const u1 = ensureTestAdmin(db).id;
+  const u2 = db.prepare("INSERT INTO users(id,username,password_hash,created_at) VALUES ('u2','u2','x',?)").run(new Date().toISOString()) && 'u2';
 
-  insertEntry(db, { id: 'e1', userId: 'u1', refType: 'todo', refId: 't1', createdAt: '2026-01-01T00:00:00.000Z' });
-  insertEntry(db, { id: 'e2', userId: 'u1', refType: 'todo', refId: 't1', createdAt: '2026-01-02T00:00:00.000Z' });
-  insertEntry(db, { id: 'e3', userId: 'u1', refType: 'topic', refId: 'top1', createdAt: '2026-01-03T00:00:00.000Z' });
+  insertEntry(db, { id: 'e1', userId: u1, refType: 'todo', refId: 't1', createdAt: '2026-01-01T00:00:00.000Z' });
+  insertEntry(db, { id: 'e2', userId: u1, refType: 'todo', refId: 't1', createdAt: '2026-01-02T00:00:00.000Z' });
+  insertEntry(db, { id: 'e3', userId: u1, refType: 'topic', refId: 'top1', createdAt: '2026-01-03T00:00:00.000Z' });
   // andere User dürfen nicht mitgezählt werden
-  insertEntry(db, { id: 'e4', userId: 'u2', refType: 'todo', refId: 't1', createdAt: '2026-01-04T00:00:00.000Z' });
+  insertEntry(db, { id: 'e4', userId: u2, refType: 'todo', refId: 't1', createdAt: '2026-01-04T00:00:00.000Z' });
 
-  const map = queries.progressSourceVersions(db, 'u1', [
+  const map = queries.progressSourceVersions(db, u1, [
     { refType: 'todo', refId: 't1' },
     { refType: 'todo', refId: 't-empty' },
     { refType: 'topic', refId: 'top1' },
@@ -72,18 +69,18 @@ test('progressSourceVersions: sourceVersion ändert sich, wenn sich Anzahl oder 
   const dir = setupEnv();
   const { db } = loadServer(REPO_ROOT);
   t.after(() => cleanup(dir));
-  createProgressEntriesTable(db);
+  const u1 = ensureTestAdmin(db).id;
 
-  insertEntry(db, { id: 'e1', userId: 'u1', refType: 'todo', refId: 't1', createdAt: '2026-01-01T00:00:00.000Z' });
-  const v1 = queries.progressSourceVersions(db, 'u1', [{ refType: 'todo', refId: 't1' }]).get('todo:t1');
+  insertEntry(db, { id: 'e1', userId: u1, refType: 'todo', refId: 't1', createdAt: '2026-01-01T00:00:00.000Z' });
+  const v1 = queries.progressSourceVersions(db, u1, [{ refType: 'todo', refId: 't1' }]).get('todo:t1');
 
-  insertEntry(db, { id: 'e2', userId: 'u1', refType: 'todo', refId: 't1', createdAt: '2026-01-02T00:00:00.000Z' });
-  const v2 = queries.progressSourceVersions(db, 'u1', [{ refType: 'todo', refId: 't1' }]).get('todo:t1');
+  insertEntry(db, { id: 'e2', userId: u1, refType: 'todo', refId: 't1', createdAt: '2026-01-02T00:00:00.000Z' });
+  const v2 = queries.progressSourceVersions(db, u1, [{ refType: 'todo', refId: 't1' }]).get('todo:t1');
 
   assert.notEqual(v1.sourceVersion, v2.sourceVersion);
 
   // Unverändert erneut abgefragt: gleicher Wert (deterministisch)
-  const v2b = queries.progressSourceVersions(db, 'u1', [{ refType: 'todo', refId: 't1' }]).get('todo:t1');
+  const v2b = queries.progressSourceVersions(db, u1, [{ refType: 'todo', refId: 't1' }]).get('todo:t1');
   assert.equal(v2.sourceVersion, v2b.sourceVersion);
 });
 
@@ -91,14 +88,22 @@ test('loadProgressEntryTexts: liest Einträge chronologisch, degradiert defensiv
   const dir = setupEnv();
   const { db } = loadServer(REPO_ROOT);
   t.after(() => cleanup(dir));
+  db.exec('DROP TABLE progress_entries');
 
   assert.deepEqual(queries.loadProgressEntryTexts(db, 'u1', 'todo', 't1'), []);
+});
 
-  createProgressEntriesTable(db);
-  insertEntry(db, { id: 'e1', userId: 'u1', refType: 'todo', refId: 't1', text: 'zuerst', createdAt: '2026-01-01T00:00:00.000Z' });
-  insertEntry(db, { id: 'e2', userId: 'u1', refType: 'todo', refId: 't1', text: 'danach', createdAt: '2026-01-02T00:00:00.000Z' });
+test('loadProgressEntryTexts: liest Einträge chronologisch, ignoriert Ergebnis-Einträge', async (t) => {
+  const dir = setupEnv();
+  const { db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  const u1 = ensureTestAdmin(db).id;
 
-  const entries = queries.loadProgressEntryTexts(db, 'u1', 'todo', 't1');
+  insertEntry(db, { id: 'e1', userId: u1, refType: 'todo', refId: 't1', text: 'zuerst', createdAt: '2026-01-01T00:00:00.000Z' });
+  insertEntry(db, { id: 'e2', userId: u1, refType: 'todo', refId: 't1', text: 'danach', createdAt: '2026-01-02T00:00:00.000Z' });
+  insertEntry(db, { id: 'e3', userId: u1, refType: 'todo', refId: 't1', text: 'Ergebnis', kind: 'result', createdAt: '2026-01-03T00:00:00.000Z' });
+
+  const entries = queries.loadProgressEntryTexts(db, u1, 'todo', 't1');
   assert.deepEqual(entries.map(e => e.text), ['zuerst', 'danach']);
 });
 
