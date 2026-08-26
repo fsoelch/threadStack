@@ -224,6 +224,7 @@ final class AppState: ObservableObject {
         currentUser = nil; meetings = []; todos = []; themes = []; knowledgePages = []; contacts = []
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]
+        archivedMeetings = []; archiveTotal = 0
         clearGraphStateOnLogout()
         // Security requirement (analog zu clearGraphStateOnLogout): lokale
         // Wissens-Entwürfe (unsynced, ggf. sensible Notizinhalte) gehören dem

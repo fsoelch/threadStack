@@ -363,6 +363,26 @@ struct ArchiveListAndDetailTests {
     }
 }
 
+// MARK: - AppState.logout muss neue Archiv-Properties zuruecksetzen
+// (Security-Nachbesserung: Archiv-Zustand darf einen geteilten Geraetewechsel
+// nicht ueberleben, analog zu clearGraphStateOnLogout()).
+
+@MainActor
+struct ArchiveLogoutTests {
+
+    @Test func logoutClearsArchivedMeetingsAndArchiveTotal() async throws {
+        let state = makeAppState { _ in (200, jsonData(["ok": true])) }
+        state.archivedMeetings = [ArchivedMeetingListItem(
+            id: "m1", title: "T", description: "", color: "#000", participants: [],
+            nextDate: "", createdAt: "", archivedAt: "2026-01-01T00:00:00Z",
+            topicCount: 3, openTopicCount: 1)]
+        state.archiveTotal = 12
+        try await state.logout()
+        #expect(state.archivedMeetings.isEmpty)
+        #expect(state.archiveTotal == 0)
+    }
+}
+
 // MARK: - Reine Text-/Formatierungs-Hilfsfunktionen (SidebarView.swift)
 
 struct ArchiveConflictTopicsTextTests {

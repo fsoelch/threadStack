@@ -355,6 +355,55 @@ test('Guard Stack Push: 409 wenn Topic archiviert, 201 wenn nicht', async (t) =>
   assertArchivedReadOnly(blocked);
 });
 
+// ── PUT /api/stack/:frameId/note (Security-Review-Fund 1) ─────
+
+test('Guard Stack-Notiz (PUT /api/stack/:frameId/note): 409 wenn Topic archiviert, progress_meta.next_step bleibt unveraendert', async (t) => {
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  const { agent } = await bootstrapStackFixture(request, app, db);
+
+  // Positiv: nicht archiviertes Topic -> 200, Notiz wird uebernommen und
+  // spiegelt sich nach progress_meta.next_step.
+  const t1 = await makeMeetingWithTopic(agent, 'OK');
+  const push1 = await agent.post('/api/stack/push').send({ refType: 'topic', refId: t1.topicId, nextStepNote: 'initial' });
+  const okNote = await agent.put(`/api/stack/${push1.body.frame.id}/note`).send({ nextStepNote: 'aktualisiert' });
+  assert.equal(okNote.status, 200);
+  const progressAfterOk = await agent.get(`/api/progress/topic/${t1.topicId}`);
+  assert.equal(progressAfterOk.body.nextStep, 'aktualisiert');
+
+  // Negativ: Topic pushen, zugehoeriges Meeting archivieren (Frame bleibt
+  // dabei offen), dann versuchen, die Notiz zu aendern -> 409
+  // ARCHIVED_READONLY statt stillem Schreiben.
+  const t2 = await makeMeetingWithTopic(agent, 'Archiviert');
+  const push2 = await agent.post('/api/stack/push').send({ refType: 'topic', refId: t2.topicId, nextStepNote: 'vor-archiv' });
+  await archiveMeeting(agent, t2.meetingId);
+
+  const blocked = await agent.put(`/api/stack/${push2.body.frame.id}/note`).send({ nextStepNote: 'sollte-nicht-ankommen' });
+  assertArchivedReadOnly(blocked);
+
+  // stack_frames.next_step_note bleibt unveraendert.
+  const peek = await agent.get(`/api/stack/peek/${push2.body.frame.id}`);
+  assert.equal(peek.status, 200);
+  assert.equal(peek.body.frame.next_step_note, 'vor-archiv');
+
+  // progress_meta.next_step bleibt ebenfalls unveraendert (kein Bypass ueber
+  // diese Route).
+  const progressAfterBlocked = await agent.get(`/api/progress/topic/${t2.topicId}`);
+  assert.equal(progressAfterBlocked.status, 200);
+  assert.equal(progressAfterBlocked.body.nextStep, 'vor-archiv');
+});
+
+test('Guard Stack-Notiz: 404 bei unbekanntem/fremdem Frame bleibt unveraendert (kein 409 vor Ownership-Pruefung)', async (t) => {
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  t.after(() => cleanup(dir));
+  const { agent } = await bootstrapStackFixture(request, app, db);
+
+  const r = await agent.put('/api/stack/does-not-exist/note').send({ nextStepNote: 'x' });
+  assert.equal(r.status, 404);
+});
+
 // ── Stack Pop: 'done'/'snoozed' blockiert, 'dropped'/'resumed' erlaubt ──
 
 test("Guard Stack Pop: resolution='done' auf archiviertem Topic -> 409, auf aktivem -> 200", async (t) => {

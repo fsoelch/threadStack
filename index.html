@@ -3310,7 +3310,21 @@ window.TSHost = {
   openKnowledge: (id) => openKnowledgeModal(id),
   openObject: (type, id, meta) => {
     if (type === 'todo') { selectView('__todos__'); openTodoModal(id); }
-    else if (type === 'topic') { if (meta?.meetingId) selectView(meta.meetingId); openTopicModal(meta?.meetingId, id); }
+    else if (type === 'topic') {
+      // Archivierte Meetings (meta.archived === true, Paket B3) sind nicht
+      // mehr in der aktiven `meetings`-Liste enthalten — selectView() +
+      // openTopicModal() würden dann einen leeren "Neues Thema"-Dialog statt
+      // der Nur-Lese-Ansicht öffnen (Security-Review-Fund). In dem Fall (oder
+      // falls das Meeting aus anderem Grund nicht mehr aktiv gefunden wird)
+      // stattdessen in die bestehende Archiv-Nur-Lese-Route navigieren.
+      const meetingId = meta?.meetingId;
+      if (meta?.archived === true || (meetingId && !getMeeting(meetingId))) {
+        if (meetingId) selectArchiveDetail(meetingId);
+      } else {
+        if (meetingId) selectView(meetingId);
+        openTopicModal(meetingId, id);
+      }
+    }
     else if (type === 'contact') { selectView('__contacts__'); openContactModal(id); }
   },
   confirm: ({ title, message, confirmLabel, cancelLabel }) => genericConfirm(title, message, confirmLabel, cancelLabel),
@@ -4345,6 +4359,12 @@ function clearClientSessionState() {
   const uidForCleanup = currentUser?.id;
   if (uidForCleanup) { try { localStorage.removeItem(`notifiedSnoozes:${uidForCleanup}`); } catch {} }
   currentUser = null; meetings = []; todos = []; selectedId = null;
+  // Archiv-Zustand (Arbeitspaket W1) muss ebenfalls hier abgeräumt werden,
+  // sonst überleben Archiv-Liste, -Detailansicht und der Suchtreffer-Cache
+  // den Nutzerwechsel auf einem geteilten Gerät (Security-Review-Fund).
+  archiveState = { items: [], total: 0, q: '', offset: 0, loaded: false, loading: false, error: null };
+  archiveDetailState = { id: null, data: null, loading: false, error: null };
+  for (const k of Object.keys(_archiveSearchDetailCache)) delete _archiveSearchDetailCache[k];
 }
 
 async function doLogout() {
@@ -9419,6 +9439,7 @@ async function restoreArchivedMeeting(id, fromDetail) {
   }
   archiveState.items = archiveState.items.filter(x => x.id !== id);
   archiveState.total = Math.max(0, archiveState.total - 1);
+  if (_archiveSearchDetailCache[id]) delete _archiveSearchDetailCache[id];
   await loadMeetings();
   // Aus der Nur-Lese-Detailansicht führt Wiederherstellen direkt in die
   // jetzt wieder normal bearbeitbare Meeting-Ansicht (nicht zurück ins
@@ -9451,6 +9472,7 @@ async function confirmPermanentlyDeleteMeeting(id, title, fromDetail) {
   }
   archiveState.items = archiveState.items.filter(x => x.id !== id);
   archiveState.total = Math.max(0, archiveState.total - 1);
+  if (_archiveSearchDetailCache[id]) delete _archiveSearchDetailCache[id];
   if (fromDetail) { selectView('__archive__'); }
   else { render(); }
   toast(`„${title}" endgültig gelöscht.`);

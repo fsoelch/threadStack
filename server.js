@@ -878,6 +878,10 @@ app.delete(`${A}/meetings/:id`, requireAuth, (req, res) => {
   if (topicIds.length) {
     progress.deleteForRefs(db, topicIds.map(id => ({ refType: 'topic', refId: id })));
   }
+  // Security-Review-Nachbesserung (Arbeitspaket B2): Falls das Meeting zuvor
+  // archiviert war, bleibt sonst eine verwaiste archive_state-Zeile zurück
+  // (räumt sich sonst erst beim nächsten Serverstart per purgeArchiveOrphans auf).
+  archive.deleteState(db, 'meeting', req.params.id);
   res.json({ ok: true });
 });
 
@@ -2445,17 +2449,25 @@ app.put(`${A}/stack/:frameId/note`, requireAuth, (req, res) => {
   const note = String(req.body?.nextStepNote || '').trim();
   if (!note)                  return res.status(400).json({ error: 'next_step_note erforderlich' });
   if (note.length > MAX_NOTE) return res.status(400).json({ error: 'next_step_note zu lang (max 1000)' });
-  const r = db.prepare(
+
+  const f = db.prepare(
+    'SELECT * FROM stack_frames WHERE id=? AND user_id=? AND popped_at IS NULL'
+  ).get(req.params.frameId, req.session.uid);
+  if (!f) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
+
+  // Archiv-Schreibschutz (Arbeitspaket B2, Security-Review-Nachbesserung):
+  // Die Notiz mutiert sowohl stack_frames.next_step_note als auch
+  // progress_meta.next_step des referenzierten Topics - bei archiviertem
+  // Meeting daher 409, analog zum Guard in POST /stack/pop/:frameId.
+  if (f.ref_type === 'topic' && topicArchivedGuard(res, f.ref_id)) return;
+
+  db.prepare(
     'UPDATE stack_frames SET next_step_note=? WHERE id=? AND user_id=? AND popped_at IS NULL'
   ).run(note, req.params.frameId, req.session.uid);
-  if (!r.changes) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
 
   // Story 5: Notiz-Update spiegelt sich in progress_meta.next_step für das
   // Vorhaben dieses Frames zurück.
-  const frame = db.prepare('SELECT ref_type, ref_id FROM stack_frames WHERE id=?').get(req.params.frameId);
-  if (frame) {
-    progress.setNextStep(db, req.session.uid, frame.ref_type, frame.ref_id, note, new Date().toISOString());
-  }
+  progress.setNextStep(db, req.session.uid, f.ref_type, f.ref_id, note, new Date().toISOString());
 
   res.json({ ok: true });
 });

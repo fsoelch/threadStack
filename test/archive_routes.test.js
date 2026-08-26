@@ -384,6 +384,41 @@ test('DELETE /:refType/:refId/permanent: löscht Kaskade + Dateien nach Commit, 
   assert.equal(rAfter.status, 404);
 });
 
+test('DELETE /:refType/:refId/permanent: protokolliert einen erfolgreichen Purge mit reinen ID/Zahlen-Feldern (kein Titel/Inhalt im Log)', async (t) => {
+  const { app, db, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const meetingId = makeMeeting(db, { title: 'GEHEIMER-Meetingtitel-darf-nicht-im-Log-stehen' });
+  const topicId = makeTopic(db, { meetingId, title: 'GEHEIMES-Thema-darf-nicht-im-Log-stehen' });
+  const agent = await loginAgent(app);
+
+  const infoCalls = [];
+  const origInfo = console.info;
+  console.info = (...args) => { infoCalls.push(args); };
+  let r;
+  try {
+    await agent.post(`/api/archive/meeting/${meetingId}`);
+    r = await agent.delete(`/api/archive/meeting/${meetingId}/permanent`);
+  } finally {
+    console.info = origInfo;
+  }
+  assert.equal(r.status, 200);
+
+  const purgeLogs = infoCalls.filter((args) => args[0] === '[archive]');
+  assert.equal(purgeLogs.length, 1, 'genau ein Audit-Log-Eintrag pro erfolgreichem Purge erwartet');
+  const payload = JSON.parse(purgeLogs[0][1]);
+  assert.equal(payload.event, 'purge');
+  assert.equal(payload.refType, 'meeting');
+  assert.equal(payload.refId, meetingId);
+  assert.equal(payload.userId, 'test-user');
+  assert.equal(payload.counts.topics, 1);
+
+  // Keine sensiblen Inhalte (Titel/Themen-Text) im Log-Payload.
+  const serialized = JSON.stringify(payload);
+  assert.ok(!serialized.includes('GEHEIMER-Meetingtitel'));
+  assert.ok(!serialized.includes('GEHEIMES-Thema'));
+  void topicId;
+});
+
 test('DELETE /:refType/:refId/permanent: 404 bei unbekannt/fremd', async (t) => {
   const { app, db, dir } = buildTestApp();
   t.after(() => cleanup(dir));
