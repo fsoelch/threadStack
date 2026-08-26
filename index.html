@@ -1691,9 +1691,59 @@ body.ai-disabled .ai-action { display: none !important; }
   border:1px solid var(--border-md); border-radius:3px;
   padding:.05rem .3rem; font-size:.6875rem; font-family:var(--font-mono);
 }
+
+/* ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W2) ──────────
+   Eigene Klassen mit "ts-"/"todo-"-Präfix, um Kollisionen mit dem
+   TSProgress-Modul (public/progress.css, Paket W1) zu vermeiden. Dieser
+   Block betrifft ausschließlich das Layout der Host-Seite (Karten,
+   Bearbeiten-Ansicht) — die visuelle Gestaltung der von TSProgress selbst
+   gerenderten Bausteine (Timeline, Badge, Composer, Card-Summary) liegt in
+   progress.css. */
+.ts-progress-line-host { margin:.375rem 0 0 1.75rem; }
+.ts-card-summary-slot  { margin:.375rem 0 0 1.75rem; }
+.ts-card-summary-slot:empty { display:none; }
+
+.todo-desc-readview {
+  display:flex; align-items:flex-start; gap:.375rem; margin-top:.25rem;
+}
+.todo-desc-readview .rt-display { flex:1 1 auto; min-width:0; }
+.todo-desc-readview .rt-display.placeholder { color:var(--text-muted); font-style:italic; }
+.todo-desc-edit-btn {
+  flex:0 0 auto; background:none; border:1px solid transparent; border-radius:6px;
+  padding:.25rem; cursor:pointer; color:var(--text-muted); line-height:0;
+}
+.todo-desc-edit-btn:hover { background:var(--card2); color:var(--text); }
+.todo-desc-edit-btn:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+
+details.more-details-native { margin-top:.75rem; border:1px solid var(--border); border-radius:var(--r-md); padding:.25rem .75rem; }
+details.more-details-native summary {
+  cursor:pointer; font-weight:600; font-size:.8125rem; padding:.5rem 0;
+  list-style:none; color:var(--text);
+}
+details.more-details-native summary::-webkit-details-marker { display:none; }
+details.more-details-native summary::before { content:'▸ '; display:inline-block; transition:transform .12s; }
+details.more-details-native[open] summary::before { transform:rotate(90deg); }
+details.more-details-native[open] summary { border-bottom:1px solid var(--border); margin-bottom:.5rem; }
+details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
+
+.desc-clamp-fallback {
+  display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:4; overflow:hidden;
+}
+.card-more-toggle {
+  background:none; border:0; padding:0; margin:.25rem 0 0 1.75rem; display:block;
+  color:var(--primary); font-size:.75rem; font-weight:600; cursor:pointer;
+}
+.card-more-toggle:hover { text-decoration:underline; }
+.card-more-toggle:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  details.more-details-native summary::before { transition:none; }
+}
 </style>
 <link rel="stylesheet" href="/assets/graph.css">
 <script defer src="/assets/graph.js"></script>
+<link rel="stylesheet" href="/assets/progress.css">
+<script defer src="/assets/progress.js"></script>
 </head>
 <body>
 
@@ -2066,7 +2116,7 @@ body.ai-disabled .ai-action { display: none !important; }
 </div>
 
 <!-- ── Todo Modal ─────────────────────────────────────────────── -->
-<div id="todo-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'todo-modal')">
+<div id="todo-modal" class="modal-overlay" style="display:none" onclick="todoModalOverlayClick(event)">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-header">
       <h2 id="todo-modal-title">Neues Todo</h2>
@@ -2079,35 +2129,55 @@ body.ai-disabled .ai-action { display: none !important; }
         <input type="text" class="form-control" id="todo-title" placeholder="Was muss erledigt werden?">
       </div>
       <div class="form-group">
-        <label class="form-label">Beschreibung <span class="opt">(optional)</span></label>
-        <div class="rt-wrapper">
+        <label class="form-label" id="todo-desc-label">Beschreibung <span class="opt">(optional)</span></label>
+        <!-- Leseansicht: nach Ersterfassung schreibgeschützt, nur über das
+             Stift-Symbol editierbar (bindende Entscheidung — kein zweiter
+             Editor: aktiviert lediglich den bestehenden #todo-desc
+             rt-wrapper weiter unten). -->
+        <div class="todo-desc-readview" id="todo-desc-readview">
+          <div class="rt-display" id="todo-desc-display"></div>
+          <button type="button" class="todo-desc-edit-btn" id="todo-desc-edit-btn"
+                  aria-label="Beschreibung bearbeiten" title="Beschreibung bearbeiten"
+                  onclick="enterTodoDescEditMode()"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.15em"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+        </div>
+        <div class="rt-wrapper" id="todo-desc-wrapper" style="display:none">
           <div class="rt-toolbar" id="todo-desc-tb"></div>
           <div class="rt-content" id="todo-desc" contenteditable="true" data-placeholder="Details, Links …"></div>
         </div>
       </div>
-      <div class="form-group">
-        <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Fällig am <span class="opt">(optional)</span></label>
-        <input type="date" class="form-control" id="todo-due">
-        <div class="form-hint">Bis zu diesem Datum erledigen — Todos werden nach Fälligkeit sortiert (frühestes oben).</div>
+
+      <div id="todo-progress-section" class="form-group" style="display:none">
+        <label class="form-label">Fortschritt</label>
+        <div id="todo-progress-composer"></div>
+        <div id="todo-progress-timeline" style="margin-top:.5rem"></div>
       </div>
-      <div class="form-group">
-        <div class="toggle-row" style="margin:0">
-          <span class="toggle-label" style="font-size:.8125rem;color:var(--text-muted)">🔒 Privat</span>
-          <label class="toggle"><input type="checkbox" id="todo-private"><span class="toggle-slider"></span></label>
+
+      <details class="more-details-native" id="todo-more-details">
+        <summary id="todo-more-details-summary">Weitere Details</summary>
+        <div class="form-group">
+          <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Fällig am <span class="opt">(optional)</span></label>
+          <input type="date" class="form-control" id="todo-due">
+          <div class="form-hint">Bis zu diesem Datum erledigen — Todos werden nach Fälligkeit sortiert (frühestes oben).</div>
         </div>
-        <div class="form-hint" style="margin-top:.25rem">Nur für dich sichtbar — kann oben in der Liste ausgeblendet werden.</div>
-      </div>
-      <div class="form-group">
-        <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Schlafen bis <span class="opt">(optional)</span></label>
-        <input type="date" class="form-control" id="todo-snooze" onchange="onTodoSnoozeChange()">
-        <div class="toggle-row" style="margin-top:.5rem">
-          <span style="font-size:.8125rem;color:var(--text-muted)">🕐 zu einer bestimmten Uhrzeit aufwecken</span>
-          <label class="toggle"><input type="checkbox" id="todo-snooze-has-time" onchange="onTodoSnoozeChange()"><span class="toggle-slider"></span></label>
+        <div class="form-group">
+          <div class="toggle-row" style="margin:0">
+            <span class="toggle-label" style="font-size:.8125rem;color:var(--text-muted)">🔒 Privat</span>
+            <label class="toggle"><input type="checkbox" id="todo-private"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="form-hint" style="margin-top:.25rem">Nur für dich sichtbar — kann oben in der Liste ausgeblendet werden.</div>
         </div>
-        <input type="time" class="form-control" id="todo-snooze-time" style="display:none;margin-top:.5rem">
-        <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
-      </div>
-      <div id="todo-attach-slot"></div>
+        <div class="form-group">
+          <label class="form-label"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-.1em;margin-right:3px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>Schlafen bis <span class="opt">(optional)</span></label>
+          <input type="date" class="form-control" id="todo-snooze" onchange="onTodoSnoozeChange()">
+          <div class="toggle-row" style="margin-top:.5rem">
+            <span style="font-size:.8125rem;color:var(--text-muted)">🕐 zu einer bestimmten Uhrzeit aufwecken</span>
+            <label class="toggle"><input type="checkbox" id="todo-snooze-has-time" onchange="onTodoSnoozeChange()"><span class="toggle-slider"></span></label>
+          </div>
+          <input type="time" class="form-control" id="todo-snooze-time" style="display:none;margin-top:.5rem">
+          <div class="form-hint">Bis zu diesem Datum (bzw. dieser Uhrzeit) ausblenden — danach automatisch wieder als offen angezeigt, mit Notification bei Uhrzeit.</div>
+        </div>
+        <div id="todo-attach-slot"></div>
+      </details>
       <div id="todo-done-row" style="display:none">
         <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
         <div class="toggle-row" style="margin-bottom:.75rem">
@@ -2132,6 +2202,42 @@ body.ai-disabled .ai-action { display: none !important; }
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeTodoModal()">Abbrechen</button>
       <button class="btn btn-primary" id="todo-save-btn" onclick="saveTodoModal()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Zwischenstand bearbeiten (eigenständiger Dialog für vorhandene
+     Fortschritts-Einträge aus dem Verlauf; Neueinträge laufen über den
+     Inline-Composer TSProgress.mountInlineComposer an der Karte/im
+     Fortschrittsbereich). Kontextzeile zeigt die (gekürzte) Beschreibung
+     des Todos/Themas statt der entfallenen frueheren Zielvorgabe — bleibt komplett
+     verborgen, wenn keine Beschreibung vorhanden ist. ─────────────── -->
+<div id="progress-entry-modal" class="modal-overlay" style="display:none" onclick="progressEntryOverlayClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Zwischenstand bearbeiten</h2>
+      <button class="modal-close" onclick="closeProgressEntryDialog()">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-hint" id="progress-entry-context" style="display:none;margin-bottom:.75rem"></div>
+      <div class="form-group">
+        <label class="form-label">Wo stehst du gerade? <span class="opt">(max. 5.000 Zeichen)</span></label>
+        <div class="rt-wrapper">
+          <div class="rt-toolbar" id="progress-entry-body-tb"></div>
+          <div class="rt-content" id="progress-entry-body" contenteditable="true"
+            data-placeholder="Was ist der aktuelle Stand? Was ist als Nächstes zu tun?"
+            oninput="updateProgressEntryCharHint()"></div>
+        </div>
+        <div class="form-hint" id="progress-entry-char-hint" aria-live="polite">0 / 5.000 Zeichen (ungefähr)</div>
+      </div>
+      <div id="progress-entry-error" class="form-error" style="display:none" role="alert"></div>
+    </div>
+    <div class="modal-footer" style="justify-content:space-between">
+      <button class="btn btn-danger btn-sm" id="progress-entry-delete-btn" style="display:none" onclick="deleteProgressEntryDialog()">🗑️ Löschen</button>
+      <span style="display:flex;gap:.5rem">
+        <button class="btn btn-secondary" onclick="closeProgressEntryDialog()">Abbrechen</button>
+        <button class="btn btn-primary" id="progress-entry-save-btn" onclick="submitProgressEntryDialog()">Speichern</button>
+      </span>
     </div>
   </div>
 </div>
@@ -3098,13 +3204,494 @@ window.TSHost = {
   themeAncestorsPath: (id) => themeAncestorsPath(id),
   openKnowledge: (id) => openKnowledgeModal(id),
   openObject: (type, id, meta) => {
-    if (type === 'todo') { selectView('__todos__'); openTodoModal(id); }
-    else if (type === 'topic') { if (meta?.meetingId) selectView(meta.meetingId); openTopicModal(meta?.meetingId, id); }
+    if (type === 'todo') {
+      selectView('__todos__'); openTodoModal(id);
+      if (meta?.focus === 'progress') focusTodoProgressSection();
+    }
+    else if (type === 'topic') {
+      if (meta?.meetingId) selectView(meta.meetingId);
+      openTopicModal(meta?.meetingId, id);
+      // Hinweis (Abweichung/Risiko, siehe Abschlussbericht Paket W2): die
+      // Themen-Bearbeiten-Ansicht (#topic-modal) enthält aktuell keinen
+      // eigenen Fortschrittsbereich, da das W2-UX-Lastenheft nur die
+      // Todo-Übersicht/#todo-modal beschreibt — meta.focus wird hier daher
+      // bewusst ignoriert statt eine nicht spezifizierte Fläche zu bauen.
+    }
     else if (type === 'contact') { selectView('__contacts__'); openContactModal(id); }
   },
   confirm: ({ title, message, confirmLabel, cancelLabel }) => genericConfirm(title, message, confirmLabel, cancelLabel),
   reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  // ── Fortschritt/KI-Zusammenfassungen (Arbeitspaket W2) ──────────────
+  // Wird von window.TSProgress (public/progress.js, Paket W1) konsumiert.
+  progress: {
+    // Bereits vor W2 vorhanden angenommen (Re-Entry-Briefing-Feature,
+    // wiederverwendet für TSProgress.mountReentryCard): generischer
+    // AI-Feature-Schalter bzw. AI-Reentry-Aufruf für einen Stack-Frame.
+    aiEnabled: () => aiFeatureOn('reentry'),
+    aiReentry: (frameId) => aiCall('POST', `/ai/stack/${encodeURIComponent(frameId)}/reentry`)
+      .then(r => r?.content?.summary || ''),
+    // Neu in W2: Feature-Schalter für die KI-Zusammenfassungen von
+    // Fortschritt/Beschreibung (prüft zusätzlich den globalen KI-Aus-
+    // Schalter via aiFeatureOn -> aiIsActive()).
+    aiSummaryEnabled: (kind) => {
+      if (kind !== 'progress' && kind !== 'description') return false;
+      // Strikte Boolean-Rückgabe: aiFeatureOn()/aiIsActive() können bei
+      // aiSettings === null aus einem verketteten "&&" auch `null`
+      // zurückgeben — der Vertrag verlangt aber "→ boolean".
+      return !!aiFeatureOn(kind === 'progress' ? 'progress_summary' : 'description_summary');
+    },
+    // Stößt die Neuerzeugung einer KI-Zusammenfassung an. kind/refType
+    // werden gegen eine Allowlist geprüft, bevor sie in den Pfad
+    // eingesetzt werden (Eingabevalidierung an der Vertrauensgrenze zum
+    // W1-Modul); die eigentliche Id wird zusätzlich URL-kodiert.
+    regenerateSummary: (kind, refType, refId) => {
+      if (kind !== 'progress' && kind !== 'description') {
+        return Promise.reject(new Error('Ungültige Zusammenfassungsart'));
+      }
+      if (refType !== 'todo' && refType !== 'topic') {
+        return Promise.reject(new Error('Ungültiger Referenztyp'));
+      }
+      if (typeof refId !== 'string' || !refId || refId.length > 200) {
+        return Promise.reject(new Error('Ungültige Referenz-Id'));
+      }
+      return api('POST', `/summaries/${kind}/${refType}/${encodeURIComponent(refId)}/regenerate?confirm=true`);
+    },
+    // Der frühere Dialog zur zielgerichteten Statuserfassung entfällt hier ersatzlos.
+    //
+    // openEntryDialog ist NICHT Teil der W2 explizit zugewiesenen
+    // Host-Hook-Liste (nur aiSummaryEnabled/regenerateSummary/openObject
+    // waren gefordert). Da das UX-Lastenheft aber einen "eigenständigen"
+    // Zwischenstand-Bearbeiten-Dialog voraussetzt und in diesem Worktree
+    // keine TSProgress-Lieferung vorliegt, gegen die ich den tatsächlichen
+    // Aufruf verifizieren könnte, biete ich diesen Hook defensiv nach dem
+    // Namensschema einer früheren Iteration an. Siehe Abschlussbericht:
+    // klärungsbedürftiger Vertrags-Randfall für den Merge mit W1.
+    openEntryDialog: ({ refType, refId, entryId, initialHtml, contextHtml, onSaved } = {}) => {
+      const item = refType === 'todo' ? todos.find(x => x.id === refId) : findTopicAnywhere(refId)?.topic;
+      openProgressEntryDialog(refType, refId, entryId, initialHtml, contextHtml ?? item?.description, onSaved);
+    },
+  },
 };
+
+// ── Fortschritt: Konstanten/Helfer (Arbeitspaket W2) ───────────────────
+// DESCRIPTION_MIN_PLAIN_CHARS muss inhaltlich mit lib/summaries/constants.js
+// (Paket S1) übereinstimmen. Da index.html ohne Build-Step direkt im
+// Browser läuft, kann der Wert nicht importiert werden — siehe
+// Abschlussbericht W2 (Merge-Hinweis an S1/S3: bei Änderung dort bitte
+// auch diesen Wert anpassen).
+const DESCRIPTION_MIN_PLAIN_CHARS = 600;
+// Heuristische Schwelle für die NICHT-KI-Zeilenkürzung auf Karten
+// (unabhängig von DESCRIPTION_MIN_PLAIN_CHARS): ab dieser Klartextlänge
+// wird die Karten-Beschreibung per CSS line-clamp gekürzt, damit die Karte
+// im Standardzustand max. 4 Textzeilen behält.
+const CARD_DESC_CLAMP_CHARS = 320;
+// Sichtbare Topic-Chips im Standardzustand einer Karte, bevor das
+// Aufklapp-Element erscheint.
+const CARD_VISIBLE_CHIPS = 3;
+
+function plainTextLength(html) {
+  if (!html) return 0;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return (tmp.textContent || '').trim().length;
+}
+
+// Liefert einen kurzen, reinen (bereits escapten) Text-Auszug einer
+// HTML-Beschreibung für Kontextzeilen — wird NIE als HTML eingesetzt.
+function plainTextExcerpt(html, maxLen) {
+  if (!html) return '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const text = (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  return text.length <= maxLen ? text : text.slice(0, Math.max(0, maxLen - 1)).trim() + '…';
+}
+
+// Gemeinsame Eingabevalidierung für Fortschritts-Referenzen, bevor sie in
+// API-Pfade eingesetzt werden (Vertrauensgrenze zum W1-Modul: refType/refId
+// können über TSHost.progress.openEntryDialog von außen hereinkommen).
+function isValidProgressRef(refType, refId) {
+  return (refType === 'todo' || refType === 'topic') &&
+    typeof refId === 'string' && refId.length > 0 && refId.length <= 200;
+}
+
+function findTopicAnywhere(tid) {
+  for (const m of meetings) {
+    const t = (m.topics || []).find(x => x.id === tid);
+    if (t) return { meeting: m, topic: t };
+  }
+  return null;
+}
+
+// ── Todo-Modal: Beschreibung — Leseansicht mit Stift-Aktivierung ──────
+// (bindende Entscheidung: nach Ersterfassung schreibgeschützt, Bearbeiten
+// nur über das Stift-Symbol; nutzt ausschließlich den bestehenden
+// #todo-desc Rich-Text-Editor, KEIN zweiter Editor.)
+function updateTodoDescReadView(t) {
+  const display = document.getElementById('todo-desc-display');
+  const html = t?.description || '';
+  if (html) {
+    display.classList.remove('placeholder');
+    display.innerHTML = displayHtml(html);
+  } else {
+    display.classList.add('placeholder');
+    display.textContent = 'Keine Beschreibung — Stift zum Hinzufügen.';
+  }
+}
+
+function enterTodoDescEditMode() {
+  const readview = document.getElementById('todo-desc-readview');
+  const wrapper  = document.getElementById('todo-desc-wrapper');
+  readview.style.display = 'none';
+  wrapper.style.display  = '';
+  const ed = document.getElementById('todo-desc');
+  ed.focus();
+  // Cursor ans Textende setzen (Vorgabe: "Fokus + Cursor ans Textende").
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(ed);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch { /* Selection-API in Edge-Fällen (leerer Editor) unkritisch */ }
+}
+
+// ── Todo-Modal: "Weitere Details" (natives <details>) ─────────────────
+function shortDateLabel(isoDateOnly) {
+  if (!isoDateOnly) return '';
+  const [y, m, d] = isoDateOnly.slice(0, 10).split('-');
+  if (!y || !m || !d) return '';
+  return `${d}.${m}.`;
+}
+
+function updateTodoMoreDetailsSummary() {
+  const parts = [];
+  const due = document.getElementById('todo-due').value;
+  if (due) parts.push(`Fällig am ${shortDateLabel(due)}`);
+  const snooze = document.getElementById('todo-snooze').value;
+  if (snooze) parts.push(`Schlafend bis ${shortDateLabel(snooze)}`);
+  if (document.getElementById('todo-private').checked) parts.push('Privat');
+  const attachCount = editTodoId ? (attachCache['todo/' + editTodoId] || []).length : 0;
+  if (attachCount > 0) parts.push(`${attachCount} ${attachCount === 1 ? 'Anhang' : 'Anhänge'}`);
+  const summaryEl = document.getElementById('todo-more-details-summary');
+  summaryEl.textContent = parts.length ? `Weitere Details – ${parts.join(', ')}` : 'Weitere Details';
+  document.getElementById('todo-more-details').open = parts.length > 0;
+}
+
+// ── Todo-Modal: ungespeicherte Änderungen (Verwerfen-Rückfrage) ───────
+let todoModalSnapshot = null;
+
+function collectTodoFormData() {
+  return {
+    title: document.getElementById('todo-title').value.trim(),
+    description: getRT('todo-desc'),
+    isPrivate: document.getElementById('todo-private').checked,
+    dueDate: document.getElementById('todo-due').value || null,
+    snoozeDate: document.getElementById('todo-snooze').value || null,
+    snoozeHasTime: document.getElementById('todo-snooze-has-time').checked,
+    snoozeTime: document.getElementById('todo-snooze-time').value || null,
+    done: editTodoId ? document.getElementById('todo-done').checked : false,
+    result: editTodoId ? getRT('todo-result') : '',
+    resultDate: editTodoId ? document.getElementById('todo-result-date').value : '',
+  };
+}
+
+function hasUnsavedTodoChanges() {
+  if (todoModalSnapshot == null) return false;
+  return JSON.stringify(collectTodoFormData()) !== todoModalSnapshot;
+}
+
+async function closeTodoModal(skipConfirm) {
+  if (!skipConfirm && hasUnsavedTodoChanges()) {
+    const ok = await genericConfirm(
+      'Änderungen verwerfen?',
+      'Es gibt ungespeicherte Änderungen an diesem Todo. Möchtest du sie verwerfen?',
+      'Verwerfen', 'Weiter bearbeiten'
+    );
+    if (!ok) return;
+  }
+  todoModalSnapshot = null;
+  document.getElementById('todo-modal').style.display = 'none';
+}
+
+function todoModalOverlayClick(e) {
+  if (e.target.id !== 'todo-modal') return;
+  closeTodoModal();
+}
+
+// ── Todo-Modal: Fortschrittsbereich (Composer + Verlauf) ──────────────
+function focusTodoProgressSection() {
+  const el = document.getElementById('todo-progress-section');
+  if (!el || el.style.display === 'none') return;
+  setTimeout(() => {
+    el.scrollIntoView({ behavior: (TSHost.reducedMotion() ? 'auto' : 'smooth'), block: 'center' });
+  }, 60);
+}
+
+// `result` ist optional (Rückgabewert der Schreibroute, z.B. wenn der
+// Aufrufer sie kennt) und wird NUR für die aiSummary.pending-Erkennung
+// genutzt — das eigentliche Neuladen erfolgt bewusst über einen kompletten
+// loadTodos()/loadMeetings()-Refresh statt eines manuellen Merges, damit
+// wir keine Annahmen über nicht dokumentierte Detail-Feldformen von
+// `result.summary` treffen müssen (siehe Abschlussbericht: die
+// Zwischenstands-Schreibrouten liefern laut Vertrag zusätzlich `summary`/
+// `aiSummary`, aber die genaue Form von `summary` ist dort nicht spezifiziert).
+async function onTodoProgressEntrySaved(refType, refId, result) {
+  toast('Zwischenstand gespeichert');
+  try {
+    if (refType === 'todo') await loadTodos(); else await loadMeetings();
+  } catch (e) { toast(e.message || 'Aktualisierung fehlgeschlagen', 'error'); }
+  render();
+  if (editTodoId && refType === 'todo' && refId === editTodoId) {
+    mountTodoProgressArea(todos.find(x => x.id === editTodoId));
+  }
+  // Server verarbeitet die KI-Zusammenfassung ggf. asynchron
+  // (aiSummary.pending === true) — TSProgress.pollSummaries() wartet
+  // bis zu 10x/2000ms auf das Ergebnis, danach wird einmal final neu
+  // geladen, damit Karten/Bearbeiten-Ansicht die fertige Zusammenfassung
+  // zeigen, ohne dass die Nutzerin manuell neu laden muss.
+  if (result?.aiSummary?.pending && window.TSProgress && typeof TSProgress.pollSummaries === 'function') {
+    try {
+      await TSProgress.pollSummaries([`${refType}:${refId}`]);
+    } catch { /* Polling-Fehler sind nicht kritisch, Daten bleiben auf letztem Stand */ }
+    try {
+      if (refType === 'todo') await loadTodos(); else await loadMeetings();
+    } catch { /* still non-fatal */ }
+    render();
+    if (editTodoId && refType === 'todo' && refId === editTodoId) {
+      mountTodoProgressArea(todos.find(x => x.id === editTodoId));
+    }
+  }
+}
+
+function mountTodoProgressArea(t) {
+  const section   = document.getElementById('todo-progress-section');
+  const composerEl = document.getElementById('todo-progress-composer');
+  const timelineEl = document.getElementById('todo-progress-timeline');
+  if (!section) return;
+  composerEl.innerHTML = '';
+  timelineEl.innerHTML = '';
+  if (!t || !t.id) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  if (!window.TSProgress) {
+    timelineEl.innerHTML = '<p class="form-hint">Fortschrittsverlauf derzeit nicht verfügbar.</p>';
+    return;
+  }
+  if (!t.done && typeof TSProgress.mountInlineComposer === 'function') {
+    TSProgress.mountInlineComposer(composerEl, {
+      refType: 'todo', refId: t.id,
+      snoozedUntil: t.snoozedUntil || null,
+      done: !!t.done,
+      onSaved: (result) => onTodoProgressEntrySaved('todo', t.id, result),
+      onError: (err) => toast(err?.message || 'Zwischenstand konnte nicht gespeichert werden', 'error'),
+    });
+  }
+  if (typeof TSProgress.mountTimeline === 'function') {
+    TSProgress.mountTimeline(timelineEl, { refType: 'todo', refId: t.id, limit: 3 });
+  }
+}
+
+// ── Karten: Composer "Zwischenstand erfassen" (Story 6, Übersichtsliste) ─
+function mountCardComposer(container, refType, refId) {
+  if (!window.TSProgress || typeof TSProgress.mountInlineComposer !== 'function') {
+    container.innerHTML = '<p class="form-hint">Fortschritts-Erfassung derzeit nicht verfügbar.</p>';
+    return;
+  }
+  const item = refType === 'todo' ? todos.find(x => x.id === refId) : findTopicAnywhere(refId)?.topic;
+  TSProgress.mountInlineComposer(container, {
+    refType, refId,
+    snoozedUntil: item?.snoozedUntil || null,
+    done: !!item?.done,
+    onSaved: (result) => onTodoProgressEntrySaved(refType, refId, result),
+    onError: (err) => toast(err?.message || 'Zwischenstand konnte nicht gespeichert werden', 'error'),
+  });
+}
+
+function toggleTodoCardComposer(refType, refId) {
+  const container = document.getElementById(`todo-card-composer-${refType}-${refId}`);
+  if (!container) return;
+  const willShow = container.style.display === 'none' || !container.style.display;
+  container.style.display = willShow ? '' : 'none';
+  if (willShow && !container.dataset.mounted) {
+    container.dataset.mounted = '1';
+    mountCardComposer(container, refType, refId);
+  }
+}
+
+// ── Karten: EIN Aufklapp-Element für lange Beschreibung + zusätzliche
+// Topic-Chips (adaptives Label je nachdem, was tatsächlich überläuft). ──
+const _todoCardExpanded = new Set();
+
+function toggleTodoCardOverflow(refType, refId) {
+  const key = `${refType}:${refId}`;
+  if (_todoCardExpanded.has(key)) _todoCardExpanded.delete(key); else _todoCardExpanded.add(key);
+  render();
+}
+
+// Liefert { descriptionHtml, chipsHtml, toggleHtml } für eine Todo-/Topic-
+// Karte. `isDone`/`isArchived` unterdrücken KI-Zusammenfassung und Composer
+// vollständig (Vorgabe: erledigte Todos/archivierte Meetings sind rein
+// lesend, ohne Fortschritts-/KI-Flächen).
+function renderTodoCardBody(refType, item, themeEntries, isDone, isArchived) {
+  const key = `${refType}:${item.id}`;
+  const expanded = _todoCardExpanded.has(key);
+  const descHtmlRaw = item.description || '';
+  const plainLen = plainTextLength(descHtmlRaw);
+  const dStatus = item.aiSummary?.description?.status || null;
+  // KI-Zusammenfassungsfläche nur für Status, die eine sinnvolle Fläche
+  // ergeben — 'not_applicable' bleibt bewusst ausgeblendet (bekannte
+  // S3-Mehrdeutigkeit, siehe Abschlussbericht), 'disabled' fällt auf die
+  // deterministische Zeilenkürzung zurück.
+  const descAiEligible = !isDone && !isArchived && dStatus && dStatus !== 'not_applicable' && dStatus !== 'disabled';
+  const descNeedsClamp = !descAiEligible && plainLen > CARD_DESC_CLAMP_CHARS;
+
+  const visibleChips  = expanded ? themeEntries : themeEntries.slice(0, CARD_VISIBLE_CHIPS);
+  const chipsOverflow = themeEntries.length > CARD_VISIBLE_CHIPS;
+  const showToggle    = !isDone && (descNeedsClamp || chipsOverflow);
+  const toggleLabel   = chipsOverflow
+    ? (expanded ? 'Weniger anzeigen' : 'Mehr anzeigen')
+    : (expanded ? 'Text einklappen'  : 'Ganzen Text anzeigen');
+
+  let descriptionHtml = '';
+  if (descAiEligible) {
+    descriptionHtml = `<div class="ts-card-summary-slot" id="todo-desc-summary-${refType}-${item.id}"></div>`;
+  } else if (descHtmlRaw) {
+    const clampClass = (descNeedsClamp && !expanded) ? ' desc-clamp-fallback' : '';
+    descriptionHtml = `<div class="topic-description rt-display${clampClass}">${displayHtml(descHtmlRaw)}</div>`;
+  }
+
+  const chipsHtml = themeEntries.length > 0 ? `
+    <div class="theme-chips">
+      ${visibleChips.map(x => `
+        <span class="theme-chip" onclick="selectView('__themes__')" title="Topic: ${escHtml(x.theme.title)}">
+          🏷️ ${escHtml(x.theme.title)}
+        </span>`).join('')}
+    </div>` : '';
+
+  const toggleHtml = showToggle
+    ? `<button type="button" class="card-more-toggle" onclick="toggleTodoCardOverflow('${refType}','${item.id}')" aria-expanded="${expanded}">${escHtml(toggleLabel)}</button>`
+    : '';
+
+  return { descriptionHtml, chipsHtml, toggleHtml };
+}
+
+// Fortschrittszeile + optionale KI-Fortschritts-Zusammenfassung für Karten
+// (immer sichtbar außer bei Erledigt/Archiviert — Fortschritt bleibt
+// textbasiert, keine feste Zielvorgabe, kein Prozentwert).
+function renderTodoCardProgress(refType, item, isDone, isArchived) {
+  if (isDone || isArchived) return '';
+  const lineHtml = (window.TSProgress && typeof TSProgress.progressLineHtml === 'function' && item.progress)
+    ? TSProgress.progressLineHtml(item.progress) : '';
+  const lineBlock = lineHtml ? `<div class="ts-progress-line-host">${lineHtml}</div>` : '';
+  const pStatus = item.aiSummary?.progress?.status || null;
+  const summaryBlock = (pStatus && pStatus !== 'not_applicable' && pStatus !== 'disabled')
+    ? `<div class="ts-card-summary-slot" id="todo-progress-summary-${refType}-${item.id}"></div>` : '';
+  return lineBlock + summaryBlock;
+}
+
+// Nach jedem Rendern der Todo-Übersicht aufzurufen: hängt die von
+// TSProgress bereitgestellten Card-Summary-Mounts in die zuvor als leere
+// Platzhalter gerenderten Slots ein (Konvention wie bei bestehenden
+// Platzhaltern, z.B. reentry-banner-${id}).
+function mountTodoCardSummaries(items) {
+  if (!window.TSProgress || typeof TSProgress.mountCardSummary !== 'function') return;
+  for (const { refType, item } of items) {
+    const dStatus = item.aiSummary?.description?.status || null;
+    const descSlot = document.getElementById(`todo-desc-summary-${refType}-${item.id}`);
+    if (descSlot) {
+      TSProgress.mountCardSummary(descSlot, {
+        refType, refId: item.id, kind: 'description',
+        summary: item.aiSummary.description,
+        onRegenerate: () => TSHost.progress.regenerateSummary('description', refType, item.id),
+      });
+    }
+    const pStatus = item.aiSummary?.progress?.status || null;
+    const progSlot = document.getElementById(`todo-progress-summary-${refType}-${item.id}`);
+    if (progSlot) {
+      TSProgress.mountCardSummary(progSlot, {
+        refType, refId: item.id, kind: 'progress',
+        summary: item.aiSummary.progress,
+        onRegenerate: () => TSHost.progress.regenerateSummary('progress', refType, item.id),
+      });
+    }
+  }
+}
+
+// ── Zwischenstand bearbeiten (eigenständiger Dialog für vorhandene
+// Fortschritts-Einträge; Neueinträge laufen ausschließlich über den
+// Inline-Composer, siehe mountCardComposer/mountTodoProgressArea). ────
+let progressEntryDialogCtx = null; // { refType, refId, entryId, savedHtml, onSaved }
+
+function openProgressEntryDialog(refType, refId, entryId, initialHtml, contextDescriptionHtml, onSaved) {
+  if (!isValidProgressRef(refType, refId)) {
+    toast('Zwischenstand konnte nicht geöffnet werden (ungültige Referenz)', 'error');
+    return;
+  }
+  progressEntryDialogCtx = {
+    refType, refId, entryId: entryId || null, savedHtml: initialHtml || '',
+    onSaved: typeof onSaved === 'function' ? onSaved : null,
+  };
+  setRT('progress-entry-body', initialHtml || '');
+  updateProgressEntryCharHint();
+  const ctx = document.getElementById('progress-entry-context');
+  const excerpt = plainTextExcerpt(contextDescriptionHtml || '', 160);
+  if (excerpt) { ctx.textContent = excerpt; ctx.style.display = ''; }
+  else { ctx.textContent = ''; ctx.style.display = 'none'; } // NIE eine leere Kontext-Fläche ohne Inhalt anzeigen
+  document.getElementById('progress-entry-error').style.display = 'none';
+  document.getElementById('progress-entry-delete-btn').style.display = entryId ? '' : 'none';
+  document.getElementById('progress-entry-modal').style.display = 'flex';
+}
+
+function closeProgressEntryDialog() {
+  document.getElementById('progress-entry-modal').style.display = 'none';
+  progressEntryDialogCtx = null;
+}
+
+function progressEntryOverlayClick(e) {
+  if (e.target.id !== 'progress-entry-modal') return;
+  closeProgressEntryDialog();
+}
+
+function updateProgressEntryCharHint() {
+  const len = getRT('progress-entry-body').replace(/<[^>]*>/g, '').length;
+  document.getElementById('progress-entry-char-hint').textContent = `${len} / 5.000 Zeichen (ungefähr)`;
+}
+
+async function submitProgressEntryDialog() {
+  if (!progressEntryDialogCtx) return;
+  const { refType, refId, entryId } = progressEntryDialogCtx;
+  if (!isValidProgressRef(refType, refId)) { closeProgressEntryDialog(); return; }
+  const body = getRT('progress-entry-body');
+  const errEl = document.getElementById('progress-entry-error');
+  errEl.style.display = 'none';
+  if (!body) { errEl.textContent = 'Bitte einen Zwischenstand eingeben.'; errEl.style.display = ''; return; }
+  setBusy('progress-entry-save-btn', true);
+  const onSaved = progressEntryDialogCtx.onSaved;
+  try {
+    const result = entryId
+      ? await api('PUT', `/progress/${refType}/${refId}/entries/${entryId}`, { body })
+      : await api('POST', `/progress/${refType}/${refId}/entries`, { body });
+    closeProgressEntryDialog();
+    if (onSaved) onSaved(result); else await onTodoProgressEntrySaved(refType, refId, result);
+  } catch (e) {
+    errEl.textContent = e.message || 'Speichern fehlgeschlagen';
+    errEl.style.display = '';
+  } finally { setBusy('progress-entry-save-btn', false); }
+}
+
+async function deleteProgressEntryDialog() {
+  if (!progressEntryDialogCtx || !progressEntryDialogCtx.entryId) return;
+  const { refType, refId, entryId, onSaved } = progressEntryDialogCtx;
+  if (!isValidProgressRef(refType, refId)) { closeProgressEntryDialog(); return; }
+  const ok = await genericConfirm('Zwischenstand löschen?', 'Dieser Eintrag wird unwiderruflich gelöscht.', 'Löschen', 'Abbrechen');
+  if (!ok) return;
+  try {
+    await api('DELETE', `/progress/${refType}/${refId}/entries/${entryId}`);
+    closeProgressEntryDialog();
+    if (onSaved) onSaved(); else await onTodoProgressEntrySaved(refType, refId);
+  } catch (e) { toast(e.message || 'Löschen fehlgeschlagen', 'error'); }
+}
 
 // ── Utils ────────────────────────────────────────────────────
 const getMeeting = id => meetings.find(m => m.id === id);
@@ -4525,6 +5112,16 @@ function renderTodosView(el) {
           ${done.map(t => renderPersonalTodoCard(t, true, themeMap)).join('')}` : ''}
       </div><!-- /topics-section -->
     </div><!-- /full-width-view -->`;
+
+  // KI-Card-Summary-Slots (Story 7/8) nachträglich einhängen — die Slots
+  // wurden oben nur für Karten gerendert, für die eine AI-Zusammenfassung
+  // tatsächlich angezeigt werden soll (siehe renderTodoCardBody/-Progress).
+  mountTodoCardSummaries([
+    ...open.map(item => ({ refType: 'todo', item })),
+    ...snoozedTodos.map(item => ({ refType: 'todo', item })),
+    ...meetingTodosOpen.map(({ topic }) => ({ refType: 'topic', item: topic })),
+    ...meetingTodosSnoozed.map(({ topic }) => ({ refType: 'topic', item: topic })),
+  ]);
 }
 
 function renderPersonalTodoCard(t, isDone, themeMap) {
@@ -4537,6 +5134,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
     ondragleave="todoDragLeave(event)"
     ondrop="todoDrop(event,'${t.id}')"` : '';
   const themeEntries = themeMap ? (themeMap[t.id] || []) : [];
+  const cardBody = renderTodoCardBody('todo', t, themeEntries, isDone, false);
   return `
     <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}" data-todoid="${t.id}" ${drag}>
       <div class="topic-card-header">
@@ -4549,7 +5147,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           ${!isDone ? `
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openTodoModal('${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
             <button class="btn btn-success btn-sm" onclick="openCompleteTodoModal('${t.id}')">${SVG.check} Erledigt</button>
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="openStackPushModal('todo','${t.id}')" title="Auf Stack legen (⌘⇧P)">📚</button>` : `
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="toggleTodoCardComposer('todo','${t.id}')" aria-label="Zwischenstand erfassen" title="Zwischenstand erfassen">${SVG.notes}</button>` : `
             <button class="btn btn-secondary btn-sm" onclick="reopenPersonalTodo('${t.id}')">↺ Öffnen</button>`}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
@@ -4563,6 +5161,9 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
               <button onclick="closeAllOverflow(); openThemeLinkModalForTodo('${t.id}')">
                 <span class="icon">🏷️</span><span>Topic zuweisen</span>
               </button>
+              ${!isDone ? `<button onclick="closeAllOverflow(); openStackPushModal('todo','${t.id}')">
+                <span class="icon">📚</span><span>Auf Stack legen</span>
+              </button>` : ''}
               <hr>
               <button class="danger" onclick="closeAllOverflow(); confirmDeleteTodo('${t.id}','${escHtml(t.title)}')">
                 <span class="icon">🗑️</span><span>Löschen</span>
@@ -4571,23 +5172,19 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           </details>
         </div>
       </div>
-      ${t.description ? `<div class="topic-description rt-display">${displayHtml(t.description)}</div>` : ''}
+      ${cardBody.descriptionHtml}
       ${!isDone && t.dueDate ? `
         <div class="due-info">
           <span class="due-badge ${dueDateClass(t.dueDate)}">${SVG.calendar} Fällig: ${fmtDateOnly(t.dueDate)}${dueDateSuffix(t.dueDate)}</span>
         </div>` : ''}
+      ${renderTodoCardProgress('todo', t, isDone, false)}
       ${sleeping ? `
         <div class="snooze-info">
           ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
           <button class="snooze-wake-btn" onclick="wakeUpTodo('${t.id}')">🔔 Jetzt wecken</button>
         </div>` : ''}
-      ${themeEntries.length > 0 ? `
-        <div class="theme-chips">
-          ${themeEntries.map(x => `
-            <span class="theme-chip" onclick="selectView('__themes__')" title="Topic: ${escHtml(x.theme.title)}">
-              🏷️ ${escHtml(x.theme.title)}
-            </span>`).join('')}
-        </div>` : ''}
+      ${!isDone ? `<div id="todo-card-composer-todo-${t.id}" class="ts-progress-line-host" style="display:none"></div>` : ''}
+      ${cardBody.chipsHtml}${cardBody.toggleHtml}
       ${isDone ? `
         <div class="topic-result">
           <div class="topic-result-header">
@@ -4607,7 +5204,12 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
 
 function renderMeetingTopicTodo(m, t, themeMap) {
   const sleeping    = isSnoozed(t);
+  // ARCHIVED_READONLY (Archiv-Feature): defensiv per Optional-Chaining
+  // gelesen, da dieses Worktree (noch) keinen gemergten Archiv-Stand hat —
+  // wird erst nach dem Merge wirksam.
+  const isArchived = !!m?.archived;
   const themeEntries = themeMap ? (themeMap[t.id] || []) : [];
+  const cardBody = renderTodoCardBody('topic', t, themeEntries, false, isArchived);
   return `
     <div class="topic-card open${sleeping ? ' snoozed' : ''}">
       <div class="topic-card-header">
@@ -4618,7 +5220,7 @@ function renderMeetingTopicTodo(m, t, themeMap) {
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${m.id}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
           <button class="btn btn-success btn-sm" onclick="openCompleteModal('${m.id}','${t.id}')">${SVG.check} Erledigt</button>
-          <button class="btn btn-ghost btn-sm btn-icon" onclick="openStackPushModal('topic','${t.id}')" title="Auf Stack legen">📚</button>
+          ${!isArchived ? `<button class="btn btn-secondary btn-sm btn-icon" onclick="toggleTodoCardComposer('topic','${t.id}')" aria-label="Zwischenstand erfassen" title="Zwischenstand erfassen">${SVG.notes}</button>` : ''}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
             <div class="topic-overflow-menu">
@@ -4630,6 +5232,9 @@ function renderMeetingTopicTodo(m, t, themeMap) {
               </button>
               <button onclick="closeAllOverflow(); toggleTopicTodo('${m.id}','${t.id}')">
                 <span class="icon">📌</span><span>Aus Todos entfernen</span>
+              </button>
+              <button onclick="closeAllOverflow(); openStackPushModal('topic','${t.id}')">
+                <span class="icon">📚</span><span>Auf Stack legen</span>
               </button>
               ${sleeping
                 ? `<button onclick="closeAllOverflow(); wakeUpTopic('${m.id}','${t.id}')">
@@ -4646,19 +5251,15 @@ function renderMeetingTopicTodo(m, t, themeMap) {
           </details>
         </div>
       </div>
-      ${t.description ? `<div class="topic-description rt-display">${displayHtml(t.description)}</div>` : ''}
+      ${cardBody.descriptionHtml}
+      ${renderTodoCardProgress('topic', t, false, isArchived)}
       ${sleeping ? `
         <div class="snooze-info">
           ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
           <button class="snooze-wake-btn" onclick="wakeUpTopic('${m.id}','${t.id}')">🔔 Jetzt wecken</button>
         </div>` : ''}
-      ${themeEntries.length > 0 ? `
-        <div class="theme-chips">
-          ${themeEntries.map(x => `
-            <span class="theme-chip" onclick="selectView('__themes__')" title="Topic: ${escHtml(x.theme.title)}">
-              🏷️ ${escHtml(x.theme.title)}
-            </span>`).join('')}
-        </div>` : ''}
+      ${!isArchived ? `<div id="todo-card-composer-topic-${t.id}" class="ts-progress-line-host" style="display:none"></div>` : ''}
+      ${cardBody.chipsHtml}${cardBody.toggleHtml}
       <a class="todo-meeting-chip" onclick="selectMeeting('${m.id}')">
         <span class="meeting-dot" style="background:${escHtml(m.color||'#1D6FE8')};width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:3px"></span>${escHtml(m.title)}
       </a>
@@ -5076,6 +5677,16 @@ function openTodoModal(id, presetThemeId) {
   document.getElementById('todo-modal-title').textContent = t ? 'Todo bearbeiten' : 'Neues Todo';
   document.getElementById('todo-title').value = t?.title || '';
   setRT('todo-desc', t?.description || '');
+  // Beschreibung: bei bestehendem Todo schreibgeschützte Leseansicht,
+  // bei Neuanlage sofort editierbar (kein Stift-Klick nötig).
+  if (t) {
+    document.getElementById('todo-desc-wrapper').style.display = 'none';
+    document.getElementById('todo-desc-readview').style.display = '';
+    updateTodoDescReadView(t);
+  } else {
+    document.getElementById('todo-desc-readview').style.display = 'none';
+    document.getElementById('todo-desc-wrapper').style.display = '';
+  }
   document.getElementById('todo-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
   const todoSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
   document.getElementById('todo-snooze-has-time').checked = todoSnoozeHasTime;
@@ -5102,10 +5713,14 @@ function openTodoModal(id, presetThemeId) {
   } else {
     attachSlot.innerHTML = '';
   }
+  updateTodoMoreDetailsSummary();
+  mountTodoProgressArea(t);
   document.getElementById('todo-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('todo-title').focus(), 50);
+  // Snapshot NACH allen obigen Feld-Initialisierungen für den Dirty-Check
+  // (Verwerfen-Rückfrage bei Abbrechen/Overlay-Klick/Escape).
+  todoModalSnapshot = JSON.stringify(collectTodoFormData());
 }
-function closeTodoModal() { document.getElementById('todo-modal').style.display = 'none'; }
 
 async function saveTodoModal() {
   const title = document.getElementById('todo-title').value.trim();
@@ -5152,7 +5767,7 @@ async function saveTodoModal() {
       }
     }
     todoModalPresetThemeId = null;
-    closeTodoModal(); render();
+    closeTodoModal(true); render();
     await loadThemeDetail(); render();
     toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
     if (savedTodoId && !data.done) triggerThemeSuggestions('todo', savedTodoId);
@@ -7013,6 +7628,8 @@ const AI_FEATURE_LABELS = {
   cross_meeting: 'Cross-Meeting-Insight',
   drift:         'Drift-Detection',
   link_summary:  'Link-Zusammenfassung',
+  progress_summary:    'Fortschritts-Zusammenfassung',
+  description_summary: 'Beschreibungs-Zusammenfassung',
 };
 
 const AI_MODEL_DEFAULTS = {
@@ -8153,8 +8770,12 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('search-overlay').classList.contains('open')) { closeSearch(); return; }
     closeMobileSidebar();
     closeHelp();
-    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','todo-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
+    // todo-modal nimmt an der Verwerfen-Rückfrage teil (ungespeicherte
+    // Änderungen) und wird daher NICHT blind ausgeblendet, sondern über
+    // closeTodoModal() geschlossen.
+    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal','progress-entry-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    if (document.getElementById('todo-modal').style.display !== 'none') closeTodoModal();
     if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
     closeConfirm();
     return;
@@ -8191,7 +8812,7 @@ document.getElementById('login-pw').addEventListener('keydown',   e => { if (e.k
 document.getElementById('login-user').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('login-pw').focus(); });
 
 // ── Init ─────────────────────────────────────────────────────
-['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc'].forEach(id => initRtToolbar(id+'-tb', id));
+['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc','progress-entry-body'].forEach(id => initRtToolbar(id+'-tb', id));
 initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });
 initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });
 
