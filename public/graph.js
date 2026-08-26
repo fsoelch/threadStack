@@ -22,6 +22,14 @@
 
   function key(type, id) { return type + ':' + id; }
 
+  // Archiv-Feature (Arbeitspaket W1): Topic-Knoten liefern zusätzlich
+  // meta.archived (GET /api/graph, Paket B3). Reine, DOM-freie Prädikat-
+  // funktion — analog zum bestehenden n.done-Muster, siehe nodeAriaLabel/
+  // renderNode/buildPanel. Nur Topic-Knoten können archiviert sein.
+  function isArchivedTopicNode(n) {
+    return !!(n && n.type === 'topic' && n.meta && n.meta.archived === true);
+  }
+
   function nowMs() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
 
   function debounce(fn, ms) {
@@ -735,6 +743,7 @@
     var k = key(n.type, n.id);
     var parts = [TYPE_LABELS[n.type] + ': ' + n.title];
     if (n.done === true) parts.push('erledigt');
+    if (isArchivedTopicNode(n)) parts.push('archiviert');
     var edgeCount = (this.edgesByNode[k] || []).length;
     parts.push(edgeCount + ' Verknüpfung' + (edgeCount === 1 ? '' : 'en'));
     return parts.join(', ');
@@ -757,6 +766,20 @@
       badge.appendChild(svgEl('circle', { r: 8 }));
       badge.appendChild(svgEl('path', { d: 'M -3.5 0 L -1 2.5 L 3.5 -3' }));
       g.appendChild(badge);
+    }
+
+    // Archiv-Feature (Arbeitspaket W1): gleiches Badge-Muster wie oben
+    // (Kreis + Icon, gleiche Größe/Position-Logik), eigenes Icon (Archiv-Box
+    // statt Haken) und am gegenüberliegenden Eck platziert, damit ein Topic,
+    // das sowohl "erledigt" als auch "archiviert" ist, beide Badges zeigt.
+    if (isArchivedTopicNode(n)) {
+      g.classList.add('tsg-archived');
+      var archBadge = svgEl('g', { class: 'tsg-archived-badge', transform: 'translate(' + (-NODE_R * 0.6) + ',' + (-NODE_R * 0.6) + ')' });
+      archBadge.appendChild(svgEl('circle', { r: 8 }));
+      // Einfaches Archiv-Box-Symbol: Deckel + Korpus + Griff, vektoriell
+      // (kein Emoji-Glyph) analog zum Haken-Pfad des Done-Badges.
+      archBadge.appendChild(svgEl('path', { d: 'M -4 -3 H 4 M -3.3 -1.3 H 3.3 V 3 H -3.3 Z M -1 0.8 H 1' }));
+      g.appendChild(archBadge);
     }
 
     var label = svgEl('text', { class: 'tsg-label', y: NODE_R + 14 });
@@ -1090,7 +1113,7 @@
     var iconWrap = document.createElement('span');
     iconWrap.appendChild(iconSvg);
     typeRow.appendChild(iconWrap);
-    typeRow.appendChild(htmlEl('span', {}, TYPE_LABELS[n.type] + (n.done === true ? ' · erledigt' : '')));
+    typeRow.appendChild(htmlEl('span', {}, TYPE_LABELS[n.type] + (n.done === true ? ' · erledigt' : '') + (isArchivedTopicNode(n) ? ' · archiviert' : '')));
 
     var title = htmlEl('div', { class: 'tsg-panel-title' });
     title.textContent = n.title || '';
@@ -1818,7 +1841,7 @@
       group.forEach(function (n) {
         var li = document.createElement('li');
         var btn = htmlEl('button', { 'aria-label': self.nodeAriaLabel(n) });
-        btn.textContent = n.title + (n.done === true ? ' (erledigt)' : '');
+        btn.textContent = n.title + (n.done === true ? ' (erledigt)' : '') + (isArchivedTopicNode(n) ? ' (archiviert)' : '');
         self.on(btn, 'click', function () { self.selectNode(key(n.type, n.id)); self.toggleA11yList(); });
         li.appendChild(btn);
         ul.appendChild(li);
@@ -1832,29 +1855,40 @@
   // ==========================================================================
   var instance = null;
 
-  window.TSGraph = {
-    mount: function (rootEl) {
-      if (!rootEl) throw new Error('TSGraph.mount: rootEl erforderlich');
-      if (instance && instance.mounted) {
-        if (instance.root === rootEl) return; // idempotent no-op
-        instance.unmount();
+  if (typeof window !== 'undefined') {
+    window.TSGraph = {
+      mount: function (rootEl) {
+        if (!rootEl) throw new Error('TSGraph.mount: rootEl erforderlich');
+        if (instance && instance.mounted) {
+          if (instance.root === rootEl) return; // idempotent no-op
+          instance.unmount();
+        }
+        instance = new GraphInstance(rootEl);
+        instance.mount();
+      },
+      unmount: function () {
+        if (instance) { instance.unmount(); }
+      },
+      invalidate: function () {
+        if (instance) instance.invalidate();
+      },
+      isMounted: function () {
+        return !!(instance && instance.mounted);
+      },
+      // Test-/Benchmark-Hilfsfunktionen, ausschließlich für graph-dev.html gedacht.
+      _debug: {
+        getInstance: function () { return instance; },
+        computeLayout: computeLayout
       }
-      instance = new GraphInstance(rootEl);
-      instance.mount();
-    },
-    unmount: function () {
-      if (instance) { instance.unmount(); }
-    },
-    invalidate: function () {
-      if (instance) instance.invalidate();
-    },
-    isMounted: function () {
-      return !!(instance && instance.mounted);
-    },
-    // Test-/Benchmark-Hilfsfunktionen, ausschließlich für graph-dev.html gedacht.
-    _debug: {
-      getInstance: function () { return instance; },
-      computeLayout: computeLayout
-    }
-  };
+    };
+  }
+
+  // Reine Hilfsfunktion für node-basierte Unit-Tests (siehe
+  // test/archive_web_helpers.test.js) — ohne DOM/Browser nutzbar. Analog zum
+  // Export-Muster in public/progress.js.
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = {
+      isArchivedTopicNode: isArchivedTopicNode
+    };
+  }
 })();

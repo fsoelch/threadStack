@@ -13,6 +13,8 @@ const { safeFetchPage, SafeFetchError } = require('./lib/safe-fetch');
 const { extractReadableText, ExtractError } = require('./lib/html-extract');
 const linkCache = require('./ai/link-cache');
 const aiUsage = require('./ai/usage');
+const progress = require('./lib/progress');
+const archive = require('./lib/archive');
 
 const app      = express();
 // If behind a trusted reverse proxy (e.g. nginx on same host), set TRUST_PROXY=1
@@ -520,6 +522,21 @@ db.exec(`
   }
 }
 
+// ── Migration: Zielbild/Fortschrittsverlauf (Arbeitspaket S1/S2) ────
+// Additive CREATE TABLE/INDEX IF NOT EXISTS für progress_entries/progress_meta.
+// Läuft NACH den Kern-Tabellen (users/todos/topics), da progress_entries.user_id
+// auf users(id) referenziert und purgeProgressOrphans() bereits gegen
+// existierende todos/topics abgleicht.
+progress.runProgressMigrations(db);
+progress.purgeProgressOrphans(db);
+
+// ── Migration: Archiv-Kernmodul (Arbeitspaket B1/B2, "Meetings archivieren
+// statt löschen") ────
+// Läuft NACH den Progress-Migrationen, da archive_state.user_id auf users(id)
+// referenziert und users/meetings zu diesem Zeitpunkt bereits existieren.
+archive.runArchiveMigrations(db);
+archive.purgeArchiveOrphans(db);
+
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
 let encryptionKey;
@@ -775,11 +792,32 @@ app.put(`${A}/password`, requireAuth, (req, res) => {
 
 // ── Meeting routes ───────────────────────────────────────────
 app.get(`${A}/meetings`, requireAuth, (req, res) => {
-  const ms = db.prepare('SELECT * FROM meetings WHERE user_id=? ORDER BY sort_order,created_at').all(req.session.uid);
+  // Archivierte Meetings werden hier bewusst ausgeblendet (Arbeitspaket B2,
+  // "Meetings archivieren statt löschen") - sie sind ausschließlich über
+  // GET /api/archive/meetings erreichbar.
+  const ms = db.prepare(
+    `SELECT m.* FROM meetings m WHERE m.user_id=? AND ${archive.notArchivedSql('m')} ORDER BY m.sort_order, m.created_at`
+  ).all(req.session.uid);
   const ts = ms.length
     ? db.prepare(`SELECT * FROM topics WHERE meeting_id IN (${ms.map(()=>'?').join(',')}) ORDER BY sort_order, created_at`).all(...ms.map(m=>m.id))
     : [];
-  res.json(ms.map(m => parseMeeting(m, ts)));
+  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
+  // EINE Batch-Query über summaryFor() für alle Topics dieser Meetings (kein
+  // N+1) - Ergebnis wird nachträglich in die bereits geparsten Topic-Objekte
+  // gejoint, ohne parseMeeting()/parseTopic() selbst anzufassen.
+  const topicItems = ts.map(t => ({
+    refType: 'topic', refId: t.id,
+    refCreatedAt: t.created_at, refUpdatedAt: t.updated_at,
+    refDone: !!t.done, refSnoozedUntil: t.snoozed_until || null,
+  }));
+  const progressMap = progress.summaryFor(db, req.session.uid, topicItems);
+  const meetings = ms.map(m => parseMeeting(m, ts));
+  for (const meeting of meetings) {
+    for (const topic of meeting.topics) {
+      topic.progress = progressMap.get(`topic:${topic.id}`) ?? null;
+    }
+  }
+  res.json(meetings);
 });
 
 app.post(`${A}/meetings`, requireAuth, (req, res) => {
@@ -800,7 +838,12 @@ app.post(`${A}/meetings`, requireAuth, (req, res) => {
 app.put(`${A}/meetings/reorder`, requireAuth, (req, res) => {
   const { ids } = req.body;
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids erforderlich' });
-  const update = db.prepare('UPDATE meetings SET sort_order=? WHERE id=? AND user_id=?');
+  // Archivierte Meetings werden hier still ignoriert (kein Fehler) - sie
+  // tauchen in der vom Client gesendeten Reorder-Liste ohnehin nicht mehr
+  // auf, da GET /api/meetings sie nicht mehr liefert.
+  const update = db.prepare(
+    `UPDATE meetings SET sort_order=? WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  );
   db.transaction(() => ids.forEach((id, i) => update.run(i, id, req.session.uid)))();
   res.json({ ok: true });
 });
@@ -808,6 +851,7 @@ app.put(`${A}/meetings/reorder`, requireAuth, (req, res) => {
 app.put(`${A}/meetings/:id`, requireAuth, (req, res) => {
   const m = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!m) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (meetingArchivedGuard(res, m.id)) return;
   const { title=m.title, description=m.description, participants, isRecurring, recurrencePattern, nextDate, color=m.color } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
@@ -824,8 +868,21 @@ app.put(`${A}/meetings/:id`, requireAuth, (req, res) => {
 });
 
 app.delete(`${A}/meetings/:id`, requireAuth, (req, res) => {
+  // SQLite kaskadiert topics.meeting_id (ON DELETE CASCADE) automatisch beim
+  // Löschen des Meetings — die betroffenen Topic-IDs müssen daher VORHER
+  // eingesammelt werden, damit der Fortschrittsverlauf (progress_entries/
+  // progress_meta) für diese Topics ebenfalls sofort aufgeräumt wird.
+  const topicIds = db.prepare('SELECT id FROM topics WHERE meeting_id=?').all(req.params.id).map(r => r.id);
   const r = db.prepare('DELETE FROM meetings WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
-  r.changes ? res.json({ ok: true }) : res.status(404).json({ error: 'Nicht gefunden' });
+  if (!r.changes) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (topicIds.length) {
+    progress.deleteForRefs(db, topicIds.map(id => ({ refType: 'topic', refId: id })));
+  }
+  // Security-Review-Nachbesserung (Arbeitspaket B2): Falls das Meeting zuvor
+  // archiviert war, bleibt sonst eine verwaiste archive_state-Zeile zurück
+  // (räumt sich sonst erst beim nächsten Serverstart per purgeArchiveOrphans auf).
+  archive.deleteState(db, 'meeting', req.params.id);
+  res.json({ ok: true });
 });
 
 // ── Topic routes ─────────────────────────────────────────────
@@ -833,8 +890,50 @@ function ownsMeeting(uid, mid) {
   return !!db.prepare('SELECT 1 FROM meetings WHERE id=? AND user_id=?').get(mid, uid);
 }
 
+// ── Schreibschutz für archivierte Meetings/Topics (Arbeitspaket B2,
+//    "Meetings archivieren statt löschen") ────────────────────
+// Einheitlicher 409-Envelope für JEDEN Schreibversuch auf ein archiviertes
+// Meeting oder eines seiner Topics. Der Aufrufer MUSS die Ownership bereits
+// vorher geprüft haben (404 statt 409 bei fremden/unbekannten IDs) - diese
+// Guards prüfen ausschließlich den Archiv-Zustand.
+function failArchivedReadOnly(res) {
+  fail(res, 409, 'ARCHIVED_READONLY', 'Dieses Meeting ist archiviert. Zum Bearbeiten bitte wiederherstellen.');
+}
+function meetingArchivedGuard(res, meetingId) {
+  if (archive.isArchived(db, 'meeting', meetingId)) {
+    failArchivedReadOnly(res);
+    return true;
+  }
+  return false;
+}
+function topicArchivedGuard(res, topicId) {
+  if (archive.isTopicArchived(db, topicId)) {
+    failArchivedReadOnly(res);
+    return true;
+  }
+  return false;
+}
+
+// Batch-Lookup "ist das Meeting dieses Topics archiviert?" für eine Liste von
+// Topic-IDs (z.B. Suchtreffer, Theme-Links) - EINE Query für die
+// Topic->Meeting-Auflösung plus EIN archivedFlags()-Batch-Lookup (kein N+1),
+// analog zum Muster in lib/archive/queries.js::archivedFlags.
+// @returns {Map<string, boolean>} topicId -> archived
+function archivedFlagsForTopics(topicIds) {
+  const result = new Map();
+  const ids = [...new Set((topicIds || []).filter((id) => typeof id === 'string' && id))];
+  if (!ids.length) return result;
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT id, meeting_id FROM topics WHERE id IN (${placeholders})`).all(...ids);
+  const meetingIds = [...new Set(rows.map((r) => r.meeting_id))];
+  const flags = archive.archivedFlags(db, meetingIds.map((id) => ({ refType: 'meeting', refId: id })));
+  for (const r of rows) result.set(r.id, flags.get(`meeting:${r.meeting_id}`) === true);
+  return result;
+}
+
 app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (meetingArchivedGuard(res, req.params.id)) return;
   const { title, description='', snoozedUntil, isTodo } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
@@ -850,6 +949,7 @@ app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
 
 app.put(`${A}/meetings/:id/topics/reorder`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (meetingArchivedGuard(res, req.params.id)) return;
   const { ids } = req.body;
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids erforderlich' });
   const update = db.prepare('UPDATE topics SET sort_order=? WHERE id=? AND meeting_id=?');
@@ -861,9 +961,14 @@ app.post(`${A}/meetings/:id/topics/:tid/share`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   const t = db.prepare('SELECT * FROM topics WHERE id=? AND meeting_id=?').get(req.params.tid, req.params.id);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  // Quell-Meeting archiviert -> 409 (der aktuell bearbeitete Kontext).
+  if (meetingArchivedGuard(res, req.params.id)) return;
   const { targetMeetingId } = req.body || {};
   if (!targetMeetingId) return res.status(400).json({ error: 'targetMeetingId erforderlich' });
   if (!ownsMeeting(req.session.uid, targetMeetingId)) return res.status(404).json({ error: 'Ziel-Meeting nicht gefunden' });
+  // Ziel-Meeting archiviert -> 404 (kein 409, das Ziel ist nicht der aktuell
+  // bearbeitete Kontext - identische Antwort wie "Ziel-Meeting existiert nicht").
+  if (archive.isArchived(db, 'meeting', targetMeetingId)) return res.status(404).json({ error: 'Ziel-Meeting nicht gefunden' });
   if (targetMeetingId === req.params.id) return res.status(400).json({ error: 'Quelle und Ziel sind identisch' });
 
   let groupId = t.group_id;
@@ -887,12 +992,17 @@ app.post(`${A}/meetings/:id/topics/:tid/move`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   const t = db.prepare('SELECT * FROM topics WHERE id=? AND meeting_id=?').get(req.params.tid, req.params.id);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  // Quell-Meeting archiviert -> 409, sowohl für "Verschieben" als auch
+  // "In persönliches Todo umwandeln" (beide mutieren die Quelle).
+  if (meetingArchivedGuard(res, req.params.id)) return;
   const { targetMeetingId } = req.body || {};
 
   if (targetMeetingId) {
     // ── Move to another meeting ────────────────────────────────
     if (targetMeetingId === req.params.id) return res.status(400).json({ error: 'Quelle und Ziel sind identisch' });
     if (!ownsMeeting(req.session.uid, targetMeetingId)) return res.status(404).json({ error: 'Ziel-Meeting nicht gefunden' });
+    // Ziel-Meeting archiviert -> 404 (kein 409, siehe .../share-Route oben).
+    if (archive.isArchived(db, 'meeting', targetMeetingId)) return res.status(404).json({ error: 'Ziel-Meeting nicht gefunden' });
     const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(targetMeetingId).m;
     // Dissolve any shared-group linkage first (the topic leaves its origin meeting)
     if (t.group_id) {
@@ -915,6 +1025,7 @@ app.post(`${A}/meetings/:id/topics/:tid/move`, requireAuth, (req, res) => {
       if (remaining.length === 1) db.prepare('UPDATE topics SET group_id=NULL WHERE id=?').run(remaining[0].id);
     }
     db.prepare('DELETE FROM topics WHERE id=?').run(t.id);
+    progress.retargetRef(db, 'topic', t.id, 'todo', id);
     res.json({ ok: true, targetType: 'todo', newId: id });
   }
 });
@@ -926,6 +1037,9 @@ app.post(`${A}/todos/:id/move`, requireAuth, (req, res) => {
   const { targetMeetingId } = req.body || {};
   if (!targetMeetingId) return res.status(400).json({ error: 'targetMeetingId erforderlich' });
   if (!ownsMeeting(req.session.uid, targetMeetingId)) return res.status(404).json({ error: 'Meeting nicht gefunden' });
+  // Ziel-Meeting archiviert -> 404 (das Todo selbst ist nicht archivierbar,
+  // daher nur der Ziel-Guard - analog .../topics/:tid/move).
+  if (archive.isArchived(db, 'meeting', targetMeetingId)) return res.status(404).json({ error: 'Meeting nicht gefunden' });
   const id = uid();
   const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(targetMeetingId).m;
   db.prepare('INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)')
@@ -933,6 +1047,7 @@ app.post(`${A}/todos/:id/move`, requireAuth, (req, res) => {
   // Transfer theme_links to the new topic
   db.prepare('UPDATE theme_links SET ref_type=?, ref_id=? WHERE ref_type=? AND ref_id=?').run('topic', id, 'todo', t.id);
   db.prepare('DELETE FROM todos WHERE id=?').run(t.id);
+  progress.retargetRef(db, 'todo', t.id, 'topic', id);
   res.json({ ok: true, targetMeetingId, newId: id });
 });
 
@@ -940,6 +1055,7 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   const t = db.prepare('SELECT * FROM topics WHERE id=? AND meeting_id=?').get(req.params.tid, req.params.id);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (topicArchivedGuard(res, t.id)) return;
   const { title=t.title, description=t.description, done, result, resultDate, isTodo, snoozedUntil } = req.body;
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
@@ -968,8 +1084,10 @@ app.delete(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   const t = db.prepare('SELECT * FROM topics WHERE id=? AND meeting_id=?').get(req.params.tid, req.params.id);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (topicArchivedGuard(res, t.id)) return;
   db.prepare('DELETE FROM theme_links WHERE ref_type=? AND ref_id=?').run('topic', t.id);
   db.prepare('DELETE FROM topics WHERE id=?').run(t.id);
+  progress.deleteForRefs(db, [{ refType: 'topic', refId: t.id }]);
   // If only one group member remains, dissolve the group
   if (t.group_id) {
     const remaining = db.prepare('SELECT id FROM topics WHERE group_id=?').all(t.group_id);
@@ -1001,7 +1119,20 @@ const TODOS_ORDER_SQL = `
 `;
 
 app.get(`${A}/todos`, requireAuth, (req, res) => {
-  res.json(db.prepare(`SELECT * FROM todos WHERE user_id=? ${TODOS_ORDER_SQL}`).all(req.session.uid).map(parseTodo));
+  const rows = db.prepare(`SELECT * FROM todos WHERE user_id=? ${TODOS_ORDER_SQL}`).all(req.session.uid);
+  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
+  // EINE Batch-Query über summaryFor() für alle geladenen Todos (kein N+1).
+  const items = rows.map(t => ({
+    refType: 'todo', refId: t.id,
+    refCreatedAt: t.created_at, refUpdatedAt: t.updated_at,
+    refDone: !!t.done, refSnoozedUntil: t.snoozed_until || null,
+  }));
+  const progressMap = progress.summaryFor(db, req.session.uid, items);
+  res.json(rows.map(t => {
+    const todo = parseTodo(t);
+    todo.progress = progressMap.get(`todo:${t.id}`) ?? null;
+    return todo;
+  }));
 });
 
 app.post(`${A}/todos`, requireAuth, (req, res) => {
@@ -1049,6 +1180,7 @@ app.delete(`${A}/todos/:id`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   db.prepare('DELETE FROM theme_links WHERE ref_type=? AND ref_id=?').run('todo', t.id);
   db.prepare('DELETE FROM todos WHERE id=?').run(t.id);
+  progress.deleteForRefs(db, [{ refType: 'todo', refId: t.id }]);
   res.json({ ok: true });
 });
 
@@ -1083,7 +1215,19 @@ app.get(`${A}/themes`, requireAuth, (req, res) => {
     ? db.prepare(`SELECT * FROM theme_links WHERE theme_id IN (${ts.map(()=>'?').join(',')})`)
         .all(...ts.map(t => t.id))
     : [];
-  res.json(ts.map(t => parseTheme(t, links)));
+  // Additive Archiv-Anreicherung (Arbeitspaket B2): Links auf archivierte
+  // Topics bleiben enthalten (nicht herausgefiltert), bekommen aber
+  // zusätzlich `archived: boolean`.
+  const archivedByTopic = archivedFlagsForTopics(
+    links.filter(l => l.ref_type === 'topic').map(l => l.ref_id)
+  );
+  const themes = ts.map(t => parseTheme(t, links));
+  for (const theme of themes) {
+    for (const link of theme.links) {
+      if (link.refType === 'topic') link.archived = archivedByTopic.get(link.refId) === true;
+    }
+  }
+  res.json(themes);
 });
 
 // Nested tree of all topics belonging to the user
@@ -1198,6 +1342,7 @@ app.post(`${A}/themes/:id/links`, requireAuth, (req, res) => {
   // Sicherheitsfix: Eigentümerschaft von refId prüfen, BEVOR der Link angelegt wird —
   // sonst könnte ein Nutzer fremde Todos/Themen/Kontakte an sein eigenes Topic hängen.
   if (!ownsRef(req.session.uid, refType, refId)) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (refType === 'topic' && topicArchivedGuard(res, refId)) return;
   try {
     const id = uid();
     db.prepare('INSERT INTO theme_links(id,theme_id,ref_type,ref_id,created_at) VALUES (?,?,?,?,?)')
@@ -1212,6 +1357,12 @@ app.post(`${A}/themes/:id/links`, requireAuth, (req, res) => {
 app.delete(`${A}/themes/:id/links/:lid`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  // Guard nur, wenn der Link tatsächlich existiert und auf ein archiviertes
+  // Topic zeigt - unbekannte/fremde link-IDs bleiben idempotent (ok:true,
+  // wie vor dieser Änderung), damit sich das bestehende Lösch-Verhalten
+  // nicht ändert.
+  const link = db.prepare('SELECT * FROM theme_links WHERE id=? AND theme_id=?').get(req.params.lid, t.id);
+  if (link && link.ref_type === 'topic' && topicArchivedGuard(res, link.ref_id)) return;
   db.prepare('DELETE FROM theme_links WHERE id=? AND theme_id=?').run(req.params.lid, t.id);
   res.json({ ok: true });
 });
@@ -1240,6 +1391,14 @@ app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
   const todos = db.prepare(
     `SELECT * FROM todos WHERE user_id=? AND id IN (${todoIds.map(()=>'?').join(',')}) ${TODOS_ORDER_SQL}`
   ).all(req.session.uid, ...todoIds);
+  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
+  // EINE Batch-Query über summaryFor() für alle geladenen Todos (kein N+1).
+  const progressItems = todos.map(td => ({
+    refType: 'todo', refId: td.id,
+    refCreatedAt: td.created_at, refUpdatedAt: td.updated_at,
+    refDone: !!td.done, refSnoozedUntil: td.snoozed_until || null,
+  }));
+  const progressMap = progress.summaryFor(db, req.session.uid, progressItems);
   res.json(todos.map(td => {
     const originThemeId = seen.get(td.id);
     const origin = themesById.get(originThemeId);
@@ -1247,6 +1406,7 @@ app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
       ...parseTodo(td),
       originThemeId,
       originThemeTitle: originThemeId === t.id ? null : (origin ? origin.title : null),
+      progress: progressMap.get(`todo:${td.id}`) ?? null,
     };
   }));
 });
@@ -1528,7 +1688,40 @@ app.get(`${A}/search`, requireAuth, (req, res) => {
   } catch (e) {
     return res.json([]); // ungültige Query-Syntax (z. B. leere Phrase) -> leeres Ergebnis statt 500
   }
-  res.json(rows.map(r => ({ type: r.ref_type, id: r.ref_id })));
+
+  // Additive Archiv-Anreicherung (Arbeitspaket B2): NICHT im FTS-MATCH
+  // (siehe oben), sondern per Batch-Lookup NACH der Suche über die
+  // (maximal 200) Treffer. Archivierte Treffer werden NICHT herausgefiltert
+  // (weiterhin auffindbar), nur markiert - Themen-Treffer bekommen
+  // zusätzlich meetingId.
+  const topicIds = rows.filter(r => r.ref_type === 'topic').map(r => r.ref_id);
+  const meetingRefIds = rows.filter(r => r.ref_type === 'meeting').map(r => r.ref_id);
+  const topicMeetingMap = new Map();
+  if (topicIds.length) {
+    const placeholders = topicIds.map(() => '?').join(',');
+    for (const t of db.prepare(`SELECT id, meeting_id FROM topics WHERE id IN (${placeholders})`).all(...topicIds)) {
+      topicMeetingMap.set(t.id, t.meeting_id);
+    }
+  }
+  const meetingIdsToCheck = new Set(meetingRefIds);
+  for (const mid of topicMeetingMap.values()) if (mid) meetingIdsToCheck.add(mid);
+  const meetingFlags = archive.archivedFlags(
+    db, [...meetingIdsToCheck].map(id => ({ refType: 'meeting', refId: id }))
+  );
+
+  res.json(rows.map(r => {
+    if (r.ref_type === 'meeting') {
+      return { type: r.ref_type, id: r.ref_id, archived: meetingFlags.get(`meeting:${r.ref_id}`) === true };
+    }
+    if (r.ref_type === 'topic') {
+      const meetingId = topicMeetingMap.get(r.ref_id) || null;
+      return {
+        type: r.ref_type, id: r.ref_id, meetingId,
+        archived: meetingId ? meetingFlags.get(`meeting:${meetingId}`) === true : false,
+      };
+    }
+    return { type: r.ref_type, id: r.ref_id, archived: false };
+  }));
 });
 
 // ── User routes (admin only) ─────────────────────────────────
@@ -1970,6 +2163,22 @@ function ownsRef(uid, refType, refId) {
   return false;
 }
 
+// Liefert den für ein Vorhaben (refType/refId) relevantesten Stack-Frame:
+// bevorzugt den aktuell offenen Frame, sonst den zuletzt gepoppten. Wird als
+// getLatestFrameId-Callback an createProgressRouter() injiziert (S2-Wiring).
+// Kein eigener Owner-Check nötig: der Router ruft dies erst NACH resolveRef()
+// (ownsRef bereits geprüft) auf.
+function getLatestFrameId(refType, refId) {
+  const open = db.prepare(
+    'SELECT id FROM stack_frames WHERE ref_type=? AND ref_id=? AND popped_at IS NULL LIMIT 1'
+  ).get(refType, refId);
+  if (open) return open.id;
+  const lastPopped = db.prepare(
+    'SELECT id FROM stack_frames WHERE ref_type=? AND ref_id=? AND popped_at IS NOT NULL ORDER BY popped_at DESC LIMIT 1'
+  ).get(refType, refId);
+  return lastPopped ? lastPopped.id : null;
+}
+
 function refTitleAndDescription(refType, refId) {
   if (refType === 'topic') {
     const t = db.prepare('SELECT title, description, result FROM topics WHERE id=?').get(refId);
@@ -2028,7 +2237,14 @@ app.get(`${A}/stack`, requireAuth, (req, res) => {
     'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
   ).all(req.session.uid);
   const ordered = orderActiveFirst(rows);
-  res.json({ frames: ordered.map(frameToJson), depth: ordered.length });
+  // Additive Archiv-Anreicherung (Arbeitspaket B2): jeder Frame bekommt
+  // zusätzlich `archived: boolean` - true, wenn das referenzierte Topic zu
+  // einem archivierten Meeting gehört. Todo-Frames sind nie archivierbar.
+  const frames = ordered.map(f => ({
+    ...frameToJson(f),
+    archived: f.ref_type === 'topic' && archive.isTopicArchived(db, f.ref_id),
+  }));
+  res.json({ frames, depth: ordered.length });
 });
 
 app.post(`${A}/stack/push`, requireAuth, (req, res) => {
@@ -2040,6 +2256,7 @@ app.post(`${A}/stack/push`, requireAuth, (req, res) => {
   if (note.length > MAX_NOTE) return res.status(400).json({ error: 'next_step_note zu lang (max 1000)' });
 
   if (!ownsRef(req.session.uid, refType, refId)) return res.status(404).json({ error: 'Referenz nicht gefunden' });
+  if (refType === 'topic' && topicArchivedGuard(res, refId)) return;
 
   const dup = db.prepare(
     'SELECT id FROM stack_frames WHERE user_id=? AND ref_type=? AND ref_id=? AND popped_at IS NULL'
@@ -2054,9 +2271,15 @@ app.post(`${A}/stack/push`, requireAuth, (req, res) => {
   const parentId = ordered[0]?.id || null;
 
   const id = uid();
+  const pushedAt = new Date().toISOString();
   db.prepare(
     'INSERT INTO stack_frames(id,user_id,ref_type,ref_id,next_step_note,pushed_at,parent_frame_id) VALUES (?,?,?,?,?,?,?)'
-  ).run(id, req.session.uid, refType, refId, note, new Date().toISOString(), parentId);
+  ).run(id, req.session.uid, refType, refId, note, pushedAt, parentId);
+
+  // Story 5: "Nächster Schritt" im Zielbild/Fortschrittsverlauf spiegelt die
+  // Stack-Notiz (progress_meta ist die persistente Quelle, die auch nach dem
+  // Pop erhalten bleibt — siehe pop-Handler unten).
+  progress.setNextStep(db, req.session.uid, refType, refId, note, pushedAt);
 
   const frame = db.prepare('SELECT * FROM stack_frames WHERE id=?').get(id);
   const newDepth = ordered.length + 1;
@@ -2075,6 +2298,15 @@ app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
     'SELECT * FROM stack_frames WHERE id=? AND user_id=? AND popped_at IS NULL'
   ).get(req.params.frameId, req.session.uid);
   if (!f) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
+
+  // Archiv-Schreibschutz (Arbeitspaket B2): 'done'/'snoozed' mutieren das
+  // referenzierte Topic (done=1 bzw. snoozed_until) - bei archiviertem
+  // Meeting daher 409. 'dropped'/'resumed' mutieren das Topic NICHT und
+  // bleiben erlaubt, sonst bliebe der Frame bei einem archivierten Meeting
+  // dauerhaft offen im Stack hängen.
+  if ((resolution === 'done' || resolution === 'snoozed') && f.ref_type === 'topic' && topicArchivedGuard(res, f.ref_id)) {
+    return;
+  }
 
   const now = new Date().toISOString();
   const applied = {};
@@ -2145,6 +2377,36 @@ app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
   // Close the frame
   db.prepare('UPDATE stack_frames SET popped_at=?, pop_resolution=? WHERE id=?').run(now, resolution, f.id);
 
+  // Story 5: bei resolution='done' einen Zeitstrahl-Marker im Fortschrittsverlauf
+  // anlegen (kind='result'). progress_meta.next_step bleibt beim Pop UNVERÄNDERT
+  // (kein Löschen/Zurücksetzen) — nur dieser optionale Marker ist neu.
+  // Best-effort: darf den Pop selbst NIEMALS scheitern lassen (z.B. wenn wegen
+  // idx_progress_result_frame bereits ein Ergebnis-Eintrag für diesen Frame
+  // existiert — dann bewusst ein No-Op statt Fehler).
+  // Nur anlegen, wenn in DIESEM Pop tatsächlich ein Ergebnis übergeben wurde
+  // (applied.resultSaved) — sonst würde bei "Erledigt" ohne neues Ergebnis
+  // ein scheinbar frischer Zeitstrahl-Eintrag mit dem alten, unveränderten
+  // Ergebnistext und dem aktuellen Pop-Zeitstempel entstehen (Tester-Fund,
+  // irreführend datiert).
+  if (resolution === 'done' && applied.resultSaved) {
+    try {
+      progress.insertEntry(db, {
+        userId: req.session.uid,
+        refType: f.ref_type,
+        refId: f.ref_id,
+        kind: 'result',
+        source: 'pop_done',
+        bodyHtml: '',
+        bodyText: '',
+        linkFrameId: f.id,
+        clientToken: null,
+        nowIso: now,
+      });
+    } catch (_) {
+      // Best-effort — Fehler hier dürfen den Pop nicht kippen.
+    }
+  }
+
   // Determine new active frame
   const openAfter = db.prepare(
     'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
@@ -2187,10 +2449,26 @@ app.put(`${A}/stack/:frameId/note`, requireAuth, (req, res) => {
   const note = String(req.body?.nextStepNote || '').trim();
   if (!note)                  return res.status(400).json({ error: 'next_step_note erforderlich' });
   if (note.length > MAX_NOTE) return res.status(400).json({ error: 'next_step_note zu lang (max 1000)' });
-  const r = db.prepare(
+
+  const f = db.prepare(
+    'SELECT * FROM stack_frames WHERE id=? AND user_id=? AND popped_at IS NULL'
+  ).get(req.params.frameId, req.session.uid);
+  if (!f) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
+
+  // Archiv-Schreibschutz (Arbeitspaket B2, Security-Review-Nachbesserung):
+  // Die Notiz mutiert sowohl stack_frames.next_step_note als auch
+  // progress_meta.next_step des referenzierten Topics - bei archiviertem
+  // Meeting daher 409, analog zum Guard in POST /stack/pop/:frameId.
+  if (f.ref_type === 'topic' && topicArchivedGuard(res, f.ref_id)) return;
+
+  db.prepare(
     'UPDATE stack_frames SET next_step_note=? WHERE id=? AND user_id=? AND popped_at IS NULL'
   ).run(note, req.params.frameId, req.session.uid);
-  if (!r.changes) return res.status(404).json({ error: 'Frame nicht gefunden oder bereits geschlossen' });
+
+  // Story 5: Notiz-Update spiegelt sich in progress_meta.next_step für das
+  // Vorhaben dieses Frames zurück.
+  progress.setNextStep(db, req.session.uid, f.ref_type, f.ref_id, note, new Date().toISOString());
+
   res.json({ ok: true });
 });
 
@@ -2297,6 +2575,7 @@ app.post(`${A}/attachments/:refType/:refId`, requireAuth,
     if (!ALLOWED_REF_TYPES.has(refType)) return res.status(400).json({ error: 'Ungültiger Typ' });
     if (!checkAttachmentOwnership(refType, refId, req.session.uid))
       return res.status(404).json({ error: 'Nicht gefunden' });
+    if (refType === 'topic' && topicArchivedGuard(res, refId)) return;
 
     const origName = req.query.filename
       ? decodeURIComponent(req.query.filename).replace(/[/\\]/g, '_')
@@ -2319,16 +2598,15 @@ app.post(`${A}/attachments/:refType/:refId`, requireAuth,
   }
 );
 
-// List
-app.get(`${A}/attachments/:refType/:refId`, requireAuth, (req, res) => {
-  const { refType, refId } = req.params;
-  if (!ALLOWED_REF_TYPES.has(refType)) return res.status(400).json({ error: 'Ungültiger Typ' });
-  if (!checkAttachmentOwnership(refType, refId, req.session.uid))
-    return res.status(404).json({ error: 'Nicht gefunden' });
-  res.json(db.prepare('SELECT * FROM attachments WHERE ref_type=? AND ref_id=? ORDER BY created_at').all(refType, refId).map(parseAttachment));
-});
-
 // Download
+// Security-Fund (im Rahmen von Paket B2 entdeckt, nicht durch B2 verursacht):
+// Diese Route MUSS VOR der generischen List-Route (`/attachments/:refType/:refId`)
+// registriert werden - sonst matcht Express `/attachments/download/:id` fälschlich
+// gegen `:refType='download'` und die List-Route liefert immer 400 "Ungültiger
+// Typ" statt die Datei auszuliefern (Download war dadurch nie erreichbar).
+// Reine Registrierungsreihenfolge, keine Verhaltensänderung für gültige
+// ALLOWED_REF_TYPES-Werte ('topic'/'todo'/'knowledge_page' matchen "download"
+// als Literal-Segment ohnehin nicht).
 app.get(`${A}/attachments/download/:id`, requireAuth, (req, res) => {
   const a = db.prepare('SELECT * FROM attachments WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!a) return res.status(404).json({ error: 'Nicht gefunden' });
@@ -2343,10 +2621,20 @@ app.get(`${A}/attachments/download/:id`, requireAuth, (req, res) => {
   res.sendFile(filePath);
 });
 
+// List
+app.get(`${A}/attachments/:refType/:refId`, requireAuth, (req, res) => {
+  const { refType, refId } = req.params;
+  if (!ALLOWED_REF_TYPES.has(refType)) return res.status(400).json({ error: 'Ungültiger Typ' });
+  if (!checkAttachmentOwnership(refType, refId, req.session.uid))
+    return res.status(404).json({ error: 'Nicht gefunden' });
+  res.json(db.prepare('SELECT * FROM attachments WHERE ref_type=? AND ref_id=? ORDER BY created_at').all(refType, refId).map(parseAttachment));
+});
+
 // Delete
 app.delete(`${A}/attachments/:id`, requireAuth, (req, res) => {
   const a = db.prepare('SELECT * FROM attachments WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!a) return res.status(404).json({ error: 'Nicht gefunden' });
+  if (a.ref_type === 'topic' && topicArchivedGuard(res, a.ref_id)) return;
   const filePath = path.join(UPLOADS_DIR, a.stored_as);
   try { fs.unlinkSync(filePath); } catch (_) { /* already gone */ }
   db.prepare('DELETE FROM attachments WHERE id=?').run(a.id);
@@ -2364,9 +2652,9 @@ function parseAttachment(a) {
 // ── Statische Assets (Graph-Modul: /public/graph.js, graph.css) ──
 // Unter beiden Pfaden gemountet, damit `/assets/...` in index.html unabhängig
 // von einem konfigurierten BASE_PATH funktioniert.
-// graph-dev.html ist eine Entwickler-Harness (Mock-Backend, keine Secrets) und soll
-// nicht im Produktionsauslieferungspfad erreichbar sein.
-const assetsGuard = (req, res, next) => (req.path.toLowerCase() === '/graph-dev.html') ? res.status(404).end() : next();
+// *-dev.html sind Entwickler-Harnesses (Mock-Backend, keine Secrets) und sollen
+// nicht im Produktionsauslieferungspfad erreichbar sein (Security Review, Niedrig: F6).
+const assetsGuard = (req, res, next) => (/-dev\.html$/i.test(req.path)) ? res.status(404).end() : next();
 const assetsStatic = express.static(path.join(__dirname, 'public'), { index: false, dotfiles: 'ignore', etag: true, maxAge: 0 });
 app.use('/assets', assetsGuard, assetsStatic);
 if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
@@ -2382,7 +2670,9 @@ app.get(BASE || '/', (req, res) => {
   if (BASE) {
     html = html
       .replace('href="/assets/graph.css"', `href="${BASE}/assets/graph.css"`)
-      .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`);
+      .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`)
+      .replace('href="/assets/progress.css"', `href="${BASE}/assets/progress.css"`)
+      .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`);
   }
   html = html.replace('</head>',
     `<script>window.__TS_BASE__ = ${JSON.stringify(BASE).replace(/</g, '\\u003c')};</script>\n</head>`);
@@ -2472,6 +2762,38 @@ require('./export')(app, {
   fail,
   apiBase: A,
 });
+
+// ── Progress-API (Zielbild/Fortschrittsverlauf, Arbeitspaket S1/S2) ──
+// Mount-Pfad folgt der App-weiten BASE_PATH-Konvention (siehe `A = BASE +
+// '/api'`, analog zum Graph-/Export-Modul oben via `apiBase: A`) statt eines
+// literal hartkodierten '/api/progress': in der Standard-/Test-Konfiguration
+// (BASE_PATH unset/'/') ist `${A}/progress` identisch zu '/api/progress' -
+// siehe Abschlussbericht für die dokumentierte Abweichung vom wörtlichen
+// Vertragstext bei gesetztem BASE_PATH (Produktions-Default '/notes').
+app.use(`${A}/progress`, progress.createProgressRouter({
+  db,
+  requireAuth,
+  ownsRef,
+  getLatestFrameId,
+  isRefReadOnly: (refType, refId) => refType === 'topic' && archive.isTopicArchived(db, refId),
+  now: () => new Date(),
+}));
+
+// ── Archiv-API (Meetings archivieren statt löschen, Arbeitspaket B1/B2) ──
+// Mount-Pfad folgt derselben App-weiten BASE_PATH-Konvention wie das
+// Progress-Modul oben (`${A}/archive`, siehe Kommentar dort).
+app.use(`${A}/archive`, archive.createArchiveRouter({
+  db,
+  requireAuth,
+  uid: (req) => req.session.uid,
+  parseMeeting,
+  parseTopic,
+  progress,
+  fail,
+  buildFtsQuery: buildFts5Query,
+  uploadsDir: UPLOADS_DIR,
+  now: () => new Date(),
+}));
 
 // ── Globaler Error-Handler (letzte Middleware) ────────────────
 // Loggt den Stacktrace ausschließlich nach stderr, niemals in der Antwort an

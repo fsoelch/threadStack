@@ -1,32 +1,126 @@
 import SwiftUI
 
 struct MeetingDetailView: View {
-    let meeting: Meeting
+    // Zwei Einstiegspunkte teilen sich exakt dieselbe View/Logik (CLAUDE.md
+    // "Wiederverwendung vor Neuentwicklung" — KEINE zweite View für den
+    // Archiv-Nur-Lesen-Fall):
+    // - `init(meeting:)`: bestehender Pfad für aktive Meetings, bereits in
+    //   `state.meetings` geladen — `current` ist sofort verfügbar, kein Warten.
+    // - `init(meetingId:isReadOnly:)`: neuer Pfad für archivierte Meetings
+    //   (MeetingArchiveView) — lädt die Nur-Lesen-Momentaufnahme selbst über
+    //   `AppState.loadArchivedMeetingDetail(_:)`, bis dahin Ladezustand/Fehler.
+    private let providedMeeting: Meeting?
+    private let providedMeetingId: String
+    let isReadOnly: Bool
+
     @EnvironmentObject var state: AppState
+    @Environment(\.dismiss) private var dismiss
     @State private var search = ""
     @State private var showEdit = false
     @State private var showNewTopic = false
     @State private var error: String?
+    @State private var infoMessage: String?
     // v1.1
     @State private var showBrief   = false
     @State private var showCapture = false
     @State private var cmiExpanded = false
+    // Story 9 ("Ruhende Vorhaben gezielt wiederfinden") — bislang nur im Web
+    // vorhanden (Tester-Fund), hier analog nachgezogen.
+    @State private var sortOldestProgressFirst = false
+    @State private var showOnlyUndocumented = false
 
-    private var current: Meeting { state.meetings.first(where: { $0.id == meeting.id }) ?? meeting }
+    // Archiv (Nur-Lesen)
+    @State private var archivedMeeting: Meeting?
+    @State private var isLoadingArchived = false
+    @State private var archiveLoadError: String?
+    @State private var isRestoring = false
+    @State private var isLoadingPreflight = false
+    @State private var isDeletingPermanently = false
+    @State private var permanentDeletePreflight: ArchivePreflight?
+    @State private var showPermanentDeleteConfirm = false
 
-    private var filtered: [Topic] {
-        guard !search.isEmpty else { return current.topics }
-        return current.topics.filter {
-            $0.title.localizedCaseInsensitiveContains(search) ||
-            $0.description.localizedCaseInsensitiveContains(search)
+    init(meeting: Meeting, isReadOnly: Bool = false) {
+        self.providedMeeting = meeting
+        self.providedMeetingId = meeting.id
+        self.isReadOnly = isReadOnly
+    }
+
+    /// Vertrag (Paket A1, Punkt 2): `MeetingArchiveView` navigiert über
+    /// `MeetingDetailView(meetingId:, isReadOnly: true)` zu einer Nur-Lesen-
+    /// Momentaufnahme eines archivierten Meetings, das nicht (mehr) in
+    /// `state.meetings` enthalten ist (`GET /meetings` liefert keine archivierten
+    /// Meetings). Der eigentliche Netzwerk-Load passiert lazy in `.task`, sobald
+    /// diese View tatsächlich gerendert wird (NavigationLink-Destinations werden
+    /// von SwiftUI nicht vorab ausgewertet) — daher ist die Konstruktion hier billig.
+    init(meetingId: String, isReadOnly: Bool = false) {
+        self.providedMeeting = nil
+        self.providedMeetingId = meetingId
+        self.isReadOnly = isReadOnly
+    }
+
+    private var current: Meeting? {
+        if let providedMeeting {
+            return state.meetings.first(where: { $0.id == providedMeeting.id }) ?? providedMeeting
+        }
+        return archivedMeeting
+    }
+
+    var body: some View {
+        Group {
+            if let current {
+                mainBody(current)
+            } else if isLoadingArchived {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 12) {
+                    Text(archiveLoadError ?? "Archiv konnte nicht geladen werden.")
+                        .foregroundStyle(.secondary).font(.footnote)
+                    Button("Erneut versuchen") { Task { await loadArchivedIfNeeded(force: true) } }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: providedMeetingId) { await loadArchivedIfNeeded() }
+    }
+
+    private func loadArchivedIfNeeded(force: Bool = false) async {
+        guard providedMeeting == nil, isReadOnly else { return }
+        guard force || archivedMeeting == nil else { return }
+        isLoadingArchived = true
+        archiveLoadError = nil
+        do {
+            archivedMeeting = try await state.loadArchivedMeetingDetail(providedMeetingId)
+        } catch {
+            archiveLoadError = "Archiv konnte nicht geladen werden."
+        }
+        isLoadingArchived = false
+    }
+
+    // Identisch zum Web-Comparator TSProgress.compareByProgress (public/progress.js).
+    private func sortByOldestProgress(_ list: [Topic]) -> [Topic] {
+        list.sorted { a, b in
+            let aKey = a.progress?.orderKey
+            let bKey = b.progress?.orderKey
+            if (aKey == nil) != (bKey == nil) { return aKey != nil }
+            guard let ak = aKey, let bk = bKey else { return false }
+            return ak < bk
         }
     }
 
-    private var openTopics:    [Topic] { filtered.filter { !$0.done && !$0.isSnoozed } }
-    private var snoozedTopics: [Topic] { filtered.filter { !$0.done &&  $0.isSnoozed } }
-    private var doneTopics:    [Topic] { filtered.filter {  $0.done }.sorted { $0.resultDate > $1.resultDate } }
+    @ViewBuilder private func mainBody(_ current: Meeting) -> some View {
+        let filtered: [Topic] = search.isEmpty ? current.topics : current.topics.filter {
+            $0.title.localizedCaseInsensitiveContains(search) ||
+            $0.description.localizedCaseInsensitiveContains(search)
+        }
+        let openTopicsBase: [Topic] = {
+            var list = filtered.filter { !$0.done && !$0.isSnoozed }
+            if showOnlyUndocumented { list = list.filter { $0.progress?.undocumented == true } }
+            return list
+        }()
+        let openTopics:    [Topic] = sortOldestProgressFirst ? sortByOldestProgress(openTopicsBase) : openTopicsBase
+        let snoozedTopics: [Topic] = filtered.filter { !$0.done &&  $0.isSnoozed }
+        let doneTopics:    [Topic] = filtered.filter {  $0.done }.sorted { $0.resultDate > $1.resultDate }
 
-    var body: some View {
         List {
             #if os(macOS)
             Section {
@@ -37,17 +131,34 @@ struct MeetingDetailView: View {
 
             // Meeting header
             Section {
-                meetingHeader
+                meetingHeader(current)
+            }
+
+            Section {
+                Picker("Sortierung", selection: $sortOldestProgressFirst) {
+                    Text("Standard").tag(false)
+                    Text("Ältester Stand zuerst").tag(true)
+                }
+                Toggle("Länger nicht dokumentiert", isOn: $showOnlyUndocumented)
             }
 
             // Offen
-            if !openTopics.isEmpty {
+            if openTopics.isEmpty && showOnlyUndocumented {
+                Section {
+                    Text("✓ Alles aktuell dokumentiert")
+                        .foregroundStyle(.secondary).font(.subheadline)
+                        .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                }
+            } else if !openTopics.isEmpty {
                 Section(header: sectionHeader("Offen", count: openTopics.count, color: DS.accent)) {
-                    ForEach(openTopics) { t in
-                        TopicRowView(topic: t, meetingId: current.id)
+                    if isReadOnly {
+                        ForEach(openTopics) { t in TopicRowView(topic: t, meetingId: current.id, isReadOnly: true) }
+                    } else {
+                        ForEach(openTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
+                            .onDelete { deleteTopic(from: openTopics, at: $0, meetingId: current.id) }
+                            .onMove   { moveTopics(in: openTopics, from: $0, to: $1, meetingId: current.id) }
                     }
-                    .onDelete { deleteTopic(from: openTopics, at: $0) }
-                    .onMove   { moveTopics(in: openTopics, from: $0, to: $1) }
                 }
             }
 
@@ -55,21 +166,27 @@ struct MeetingDetailView: View {
             if !snoozedTopics.isEmpty {
                 Section(header: sectionHeader("Schlafend", count: snoozedTopics.count,
                                               color: .gray, icon: "moon.zzz.fill")) {
-                    ForEach(snoozedTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
+                    ForEach(snoozedTopics) { t in TopicRowView(topic: t, meetingId: current.id, isReadOnly: isReadOnly) }
                 }
             }
 
             // Erledigt
             if !doneTopics.isEmpty {
                 Section(header: sectionHeader("Erledigt", count: doneTopics.count, color: .secondary)) {
-                    ForEach(doneTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
-                    .onDelete { deleteTopic(from: doneTopics, at: $0) }
+                    if isReadOnly {
+                        ForEach(doneTopics) { t in TopicRowView(topic: t, meetingId: current.id, isReadOnly: true) }
+                    } else {
+                        ForEach(doneTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
+                            .onDelete { deleteTopic(from: doneTopics, at: $0, meetingId: current.id) }
+                    }
                 }
             }
 
             if current.topics.isEmpty {
                 Section {
-                    Text("Noch keine Themen — tippe auf + um das erste hinzuzufügen.")
+                    Text(isReadOnly
+                         ? "Keine Themen vorhanden."
+                         : "Noch keine Themen — tippe auf + um das erste hinzuzufügen.")
                         .foregroundStyle(.secondary).font(.subheadline)
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity)
@@ -83,10 +200,12 @@ struct MeetingDetailView: View {
         #endif
         #if os(iOS)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button { showNewTopic = true } label: { Image(systemName: "plus") }
+            if !isReadOnly {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button { showNewTopic = true } label: { Image(systemName: "plus") }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
             }
-            ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
         }
         #endif
         .sheet(isPresented: $showEdit)     { MeetingFormView(meeting: current) }
@@ -96,12 +215,39 @@ struct MeetingDetailView: View {
         .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(error ?? "") }
-        .task(id: current.id) { await state.aiCmiLoad(meetingId: current.id) }
+        .alert("Erfolg", isPresented: Binding(
+            get: { infoMessage != nil },
+            set: { if !$0 { infoMessage = nil; dismiss() } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(infoMessage ?? "") }
+        .confirmationDialog(
+            "Meeting endgültig löschen?",
+            isPresented: $showPermanentDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Endgültig löschen", role: .destructive) { permanentlyDelete(current) }
+            Button("Abbrechen", role: .cancel) { permanentDeletePreflight = nil }
+        } message: {
+            if let preflight = permanentDeletePreflight {
+                Text(archiveDeleteImpactText(title: current.title, impact: preflight.impact))
+            } else {
+                Text("Löschumfang konnte nicht ermittelt werden. Bitte versuche es erneut.")
+            }
+        }
+        .task(id: current.id) {
+            guard !isReadOnly else { return }
+            await state.aiCmiLoad(meetingId: current.id)
+        }
     }
 
     // ── Meeting header card ──────────────────────────────────
-    @ViewBuilder private var meetingHeader: some View {
+    @ViewBuilder private func meetingHeader(_ current: Meeting) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            if isReadOnly, let archivedAt = current.archivedAt {
+                archivedBanner(current, archivedAt: archivedAt)
+            }
+
             // Info-Zeilen mit Accent-Streifen links
             HStack(alignment: .top, spacing: 0) {
                 Rectangle()
@@ -132,62 +278,136 @@ struct MeetingDetailView: View {
             }
             .frame(minHeight: 40)
 
-            // Action-Chips (horizontal scrollend auf iOS)
-            #if os(iOS)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    actionChip("Bearbeiten", icon: "pencil", accent: false) { showEdit = true }
-                    if current.isRecurring && !current.nextDate.isEmpty {
-                        actionChip("Nächster Termin", icon: "arrow.clockwise", accent: false) {
-                            Task { do { try await state.advanceDate(current.id) }
-                                  catch { self.error = error.localizedDescription } }
+            // Action-Chips (horizontal scrollend auf iOS) — bei isReadOnly
+            // vollständig ausgeblendet (nicht nur deaktiviert): archivierte
+            // Meetings sind serverseitig ohnehin schreibgeschützt (409
+            // ARCHIVED_READONLY), die UI soll das gar nicht erst anbieten.
+            if !isReadOnly {
+                #if os(iOS)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        actionChip("Bearbeiten", icon: "pencil", accent: false) { showEdit = true }
+                        if current.isRecurring && !current.nextDate.isEmpty {
+                            actionChip("Nächster Termin", icon: "arrow.clockwise", accent: false) {
+                                Task { do { try await state.advanceDate(current.id) }
+                                      catch { self.error = error.localizedDescription } }
+                            }
+                        }
+                        if state.aiFeatureEnabled(\.brief) {
+                            actionChip("Briefing", icon: "sparkles", accent: true) { showBrief = true }
+                        }
+                        if state.aiFeatureEnabled(\.capture) {
+                            actionChip("Notizen", icon: "square.and.pencil", accent: true) { showCapture = true }
                         }
                     }
+                    .padding(.horizontal, 1)
+                }
+                #else
+                HStack(spacing: 8) {
+                    Button { showEdit = true } label: {
+                        Label("Bearbeiten", systemImage: "pencil")
+                    }.buttonStyle(.bordered).controlSize(.small)
+                    Button { showNewTopic = true } label: {
+                        Label("Neues Thema", systemImage: "plus")
+                    }.buttonStyle(.bordered).controlSize(.small)
+                    if current.isRecurring && !current.nextDate.isEmpty {
+                        Button {
+                            Task { do { try await state.advanceDate(current.id) }
+                                  catch { self.error = error.localizedDescription } }
+                        } label: {
+                            Label("Nächster Termin", systemImage: "arrow.clockwise")
+                        }.buttonStyle(.bordered).controlSize(.small)
+                    }
                     if state.aiFeatureEnabled(\.brief) {
-                        actionChip("Briefing", icon: "sparkles", accent: true) { showBrief = true }
+                        Button { showBrief = true } label: {
+                            Label("Briefing", systemImage: "sparkles")
+                        }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
                     }
                     if state.aiFeatureEnabled(\.capture) {
-                        actionChip("Notizen", icon: "square.and.pencil", accent: true) { showCapture = true }
+                        Button { showCapture = true } label: {
+                            Label("Notizen", systemImage: "square.and.pencil")
+                        }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
                     }
                 }
-                .padding(.horizontal, 1)
+                #endif
             }
-            #else
-            HStack(spacing: 8) {
-                Button { showEdit = true } label: {
-                    Label("Bearbeiten", systemImage: "pencil")
-                }.buttonStyle(.bordered).controlSize(.small)
-                Button { showNewTopic = true } label: {
-                    Label("Neues Thema", systemImage: "plus")
-                }.buttonStyle(.bordered).controlSize(.small)
-                if current.isRecurring && !current.nextDate.isEmpty {
-                    Button {
-                        Task { do { try await state.advanceDate(current.id) }
-                              catch { self.error = error.localizedDescription } }
-                    } label: {
-                        Label("Nächster Termin", systemImage: "arrow.clockwise")
-                    }.buttonStyle(.bordered).controlSize(.small)
-                }
-                if state.aiFeatureEnabled(\.brief) {
-                    Button { showBrief = true } label: {
-                        Label("Briefing", systemImage: "sparkles")
-                    }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
-                }
-                if state.aiFeatureEnabled(\.capture) {
-                    Button { showCapture = true } label: {
-                        Label("Notizen", systemImage: "square.and.pencil")
-                    }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
-                }
-            }
-            #endif
 
             // v1.1: CMI banner
-            if state.aiFeatureEnabled(\.cross_meeting),
+            if !isReadOnly, state.aiFeatureEnabled(\.cross_meeting),
                let cmi = state.cmiByMeeting[current.id], !cmi.matches.isEmpty {
                 cmiBanner(cmi)
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Hinweis-Banner für den Nur-Lesen-Modus (Vertrag Punkt 3): Datum +
+    /// "Wiederherstellen" (sofortige Aktion, kein Dialog) + "Endgültig löschen"
+    /// (Preflight + Bestätigungsdialog, analog `MeetingArchiveView`).
+    @ViewBuilder private func archivedBanner(_ current: Meeting, archivedAt: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(archiveArchivedAtChipText(archivedAt), systemImage: "archivebox.fill")
+                .font(.subheadline).fontWeight(.semibold)
+            HStack(spacing: 8) {
+                Button {
+                    restore(current)
+                } label: {
+                    Label("Wiederherstellen", systemImage: "tray.and.arrow.up")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(isRestoring)
+
+                Button(role: .destructive) {
+                    Task { await loadPreflightAndConfirm(current) }
+                } label: {
+                    Label("Endgültig löschen", systemImage: "trash")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .disabled(isLoadingPreflight || isDeletingPermanently)
+            }
+        }
+        .padding(10)
+        .background(DS.orange.opacity(0.1))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.orange.opacity(0.3)))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func restore(_ current: Meeting) {
+        isRestoring = true
+        Task {
+            do {
+                try await state.restoreMeeting(current.id)
+                infoMessage = "Meeting wiederhergestellt."
+            } catch {
+                self.error = "Meeting konnte nicht wiederhergestellt werden. Bitte versuche es erneut."
+            }
+            isRestoring = false
+        }
+    }
+
+    private func loadPreflightAndConfirm(_ current: Meeting) async {
+        isLoadingPreflight = true
+        do {
+            permanentDeletePreflight = try await state.archivePreflight(current.id)
+            showPermanentDeleteConfirm = true
+        } catch {
+            self.error = "Löschumfang konnte nicht ermittelt werden. Bitte versuche es erneut."
+        }
+        isLoadingPreflight = false
+    }
+
+    private func permanentlyDelete(_ current: Meeting) {
+        isDeletingPermanently = true
+        Task {
+            do {
+                try await state.permanentlyDeleteMeeting(current.id)
+                infoMessage = archiveDeletedSuccessText(title: current.title)
+            } catch {
+                self.error = "Meeting konnte nicht endgültig gelöscht werden. Bitte versuche es erneut."
+            }
+            isDeletingPermanently = false
+            permanentDeletePreflight = nil
+        }
     }
 
     #if os(iOS)
@@ -219,7 +439,7 @@ struct MeetingDetailView: View {
                     .font(.caption).buttonStyle(.borderless)
                 Button {
                     Task {
-                        do { _ = try await state.aiCmiRecompute(meetingId: current.id) }
+                        do { _ = try await state.aiCmiRecompute(meetingId: providedMeetingId) }
                         catch { self.error = error.localizedDescription }
                     }
                 } label: { Text("Neu").font(.caption) }.buttonStyle(.borderless)
@@ -261,25 +481,25 @@ struct MeetingDetailView: View {
         }.scaledFont(.footnote).fontWeight(.semibold)
     }
 
-    private func deleteTopic(from list: [Topic], at offsets: IndexSet) {
+    private func deleteTopic(from list: [Topic], at offsets: IndexSet, meetingId: String) {
         let ids = offsets.map { list[$0].id }
         Task {
             for id in ids {
-                do { try await state.deleteTopic(meetingId: current.id, id: id) }
+                do { try await state.deleteTopic(meetingId: meetingId, id: id) }
                 catch { self.error = error.localizedDescription }
             }
         }
     }
 
-    private func moveTopics(in list: [Topic], from source: IndexSet, to destination: Int) {
+    private func moveTopics(in list: [Topic], from source: IndexSet, to destination: Int, meetingId: String) {
         var arr = list
         arr.move(fromOffsets: source, toOffset: destination)
         Task {
-            do { try await state.reorderTopics(meetingId: current.id, ids: arr.map(\.id)) }
+            do { try await state.reorderTopics(meetingId: meetingId, ids: arr.map(\.id)) }
             catch { self.error = error.localizedDescription }
         }
         // Optimistic update in state
-        if let mi = state.meetings.firstIndex(where: { $0.id == current.id }) {
+        if let mi = state.meetings.firstIndex(where: { $0.id == meetingId }) {
             let allTopics = state.meetings[mi].topics
             let openIds = Set(list.map(\.id))
             let others = allTopics.filter { !openIds.contains($0.id) }
@@ -297,6 +517,7 @@ struct MeetingDetailView: View {
 struct TopicRowView: View {
     let topic: Topic
     let meetingId: String
+    var isReadOnly: Bool = false
     @EnvironmentObject var state: AppState
     @State private var showEdit = false
     @State private var showComplete = false
@@ -310,6 +531,60 @@ struct TopicRowView: View {
     private var themeLinks: [(theme: Theme, link: ThemeLink)] { state.themeLinks(for: topic.id) }
 
     var body: some View {
+        if isReadOnly {
+            rowContent
+                .opacity(topic.isSnoozed ? 0.7 : 1)
+        } else {
+            rowContent
+                .opacity(topic.isSnoozed ? 0.7 : 1)
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        Task { do { try await state.deleteTopic(meetingId: meetingId, id: topic.id) }
+                              catch { self.error = error.localizedDescription } }
+                    } label: { Label("Löschen", systemImage: "trash") }
+
+                    if !topic.done {
+                        Button { showComplete = true } label: {
+                            Label("Erledigt", systemImage: "checkmark.circle")
+                        }.tint(.green)
+                    } else {
+                        Button {
+                            Task { do { try await state.reopenTopic(meetingId: meetingId, id: topic.id) }
+                                  catch { self.error = error.localizedDescription } }
+                        } label: { Label("Öffnen", systemImage: "arrow.uturn.left") }
+                    }
+                }
+                .swipeActions(edge: .leading) {
+                    Button { showSnooze = true } label: {
+                        Label(topic.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz.fill")
+                    }.tint(DS.accent)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { showEdit = true }
+                .contextMenu { contextMenuItems }
+                .sheet(isPresented: $showEdit)     { TopicFormView(meetingId: meetingId, topic: topic) }
+                .sheet(isPresented: $showComplete) { CompleteSheet(meetingId: meetingId, topicId: topic.id) }
+                .sheet(isPresented: $showShare)    { ShareTopicSheet(meetingId: meetingId, topicId: topic.id) }
+                .sheet(isPresented: $showMove)     { MoveItemSheet(type: .topic(meetingId: meetingId, id: topic.id)) }
+                .sheet(isPresented: $showThemes)   { ThemeLinkSheet(refType: "topic", refId: topic.id, title: topic.title) }
+                .sheet(isPresented: $showSnooze)   { SnoozeSheet(onSnooze: { until in
+                    Task { do { try await state.snoozeTopic(meetingId: meetingId, id: topic.id, until: until) }
+                          catch { self.error = error.localizedDescription } }
+                }, onWake: topic.isSnoozed ? {
+                    Task { do { try await state.snoozeTopic(meetingId: meetingId, id: topic.id, until: nil) }
+                          catch { self.error = error.localizedDescription } }
+                } : nil) }
+                .sheet(isPresented: $showPush) {
+                    StackPushSheet(target: PushTarget(refType: "topic", refId: topic.id, title: topic.title,
+                                                       nextStep: topic.progress?.nextStep)) // A3: Vorbelegung
+                }
+                .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+                    Button("OK", role: .cancel) {}
+                } message: { Text(error ?? "") }
+        }
+    }
+
+    private var rowContent: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 8) {
                 // Status dot
@@ -330,6 +605,7 @@ struct TopicRowView: View {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
+                    ProgressBadgeView(summary: topic.progress) // A3
                     // Theme chips
                     if !themeLinks.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -369,50 +645,6 @@ struct TopicRowView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
-        .opacity(topic.isSnoozed ? 0.7 : 1)
-        .swipeActions(edge: .trailing) {
-            Button(role: .destructive) {
-                Task { do { try await state.deleteTopic(meetingId: meetingId, id: topic.id) }
-                      catch { self.error = error.localizedDescription } }
-            } label: { Label("Löschen", systemImage: "trash") }
-
-            if !topic.done {
-                Button { showComplete = true } label: {
-                    Label("Erledigt", systemImage: "checkmark.circle")
-                }.tint(.green)
-            } else {
-                Button {
-                    Task { do { try await state.reopenTopic(meetingId: meetingId, id: topic.id) }
-                          catch { self.error = error.localizedDescription } }
-                } label: { Label("Öffnen", systemImage: "arrow.uturn.left") }
-            }
-        }
-        .swipeActions(edge: .leading) {
-            Button { showSnooze = true } label: {
-                Label(topic.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz.fill")
-            }.tint(DS.accent)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { showEdit = true }
-        .contextMenu { contextMenuItems }
-        .sheet(isPresented: $showEdit)     { TopicFormView(meetingId: meetingId, topic: topic) }
-        .sheet(isPresented: $showComplete) { CompleteSheet(meetingId: meetingId, topicId: topic.id) }
-        .sheet(isPresented: $showShare)    { ShareTopicSheet(meetingId: meetingId, topicId: topic.id) }
-        .sheet(isPresented: $showMove)     { MoveItemSheet(type: .topic(meetingId: meetingId, id: topic.id)) }
-        .sheet(isPresented: $showThemes)   { ThemeLinkSheet(refType: "topic", refId: topic.id, title: topic.title) }
-        .sheet(isPresented: $showSnooze)   { SnoozeSheet(onSnooze: { until in
-            Task { do { try await state.snoozeTopic(meetingId: meetingId, id: topic.id, until: until) }
-                  catch { self.error = error.localizedDescription } }
-        }, onWake: topic.isSnoozed ? {
-            Task { do { try await state.snoozeTopic(meetingId: meetingId, id: topic.id, until: nil) }
-                  catch { self.error = error.localizedDescription } }
-        } : nil) }
-        .sheet(isPresented: $showPush) {
-            StackPushSheet(target: PushTarget(refType: "topic", refId: topic.id, title: topic.title))
-        }
-        .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(error ?? "") }
     }
 
     @ViewBuilder private var statusIcon: some View {

@@ -6,6 +6,11 @@ const crypto = require('crypto');
 const cryptoMod = require('./crypto');
 const cost      = require('./cost');
 const usage     = require('./usage');
+// Archiv-Kernmodul (Paket B1): `notArchivedSql`/`isTopicArchived` schließen
+// archivierte Meetings/Topics aus allen KI-Datenquellen aus (Paket B3).
+// Ausschließlich das bestehende Modul nutzen, kein eigenes Prädikat
+// nachformulieren (Wiederverwendungsgebot, CLAUDE.md).
+const archive   = require('../lib/archive');
 
 // ── Provider registry ────────────────────────────────────────
 const PROVIDERS = {
@@ -280,7 +285,9 @@ async function callWithRetryJson({ ctx, system, user, maxTokens, validate }) {
 // ── Feature: Pre-Meeting Briefing (W-AI01) ───────────────────
 async function briefMeeting({ db, userId, settings, encryptionKey, meetingId, confirmed }) {
   assertActive(settings, 'brief');
-  const meeting = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId);
+  const meeting = db.prepare(
+    `SELECT * FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId);
   if (!meeting) throw httpErr(404, 'Meeting nicht gefunden');
 
   const topics = db.prepare('SELECT * FROM topics WHERE meeting_id=? ORDER BY sort_order, created_at').all(meetingId);
@@ -298,7 +305,8 @@ async function briefMeeting({ db, userId, settings, encryptionKey, meetingId, co
   for (const t of openTopics) {
     if (!t.group_id) continue;
     const others = db.prepare(
-      'SELECT t.title AS title, m.title AS meeting FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.group_id=? AND t.meeting_id!=?'
+      `SELECT t.title AS title, m.title AS meeting FROM topics t JOIN meetings m ON m.id=t.meeting_id
+        WHERE t.group_id=? AND t.meeting_id!=? AND ${archive.notArchivedSql('m')}`
     ).all(t.group_id, meetingId);
     others.forEach(o => linkedTopics.push(`${o.meeting}: ${o.title}`));
   }
@@ -333,7 +341,9 @@ async function briefMeeting({ db, userId, settings, encryptionKey, meetingId, co
 async function captureMeeting({ db, userId, settings, encryptionKey, meetingId, notes, confirmed }) {
   assertActive(settings, 'capture');
   if (!notes || !String(notes).trim()) throw httpErr(400, 'Notizen erforderlich');
-  const meeting = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId);
+  const meeting = db.prepare(
+    `SELECT * FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId);
   if (!meeting) throw httpErr(404, 'Meeting nicht gefunden');
 
   const topics = db.prepare('SELECT id, title FROM topics WHERE meeting_id=? AND done=0').all(meetingId);
@@ -363,7 +373,8 @@ async function draftResult({ db, userId, settings, encryptionKey, refType, refId
   let title, description;
   if (refType === 'topic') {
     const t = db.prepare(
-      'SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?'
+      `SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id
+        WHERE t.id=? AND m.user_id=? AND ${archive.notArchivedSql('m')}`
     ).get(refId, userId);
     if (!t) throw httpErr(404, 'Thema nicht gefunden');
     title = t.title; description = t.description;
@@ -476,8 +487,13 @@ async function summarizeReentry({ db, userId, settings, encryptionKey, frameId, 
   // Resolve referenced topic/todo for context
   let title = '(gelöscht)', description = '', lastResult = '';
   if (f.ref_type === 'topic') {
+    // Kein direkter `meetings`-JOIN in dieser Query (Topic wird nur per ID
+    // aufgelöst) - archivierten Status daher über den dafür vorgesehenen
+    // Batch-/Einzel-Lookup des Archiv-Kernmoduls prüfen, statt ein eigenes
+    // Prädikat nachzubauen. Archiviertes Topic wird wie ein nicht mehr
+    // existentes Topic behandelt (bestehender "(gelöscht)"-Fallback).
     const t = db.prepare('SELECT title, description, result FROM topics WHERE id=?').get(f.ref_id);
-    if (t) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
+    if (t && !archive.isTopicArchived(db, f.ref_id)) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
   } else if (f.ref_type === 'todo') {
     const t = db.prepare('SELECT title, description, result FROM todos WHERE id=? AND user_id=?').get(f.ref_id, userId);
     if (t) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
@@ -522,7 +538,8 @@ async function suggestThemes({ db, userId, settings, encryptionKey, refType, ref
   let title, description;
   if (refType === 'topic') {
     const t = db.prepare(
-      'SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?'
+      `SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id
+        WHERE t.id=? AND m.user_id=? AND ${archive.notArchivedSql('m')}`
     ).get(refId, userId);
     if (!t) throw httpErr(404, 'Thema nicht gefunden');
     title = t.title; description = t.description;
@@ -588,14 +605,14 @@ function gatherWeeklyStats(db, userId) {
   const done = db.prepare(
     `SELECT t.title, t.result, t.result_date, m.title AS meeting
        FROM topics t JOIN meetings m ON m.id=t.meeting_id
-      WHERE m.user_id=? AND t.done=1 AND t.result_date >= ?
+      WHERE m.user_id=? AND t.done=1 AND t.result_date >= ? AND ${archive.notArchivedSql('m')}
       ORDER BY t.result_date DESC LIMIT 30`
   ).all(userId, sinceIso.slice(0, 10));
 
   const fresh = db.prepare(
     `SELECT t.title, m.title AS meeting
        FROM topics t JOIN meetings m ON m.id=t.meeting_id
-      WHERE m.user_id=? AND t.created_at >= ?
+      WHERE m.user_id=? AND t.created_at >= ? AND ${archive.notArchivedSql('m')}
       ORDER BY t.created_at DESC LIMIT 30`
   ).all(userId, sinceIso);
 
@@ -697,7 +714,9 @@ function validateCMI(obj) {
 async function crossMeetingInsight({ db, userId, settings, encryptionKey, meetingId, confirmed }) {
   assertActive(settings, 'cross_meeting');
 
-  const meeting = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId);
+  const meeting = db.prepare(
+    `SELECT * FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId);
   if (!meeting) throw httpErr(404, 'Meeting nicht gefunden');
 
   const thisTopics = db.prepare(
@@ -710,7 +729,7 @@ async function crossMeetingInsight({ db, userId, settings, encryptionKey, meetin
   const otherTopics = db.prepare(
     `SELECT t.id, t.title, t.description, m.title AS meeting
        FROM topics t JOIN meetings m ON m.id=t.meeting_id
-      WHERE m.user_id=? AND t.meeting_id!=? AND t.done=0 LIMIT 100`
+      WHERE m.user_id=? AND t.meeting_id!=? AND t.done=0 AND ${archive.notArchivedSql('m')} LIMIT 100`
   ).all(userId, meetingId);
   if (otherTopics.length === 0) {
     return { artifact_id: null, content: { matches: [] }, cost_cents: 0 };
@@ -787,6 +806,7 @@ function driftDetection(db, userId, driftDays = 21) {
        AND t.created_at < ?
        AND (t.updated_at = '' OR t.updated_at < ?)
        AND (t.snoozed_until IS NULL OR t.snoozed_until = '' OR t.snoozed_until < ?)
+       AND ${archive.notArchivedSql('m')}
        AND NOT EXISTS (
          SELECT 1 FROM stack_frames sf
           WHERE sf.user_id=? AND sf.ref_type='topic' AND sf.ref_id=t.id
@@ -988,7 +1008,9 @@ async function summarizeDescription({ db, userId, settings, encryptionKey, refTy
 
 // ── Apply capture suggestions (after user confirmation) ──────
 function applyCapture(db, userId, meetingId, apply) {
-  if (!db.prepare('SELECT 1 FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId)) {
+  if (!db.prepare(
+    `SELECT 1 FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId)) {
     throw httpErr(404, 'Meeting nicht gefunden');
   }
   const created = { topics: [], todos: [], theme_links: [], results: 0 };

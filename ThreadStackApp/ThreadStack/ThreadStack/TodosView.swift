@@ -6,6 +6,11 @@ struct TodosView: View {
     @State private var showNew = false
     @State private var hidePrivate = false
     @State private var error: String?
+    // Story 9 ("Ruhende Vorhaben gezielt wiederfinden") — bislang nur im Web
+    // vorhanden (Tester-Fund), hier analog nachgezogen. Auswahl bleibt nur
+    // fuer die Sitzung erhalten (kein Persistieren gefordert).
+    @State private var sortOldestProgressFirst = false
+    @State private var showOnlyUndocumented = false
 
     private var hasPrivate: Bool { state.todos.contains { $0.isPrivate } }
 
@@ -26,7 +31,27 @@ struct TodosView: View {
         }
     }
 
-    private var openTodos:    [TodoItem] { sortByDue(filtered.filter { !$0.done && !$0.isSnoozed }) }
+    // Identisch zum Web-Comparator TSProgress.compareByProgress (public/progress.js):
+    // Vorhaben ohne Zwischenstand (orderKey==nil) werden ans Ende gestellt,
+    // ansonsten aufsteigend nach Alter des letzten Zwischenstands (aeltester zuerst).
+    private func sortByOldestProgress(_ list: [TodoItem]) -> [TodoItem] {
+        list.sorted { a, b in
+            let aKey = a.progress?.orderKey
+            let bKey = b.progress?.orderKey
+            if (aKey == nil) != (bKey == nil) { return aKey != nil }
+            guard let ak = aKey, let bk = bKey else { return false }
+            return ak < bk
+        }
+    }
+
+    private var openTodosBase: [TodoItem] {
+        var list = filtered.filter { !$0.done && !$0.isSnoozed }
+        if showOnlyUndocumented { list = list.filter { $0.progress?.undocumented == true } }
+        return list
+    }
+    private var openTodos: [TodoItem] {
+        sortOldestProgressFirst ? sortByOldestProgress(openTodosBase) : sortByDue(openTodosBase)
+    }
     private var snoozedTodos: [TodoItem] { sortByDue(filtered.filter { !$0.done &&  $0.isSnoozed }) }
     private var doneTodos:    [TodoItem] { filtered.filter {  $0.done }.sorted { $0.resultDate > $1.resultDate } }
 
@@ -39,7 +64,22 @@ struct TodosView: View {
             }
             #endif
 
-            if !openTodos.isEmpty {
+            Section {
+                Picker("Sortierung", selection: $sortOldestProgressFirst) {
+                    Text("Standard (Fälligkeit)").tag(false)
+                    Text("Ältester Stand zuerst").tag(true)
+                }
+                Toggle("Länger nicht dokumentiert", isOn: $showOnlyUndocumented)
+            }
+
+            if openTodos.isEmpty && showOnlyUndocumented {
+                Section {
+                    Text("✓ Alles aktuell dokumentiert")
+                        .foregroundStyle(.secondary).font(.subheadline)
+                        .multilineTextAlignment(.center).frame(maxWidth: .infinity)
+                        .listRowBackground(Color.clear)
+                }
+            } else if !openTodos.isEmpty {
                 Section(header: sectionHeader("Offen", count: openTodos.count, color: DS.accent)) {
                     ForEach(openTodos) { t in TodoRowView(todo: t) }
                         .onDelete { deleteTodo(from: openTodos, at: $0) }
@@ -165,6 +205,7 @@ struct TodoRowView: View {
                     if !todo.done, let due = todo.dueDateFormatted {
                         dueBadge(text: due, status: todo.dueStatus)
                     }
+                    ProgressBadgeView(summary: todo.progress) // A3
                     if todo.isSnoozed, let wake = todo.snoozeWakeFormatted {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
@@ -255,7 +296,8 @@ struct TodoRowView: View {
             } : nil)
         }
         .sheet(isPresented: $showPush) {
-            StackPushSheet(target: PushTarget(refType: "todo", refId: todo.id, title: todo.title))
+            StackPushSheet(target: PushTarget(refType: "todo", refId: todo.id, title: todo.title,
+                                               nextStep: todo.progress?.nextStep)) // A3: Vorbelegung
         }
         .alert("Fehler", isPresented: Binding(
             get: { error != nil }, set: { if !$0 { error = nil } }

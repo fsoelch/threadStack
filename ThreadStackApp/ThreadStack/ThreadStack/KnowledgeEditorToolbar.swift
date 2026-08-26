@@ -31,6 +31,14 @@ struct KnowledgeEditorToolbar: View {
     /// `KnowledgeImagePicker`) ein Bild + Alt-Text bestätigt hat.
     let onImagePicked: (KnowledgeImageResult) -> Void
 
+    /// Arbeitspaket A2 ("App-UI-Bausteine Progress"): blendet den
+    /// Bild-Einfüge-Button aus, wenn diese Toolbar für den Fortschritts-
+    /// Zwischenstand-Editor verwendet wird (Bilder sind dort serverseitig
+    /// verboten, siehe `ProgressEntryEditorSheet`). Default `true` erhält das
+    /// bestehende Verhalten für alle bisherigen Aufrufer (Wissens-Editor)
+    /// unveraendert.
+    var showImageButton: Bool = true
+
     var body: some View {
         HStack(spacing: 4) {
             formatButton(
@@ -74,8 +82,10 @@ struct KnowledgeEditorToolbar: View {
             }
             .accessibilityLabel("Link einfügen")
 
-            KnowledgeImagePicker(onPicked: onImagePicked)
-                .labelStyle(.iconOnly)
+            if showImageButton {
+                KnowledgeImagePicker(onPicked: onImagePicked)
+                    .labelStyle(.iconOnly)
+            }
         }
         .buttonStyle(.borderless)
         .disabled(!controller.isReady)

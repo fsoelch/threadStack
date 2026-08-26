@@ -1,0 +1,272 @@
+{
+  "_comment": "Kanonische Beispiel-JSONs der Progress-API (Arbeitspaket S1, lib/progress/routes.js). Wird von test/progress_*.test.js NICHT automatisiert gegen diese Datei geprueft - sie dient als Referenz fuer S2/W1/W2/A1-A3, um das exakte Antwortformat gegenzupruefen. Enthaelt keine echten personenbezogenen Daten. Stand 2026-08-23 gegen den echten Server verifiziert (vorherige Fassung wich in ref.type/id/exists, excerpt und der Pagination-Huelle der /entries-Route vom tatsaechlichen Server ab - siehe Commit 'fix(progress): API-Vertragsabweichungen ...').",
+
+  "GET /api/progress/:refType/:refId": {
+    "ref": {
+      "type": "todo",
+      "id": "t_kickoff01",
+      "exists": true,
+      "title": "Angebot fuer Projekt Nordwind erstellen",
+      "done": false,
+      "snoozedUntil": null,
+      "createdAt": "2026-07-20T08:00:00.000Z",
+      "updatedAt": "2026-08-10T09:15:00.000Z",
+      "result": "",
+      "resultDate": ""
+    },
+    "goal": "Angebot bis Ende August unterschriftsreif haben",
+    "goalUpdatedAt": "2026-07-21T10:00:00.000Z",
+    "nextStep": "Preiskalkulation mit Team abstimmen",
+    "nextStepUpdatedAt": "2026-08-10T09:15:00.000Z",
+    "stats": {
+      "entryCount": 2,
+      "firstEntryAt": "2026-07-22T11:00:00.000Z",
+      "lastEntryAt": "2026-08-10T09:10:00.000Z",
+      "lastActivityAt": "2026-08-10T09:15:00.000Z",
+      "dormant": false,
+      "dormantDays": 0,
+      "stale": false,
+      "staleDays": 13
+    },
+    "reentry": {
+      "show": false,
+      "dormantSince": null,
+      "dormantLabel": null,
+      "empty": false,
+      "ai": { "available": false, "frameId": null }
+    },
+    "entries": [
+      {
+        "id": "pe_b1c2d3e4f5a6",
+        "refType": "todo",
+        "refId": "t_kickoff01",
+        "kind": "note",
+        "source": "manual",
+        "bodyHtml": "<p>Kickoff mit Team abgehalten, erste Eckdaten stehen.</p>",
+        "excerpt": "Kickoff mit Team abgehalten, erste Eckdaten stehen.",
+        "createdAt": "2026-08-10T09:10:00.000Z",
+        "editedAt": null,
+        "editable": true,
+        "linkFrameId": null,
+        "gapDaysBefore": 19,
+        "showDormancyMarker": true
+      },
+      {
+        "id": "pe_a9b8c7d6e5f4",
+        "refType": "todo",
+        "refId": "t_kickoff01",
+        "kind": "note",
+        "source": "manual",
+        "bodyHtml": "<p>Erste Rueckmeldung vom Kunden eingeholt.</p>",
+        "excerpt": "Erste Rueckmeldung vom Kunden eingeholt.",
+        "createdAt": "2026-07-22T11:00:00.000Z",
+        "editedAt": "2026-07-22T11:05:00.000Z",
+        "editable": true,
+        "linkFrameId": null,
+        "gapDaysBefore": 0,
+        "showDormancyMarker": false
+      }
+    ],
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
+  },
+
+  "GET /api/progress/:refType/:refId?limit=20 (dormantes, unbearbeitetes Vorhaben)": {
+    "ref": {
+      "type": "topic",
+      "id": "tp_altprojekt1",
+      "exists": true,
+      "title": "Altsystem-Migration klaeren",
+      "done": false,
+      "snoozedUntil": null,
+      "createdAt": "2026-06-01T08:00:00.000Z",
+      "updatedAt": "2026-06-01T08:00:00.000Z",
+      "result": "",
+      "resultDate": ""
+    },
+    "goal": "",
+    "goalUpdatedAt": null,
+    "nextStep": "",
+    "nextStepUpdatedAt": null,
+    "stats": {
+      "entryCount": 0,
+      "firstEntryAt": null,
+      "lastEntryAt": null,
+      "lastActivityAt": "2026-06-01T08:00:00.000Z",
+      "dormant": true,
+      "dormantDays": 21,
+      "stale": false,
+      "staleDays": 0
+    },
+    "reentry": {
+      "show": true,
+      "dormantSince": "2026-06-01T08:00:00.000Z",
+      "dormantLabel": "3 Wochen",
+      "empty": true,
+      "ai": { "available": true, "frameId": "sf_c1a2f3e4" }
+    },
+    "entries": [],
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
+  },
+
+  "GET /api/progress/:refType/:refId/entries?limit=20&cursor=...": {
+    "entries": [
+      {
+        "id": "pe_a9b8c7d6e5f4",
+        "refType": "todo",
+        "refId": "t_kickoff01",
+        "kind": "note",
+        "source": "manual",
+        "bodyHtml": "<p>Erste Rueckmeldung vom Kunden eingeholt.</p>",
+        "excerpt": "Erste Rueckmeldung vom Kunden eingeholt.",
+        "createdAt": "2026-07-22T11:00:00.000Z",
+        "editedAt": "2026-07-22T11:05:00.000Z",
+        "editable": true,
+        "linkFrameId": null,
+        "gapDaysBefore": 0,
+        "showDormancyMarker": false
+      }
+    ],
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
+  },
+
+  "GET .../entries (kind=result Eintrag ueber ref.result aufgeloest)": {
+    "entries": [
+      {
+        "id": "pe_result0001",
+        "refType": "todo",
+        "refId": "t_kickoff01",
+        "kind": "result",
+        "source": "pop_done",
+        "bodyHtml": "<p>Angebot verschickt und vom Kunden akzeptiert.</p>",
+        "excerpt": "Angebot verschickt und vom Kunden akzeptiert.",
+        "createdAt": "2026-08-15T14:00:00.000Z",
+        "editedAt": null,
+        "editable": false,
+        "linkFrameId": "sf_abcdef01",
+        "gapDaysBefore": 5,
+        "showDormancyMarker": false
+      }
+    ],
+    "page": { "limit": 20, "hasMore": false, "nextCursor": null }
+  },
+
+  "POST /api/progress/:refType/:refId/entries -> 201": {
+    "entry": {
+      "id": "pe_b1c2d3e4f5a6",
+      "refType": "todo",
+      "refId": "t_kickoff01",
+      "kind": "note",
+      "source": "manual",
+      "bodyHtml": "<p>Kickoff mit Team abgehalten, erste Eckdaten stehen.</p>",
+      "excerpt": "Kickoff mit Team abgehalten, erste Eckdaten stehen.",
+      "createdAt": "2026-08-10T09:10:00.000Z",
+      "editedAt": null,
+      "editable": true,
+      "linkFrameId": null,
+      "clientToken": "web-a1b2c3d4",
+      "gapDaysBefore": 0,
+      "showDormancyMarker": false
+    },
+    "stats": {
+      "entryCount": 2,
+      "firstEntryAt": "2026-07-22T11:00:00.000Z",
+      "lastEntryAt": "2026-08-10T09:10:00.000Z",
+      "lastActivityAt": "2026-08-10T09:10:00.000Z",
+      "dormant": false,
+      "dormantDays": 0,
+      "stale": false,
+      "staleDays": 0
+    }
+  },
+
+  "POST /api/progress/:refType/:refId/entries -> 200 (idempotent, doppeltes clientToken)": {
+    "entry": {
+      "id": "pe_b1c2d3e4f5a6",
+      "refType": "todo",
+      "refId": "t_kickoff01",
+      "kind": "note",
+      "source": "manual",
+      "bodyHtml": "<p>Kickoff mit Team abgehalten, erste Eckdaten stehen.</p>",
+      "excerpt": "Kickoff mit Team abgehalten, erste Eckdaten stehen.",
+      "createdAt": "2026-08-10T09:10:00.000Z",
+      "editedAt": null,
+      "editable": true,
+      "linkFrameId": null,
+      "clientToken": "web-a1b2c3d4",
+      "gapDaysBefore": 0,
+      "showDormancyMarker": false
+    },
+    "idempotent": true,
+    "stats": {
+      "entryCount": 2,
+      "firstEntryAt": "2026-07-22T11:00:00.000Z",
+      "lastEntryAt": "2026-08-10T09:10:00.000Z",
+      "lastActivityAt": "2026-08-10T09:10:00.000Z",
+      "dormant": false,
+      "dormantDays": 0,
+      "stale": false,
+      "staleDays": 0
+    }
+  },
+
+  "PUT /api/progress/entries/:entryId -> 200": {
+    "entry": {
+      "id": "pe_b1c2d3e4f5a6",
+      "refType": "todo",
+      "refId": "t_kickoff01",
+      "kind": "note",
+      "source": "manual",
+      "bodyHtml": "<p>Kickoff mit Team abgehalten, ueberarbeitete Version.</p>",
+      "excerpt": "Kickoff mit Team abgehalten, ueberarbeitete Version.",
+      "createdAt": "2026-08-10T09:10:00.000Z",
+      "editedAt": "2026-08-10T09:20:00.000Z",
+      "editable": true,
+      "linkFrameId": null,
+      "clientToken": "web-a1b2c3d4",
+      "gapDaysBefore": 0,
+      "showDormancyMarker": false
+    }
+  },
+
+  "DELETE /api/progress/entries/:entryId -> 200": {
+    "ok": true,
+    "stats": {
+      "entryCount": 1,
+      "firstEntryAt": "2026-07-22T11:00:00.000Z",
+      "lastEntryAt": "2026-07-22T11:00:00.000Z",
+      "lastActivityAt": "2026-07-22T11:00:00.000Z",
+      "dormant": false,
+      "dormantDays": 0,
+      "stale": true,
+      "staleDays": 19
+    }
+  },
+
+  "PUT /api/progress/:refType/:refId/goal -> 200": {
+    "goal": "Angebot bis Ende August unterschriftsreif haben",
+    "goalUpdatedAt": "2026-07-21T10:00:00.000Z"
+  },
+
+  "PUT /api/progress/:refType/:refId/next-step -> 200": {
+    "nextStep": "Preiskalkulation mit Team abstimmen",
+    "nextStepUpdatedAt": "2026-08-10T09:15:00.000Z"
+  },
+
+  "Fehlerformat (einheitlich fuer alle Routen)": {
+    "400 invalid_ref_type": { "error": "Ungültiger Referenztyp.", "code": "invalid_ref_type" },
+    "400 invalid_limit": { "error": "Ungültiges Limit.", "code": "invalid_limit" },
+    "400 invalid_cursor": { "error": "Ungültiger Cursor.", "code": "invalid_cursor" },
+    "400 invalid_source": { "error": "Ungültige Quelle.", "code": "invalid_source" },
+    "400 invalid_client_token": { "error": "Ungültiges Client-Token.", "code": "invalid_client_token" },
+    "400 body_empty": { "error": "Der Zwischenstand darf nicht leer sein.", "code": "body_empty" },
+    "400 body_too_long": { "error": "Der Zwischenstand ist zu lang.", "code": "body_too_long" },
+    "400 goal_too_long": { "error": "Das Zielbild darf maximal 500 Zeichen haben.", "code": "goal_too_long" },
+    "400 next_step_too_long": { "error": "Der nächste Schritt darf maximal 1000 Zeichen haben.", "code": "next_step_too_long" },
+    "404 ref_not_found": { "error": "Referenz nicht gefunden.", "code": "ref_not_found" },
+    "404 entry_not_found": { "error": "Zwischenstand nicht gefunden.", "code": "entry_not_found" },
+    "409 ref_done": { "error": "Dieses Vorhaben ist bereits erledigt.", "code": "ref_done" },
+    "409 entry_not_editable": { "error": "Dieser Eintrag kann nicht bearbeitet werden.", "code": "entry_not_editable" },
+    "429 rate_limited": { "error": "Zu viele Änderungen. Bitte kurz warten.", "code": "rate_limited" },
+    "500 internal": { "error": "Unerwarteter Fehler. Bitte erneut versuchen.", "code": "internal" }
+  }
+}
