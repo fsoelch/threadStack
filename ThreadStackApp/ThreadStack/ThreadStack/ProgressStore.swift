@@ -17,6 +17,17 @@
 //  A2/A3 beobachten ausschließlich die `@Published`-Properties und rufen die
 //  Methoden unten auf; sie fassen niemals `AppState`/`ProgressAPI` direkt an.
 //
+//  Redesign-Update (Todo/Task-Übersicht, Arbeitspaket A1): Zielbild entfällt
+//  vollständig aus der App-UI (bindende Menschen-Entscheidung) — die frühere
+//  `saveGoal(refType:refId:goal:)`-Methode wurde deshalb entfernt. Siehe
+//  Abschlussbericht: `ProgressGoalEditorSheet.swift` (Aufrufer von
+//  `store.saveGoal`) sowie `ProgressTimelineView.swift`,
+//  `ProgressReentryCardView.swift` und `ProgressEntryEditorSheet.swift`
+//  (lesen `ProgressDetail.goal`, jetzt optional statt `String`) liegen in
+//  anderen Paketen und wurden NICHT angefasst — das sind offene
+//  Abhängigkeiten für A2/A3 (durch lokalen `xcodebuild build` bestätigt,
+//  siehe Abschlussbericht).
+//
 
 import Foundation
 import Combine
@@ -162,24 +173,11 @@ final class ProgressStore: ObservableObject {
         }
     }
 
-    // MARK: - Zielbild / Nächster Schritt
-
-    @discardableResult
-    func saveGoal(refType: String, refId: String, goal: String) async throws -> ProgressMeta {
-        do {
-            let meta = try await appState.saveProgressGoal(refType: refType, refId: refId, goal: goal)
-            replaceDetail(refType: refType, refId: refId) { old in
-                ProgressDetail(ref: old.ref,
-                                goal: meta.goal ?? old.goal,
-                                goalUpdatedAt: meta.goalUpdatedAt ?? old.goalUpdatedAt,
-                                nextStep: old.nextStep, nextStepUpdatedAt: old.nextStepUpdatedAt,
-                                stats: old.stats, reentry: old.reentry, entries: old.entries, page: old.page)
-            }
-            return meta
-        } catch {
-            throw Self.mapError(error)
-        }
-    }
+    // MARK: - Nächster Schritt
+    // Zielbild entfällt vollständig aus der App-UI (bindende Menschen-
+    // Entscheidung) — die frühere `saveGoal(refType:refId:goal:)`-Methode
+    // wurde deshalb entfernt (siehe Abschlussbericht: verbleibende Aufrufer
+    // in anderen Paketen als Abhängigkeit vermerkt, nicht selbst geändert).
 
     @discardableResult
     func saveNextStep(refType: String, refId: String, nextStep: String) async throws -> ProgressMeta {
