@@ -6,6 +6,13 @@
 //  Zielbild-/Fortschrittsverlauf-Feature (Server-Vertrag: Paket S1,
 //  `GET/PUT/POST/DELETE /api/progress/...`).
 //
+//  Redesign-Update (Todo/Task-Übersicht, Arbeitspaket A1): Zielbild entfällt
+//  vollständig aus der App-UI (bindende Menschen-Entscheidung) — die frühere
+//  `saveProgressGoal(refType:refId:goal:)`-Methode wurde deshalb aus diesem
+//  Verantwortungsbereich entfernt (siehe Abschlussbericht: verbleibende
+//  Aufrufer in anderen Paketen sind als Abhängigkeit vermerkt, nicht selbst
+//  geändert).
+//
 //  Netzwerk-Pattern: `AppState.request(_:_:body:)` (siehe `AppState.swift`)
 //  ist das etablierte, wiederzuverwendende Muster für einfache Endpunkte,
 //  kollabiert 4xx/5xx-Antworten aber auf `APIError.server(String)` und wirft
@@ -204,9 +211,6 @@ extension AppState {
         let path = progressPath(["progress", refType, refId, "entries"], query: query)
         return try await progressRequest("GET", path)
     }
-
-    // `saveProgressGoal` wurde entfernt: Zielbild entfällt vollständig aus
-    // der App-UI (Produktentscheidung), siehe auch `ProgressStore.swift`.
 
     func saveProgressNextStep(refType: String, refId: String, nextStep: String) async throws -> ProgressMeta {
         let path = progressPath(["progress", refType, refId, "next-step"])

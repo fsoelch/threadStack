@@ -6,6 +6,11 @@
 //  Erfolgspfade (Decodierung/Pfad-/Query-Aufbau) und `clientToken`-
 //  Durchreichung für den Progress-API-Client.
 //
+//  Redesign-Update (Todo/Task-Übersicht, Arbeitspaket A1): Zielbild entfällt
+//  vollständig aus der App-UI — die Tests für `AppState.saveProgressGoal`
+//  wurden entfernt, da diese Methode nicht mehr existiert (siehe
+//  `ProgressAPI.swift`).
+//
 //  Netzwerk-Mocking: nutzt bewusst das bereits vorhandene `KnowledgeMockURLProtocol`
 //  aus `KnowledgeAPITests.swift` (Arbeitspaket "knowledge-api") wieder, statt
 //  eine zweite, ähnliche `URLProtocol`-Stub-Klasse zu bauen (siehe CLAUDE.md:
@@ -135,11 +140,6 @@ struct ProgressAPIErrorPathTests {
     }
 
     @Test func saveProgressNextStepThrowsTooLongWithLimitFromNextStepTooLong() async throws {
-        // Ersetzt den früheren goal-spezifischen Test (Zielbild/`saveProgressGoal`
-        // entfällt vollständig aus der App laut Produktentscheidung) durch die
-        // äquivalente Prüfung des echten Request-Pfads für einen weiterhin
-        // existierenden Endpunkt — die Codemapping-Logik selbst bleibt bereits
-        // durch `ProgressErrorMappingTests` (Zeile ~92 ff.) direkt abgedeckt.
         let state = makeProgressTestState { _ in
             (400, jsonData(["error": "Nächster Schritt zu lang", "code": "next_step_too_long"]))
         }

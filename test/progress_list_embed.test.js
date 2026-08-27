@@ -120,9 +120,11 @@ test('GET /api/todos: kein N+1 - GENAU EINE GROUP-BY-Query unabhängig von der T
   }
   assert.equal(response.status, 200);
   assert.ok(response.body.length >= 13, 'mind. 13 Todos erwartet (1 aus Fixture + 12 Batch)');
-  // summaryFor() macht max. 1 GROUP-BY-Query pro refType; bei einer reinen
-  // Todo-Liste ist das GENAU EINE Query, unabhängig von der Item-Anzahl.
-  assert.equal(groupByCalls, 1, 'GET /api/todos darf pro Response nur EINE GROUP-BY-Query ausführen (kein N+1)');
+  // progress.summaryFor() macht 1 GROUP-BY-Query pro refType (hier: Todos),
+  // summaries.forRefs() (Paket S3, additive KI-Zusammenfassungs-Anreicherung)
+  // macht zusätzlich 1 eigene GROUP-BY-Query über progressSourceVersions() -
+  // macht GENAU 2, unabhängig von der Item-Anzahl (kein N+1).
+  assert.equal(groupByCalls, 2, 'GET /api/todos darf pro Response nur konstant viele GROUP-BY-Queries ausführen (kein N+1)');
 });
 
 test('GET /api/meetings: kein N+1 bei vielen Topics', async (t) => {
@@ -149,5 +151,7 @@ test('GET /api/meetings: kein N+1 bei vielen Topics', async (t) => {
     db.prepare = origPrepare;
   }
   assert.equal(response.status, 200);
-  assert.equal(groupByCalls, 1, 'GET /api/meetings darf pro Response nur EINE GROUP-BY-Query für Topics ausführen (kein N+1)');
+  // Wie oben: progress.summaryFor() + summaries.forRefs() (Paket S3) macht
+  // GENAU 2 GROUP-BY-Queries, unabhängig von der Topic-Anzahl (kein N+1).
+  assert.equal(groupByCalls, 2, 'GET /api/meetings darf pro Response nur konstant viele GROUP-BY-Queries für Topics ausführen (kein N+1)');
 });

@@ -17,6 +17,17 @@
 //  A2/A3 beobachten ausschließlich die `@Published`-Properties und rufen die
 //  Methoden unten auf; sie fassen niemals `AppState`/`ProgressAPI` direkt an.
 //
+//  Redesign-Update (Todo/Task-Übersicht, Arbeitspaket A1): Zielbild entfällt
+//  vollständig aus der App-UI (bindende Menschen-Entscheidung) — die frühere
+//  `saveGoal(refType:refId:goal:)`-Methode wurde deshalb entfernt. Siehe
+//  Abschlussbericht: `ProgressGoalEditorSheet.swift` (Aufrufer von
+//  `store.saveGoal`) sowie `ProgressTimelineView.swift`,
+//  `ProgressReentryCardView.swift` und `ProgressEntryEditorSheet.swift`
+//  (lesen `ProgressDetail.goal`, jetzt optional statt `String`) liegen in
+//  anderen Paketen und wurden NICHT angefasst — das sind offene
+//  Abhängigkeiten für A2/A3 (durch lokalen `xcodebuild build` bestätigt,
+//  siehe Abschlussbericht).
+//
 
 import Foundation
 import Combine
@@ -163,12 +174,9 @@ final class ProgressStore: ObservableObject {
     }
 
     // MARK: - Nächster Schritt
-    //
-    // `saveGoal` (Zielbild) wurde entfernt: das Zielbild entfällt laut
-    // Produktentscheidung vollständig, ersatzlos aus der App-UI. Der
-    // zugehörige Server-Endpunkt (`PUT /progress/:refType/:refId/goal`) und
-    // `AppState.saveProgressGoal` wurden dazu in `ProgressAPI.swift`
-    // ebenfalls entfernt.
+    // Zielbild entfällt vollständig aus der App-UI (bindende Menschen-
+    // Entscheidung) — die frühere `saveGoal(refType:refId:goal:)`-Methode
+    // wurde deshalb entfernt.
 
     @discardableResult
     func saveNextStep(refType: String, refId: String, nextStep: String) async throws -> ProgressMeta {

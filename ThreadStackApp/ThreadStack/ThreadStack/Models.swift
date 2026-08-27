@@ -74,6 +74,12 @@ struct Topic: Identifiable, Codable, Equatable {
     // Feld automatisch per decodeIfPresent — fehlt es im JSON (altes Server-Verhalten
     // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
     var progress: ProgressSummary?
+
+    // Redesign Todo/Task-Übersicht (Arbeitspaket A1): additiv, vom Server optional
+    // eingebettet (siehe SummaryModels.swift, Schnittstelle 12). Ältere Server liefern
+    // dieses Feld nicht — synthesized Codable dekodiert es per decodeIfPresent, bleibt
+    // dann einfach nil statt eines Decode-Fehlers.
+    var aiSummary: AISummaryPair?
 }
 
 // MARK: - TodoItem
@@ -135,6 +141,12 @@ struct TodoItem: Identifiable, Codable, Equatable {
     // Feld automatisch per decodeIfPresent — fehlt es im JSON (altes Server-Verhalten
     // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
     var progress: ProgressSummary?
+
+    // Redesign Todo/Task-Übersicht (Arbeitspaket A1): additiv, vom Server optional
+    // eingebettet (siehe SummaryModels.swift, Schnittstelle 12). Ältere Server liefern
+    // dieses Feld nicht — synthesized Codable dekodiert es per decodeIfPresent, bleibt
+    // dann einfach nil statt eines Decode-Fehlers.
+    var aiSummary: AISummaryPair?
 }
 
 enum DueStatus { case none, overdue, today, future }
@@ -322,9 +334,19 @@ struct AIFeatures: Codable, Equatable {
     // ein non-optionales Feld würde die Dekodierung der gesamten AISettings-Response brechen.
     var link_summary: Bool?
     var linkSummaryOn: Bool { link_summary ?? false }
+    // Redesign Todo/Task-Übersicht (Arbeitspaket A1): KI-Zusammenfassungen für
+    // Fortschritt/Beschreibung, siehe Vertrag ("ai_settings.features_enabled bekommt
+    // zwei neue optionale Boolean-Schlüssel ... Default aus"). Ebenfalls optional
+    // (gleiches Muster wie `link_summary`), damit ältere Server-Stände ohne diese
+    // Schlüssel die Dekodierung nicht brechen.
+    var progress_summary: Bool?
+    var description_summary: Bool?
+    var progressSummaryOn: Bool { progress_summary ?? false }
+    var descriptionSummaryOn: Bool { description_summary ?? false }
     static let defaults = AIFeatures(brief: true, capture: true, result_draft: true,
                                      reentry: true, theme_tagging: false, digest: false,
-                                     cross_meeting: false, drift: false, link_summary: false)
+                                     cross_meeting: false, drift: false, link_summary: false,
+                                     progress_summary: false, description_summary: false)
 }
 
 struct AISettings: Codable, Equatable {

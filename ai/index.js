@@ -36,6 +36,9 @@ const DEFAULT_FEATURES = {
   brief: true, capture: true, result_draft: true, reentry: true,
   theme_tagging: false, digest: false, cross_meeting: false, drift: false,
   link_summary: false,
+  // S2: ereignisgetriebene KI-Zusammenfassungen (Fortschritt/Beschreibung).
+  // Default AUS wie alle anderen kostenrelevanten Features.
+  progress_summary: false, description_summary: false,
 };
 
 function loadSettings(db, userId) {
@@ -430,7 +433,8 @@ async function summarizeLink({ db, userId, settings, encryptionKey, page, length
   // nicht vertrauenswürdigen Zielseite stammen (title aus <title>/og:title) -
   // Security-Review-Fund: unbehandelt wären Titel/URL eine schmale,
   // außerhalb des Nonce-Blocks liegende Injection-Fläche.
-  const neutralizeMarkers = (s) => String(s || '').replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
+  // (neutralizeMarkers ist ein modulweiter Helper, siehe unten — wird auch
+  // von summarizeProgress/summarizeDescription wiederverwendet, S2.)
   const safeContent = neutralizeMarkers(page.text);
   const safeTitle = neutralizeMarkers(page.title || '(ohne Titel)');
   const safeUrl = neutralizeMarkers(page.finalUrl || '');
@@ -819,6 +823,189 @@ function driftDetection(db, userId, driftDays = 21) {
   }));
 }
 
+// ── Feature: Progress-/Description-Summary (S2, Schnittstelle 6) ────
+// Ereignisgetriebene Kurz-Zusammenfassungen, die von lib/summaries/ (anderes
+// Paket) nach relevanten Änderungen aufgerufen werden. Diese Funktionen holen
+// selbst KEINE Daten aus der DB (außer für die Artefakt-Persistenz) — Titel/
+// Einträge/Beschreibung werden vom Aufrufer übergeben, siehe Schnittstelle 6.
+
+// Eingabe-Deckel vor dem Prompt-Bau (bindend laut Architektur):
+const PROGRESS_ENTRY_MAX_COUNT  = 20;
+const PROGRESS_ENTRY_MAX_CHARS  = 1500;
+const PROGRESS_TOTAL_MAX_CHARS  = 12000;
+const DESCRIPTION_MAX_CHARS     = 8000;
+const PROGRESS_SUMMARY_MAX_CHARS    = 600;
+const DESCRIPTION_SUMMARY_MAX_CHARS = 400;
+
+// Extrahiert den reinen Text eines Fortschrittseintrags. Der genaue Aufbau
+// eines "entry"-Objekts ist im Schnittstellenvertrag nicht spezifiziert
+// (Annahme/Abweichung, siehe Abschlussbericht): unterstützt werden sowohl
+// einfache Strings als auch Objekte mit .text/.content/.note.
+function entryPlainText(e) {
+  if (e == null) return '';
+  if (typeof e === 'string') return e;
+  if (typeof e === 'object') {
+    if (e.text != null)    return e.text;
+    if (e.content != null) return e.content;
+    if (e.note != null)    return e.note;
+    return '';
+  }
+  return String(e);
+}
+
+function entryTimestamp(e) {
+  if (!e || typeof e !== 'object') return null;
+  return e.created_at || e.date || e.createdAt || null;
+}
+
+// Wählt die jüngsten Einträge aus (max. PROGRESS_ENTRY_MAX_COUNT). Wenn alle
+// Einträge einen erkennbaren Zeitstempel tragen, wird explizit danach
+// sortiert; andernfalls wird angenommen, dass der Aufrufer die Einträge
+// bereits chronologisch (älteste zuerst) liefert, sodass die letzten N
+// Einträge die jüngsten sind (Annahme, siehe Abschlussbericht).
+function selectRecentEntries(entries) {
+  const arr = Array.isArray(entries) ? entries.slice() : [];
+  const allTimestamped = arr.length > 0 && arr.every(e => entryTimestamp(e));
+  if (allTimestamped) {
+    arr.sort((a, b) => new Date(entryTimestamp(b)).getTime() - new Date(entryTimestamp(a)).getTime());
+    return arr.slice(0, PROGRESS_ENTRY_MAX_COUNT).reverse();
+  }
+  return arr.slice(-PROGRESS_ENTRY_MAX_COUNT);
+}
+
+// Baut den Text-Block für den Prompt: pro Eintrag HTML entfernen, Marker
+// neutralisieren (Prompt-Injection-Härtung, identisch zu summarizeLink),
+// auf 1500 Zeichen je Eintrag kappen, danach den Gesamtblock auf 12000
+// Zeichen kappen.
+function buildEntriesBlock(entries) {
+  const selected = selectRecentEntries(entries);
+  const lines = selected
+    .map(e => {
+      let text = neutralizeMarkers(stripHtml(entryPlainText(e)));
+      if (text.length > PROGRESS_ENTRY_MAX_CHARS) text = text.slice(0, PROGRESS_ENTRY_MAX_CHARS);
+      return text.trim();
+    })
+    .filter(Boolean)
+    .map(text => `- ${text}`);
+  let block = lines.join('\n');
+  if (block.length > PROGRESS_TOTAL_MAX_CHARS) block = block.slice(0, PROGRESS_TOTAL_MAX_CHARS);
+  return block;
+}
+
+function buildDescriptionBlock(descriptionText) {
+  let text = neutralizeMarkers(stripHtml(descriptionText || ''));
+  if (text.length > DESCRIPTION_MAX_CHARS) text = text.slice(0, DESCRIPTION_MAX_CHARS);
+  return text;
+}
+
+// Nachbearbeitung der Modellantwort: HTML entfernen, Steuerzeichen entfernen,
+// auf die feature-spezifische Zeichenzahl kappen, trimmen. Wirft 422 bei
+// leerem Ergebnis (identisch zum Muster in summarizeLink).
+function finalizeSummaryText(raw, maxChars) {
+  let text = stripHtml(String(raw || ''));
+  // eslint-disable-next-line no-control-regex
+  text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  text = text.slice(0, maxChars).trim();
+  if (!text) {
+    const err = httpErr(422, 'Die Zusammenfassung ist leer ausgefallen.');
+    err.code = 'empty_summary';
+    throw err;
+  }
+  return text;
+}
+
+function validateRefTypeAndId(refType, refId) {
+  if (typeof refType !== 'string' || !refType.trim()) throw httpErr(400, 'Ungültiger refType');
+  if (typeof refId !== 'string' || !refId.trim())     throw httpErr(400, 'Ungültige refId');
+}
+
+function validateSourceVersion(sourceVersion) {
+  if (sourceVersion == null || String(sourceVersion).trim() === '') {
+    throw httpErr(400, 'sourceVersion erforderlich');
+  }
+  return String(sourceVersion);
+}
+
+// Persistiert ein Zusammenfassungs-Artefakt: vorherige Version für denselben
+// (user, feature, refType, refId) löschen und die neue in einer Transaktion
+// einfügen (atomar, damit es nie einen Zwischenzustand mit zwei/keinem
+// aktuellen Artefakt gibt).
+function replaceSummaryArtifact(db, { userId, feature, refType, refId, content, model }) {
+  const artifactId = uid();
+  const run = db.transaction(() => {
+    db.prepare(
+      'DELETE FROM ai_artifacts WHERE user_id=? AND feature=? AND ref_type=? AND ref_id=?'
+    ).run(userId, feature, refType, refId);
+    db.prepare(
+      'INSERT INTO ai_artifacts(id,user_id,ref_type,ref_id,feature,content,model,created_at) VALUES (?,?,?,?,?,?,?,?)'
+    ).run(artifactId, userId, refType, refId, feature, JSON.stringify(content), model, content.generatedAt);
+  });
+  run();
+  return artifactId;
+}
+
+async function summarizeProgress({ db, userId, settings, encryptionKey, refType, refId, entries, sourceVersion, confirmed }) {
+  assertActive(settings, 'progress_summary');
+  validateRefTypeAndId(refType, refId);
+  const version = validateSourceVersion(sourceVersion);
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw httpErr(400, 'Keine Fortschrittseinträge vorhanden');
+  }
+
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const entriesBlock = buildEntriesBlock(entries);
+  const templateVars = { entries: entriesBlock, nonce };
+
+  const tpl = loadPrompt('progress-summary');
+  const userText   = interpolate(tpl.user, templateVars);
+  const systemText = interpolate(tpl.system, templateVars);
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'progress_summary', confirmed };
+  const { raw, cost_cents } = await dispatchCall({
+    ...ctx, system: systemText, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.progress_summary, json: false,
+  });
+
+  const summary = finalizeSummaryText(raw.content, PROGRESS_SUMMARY_MAX_CHARS);
+  const content = { summary, sourceVersion: version, kind: 'progress', generatedAt: new Date().toISOString() };
+  const artifactId = replaceSummaryArtifact(db, {
+    userId, feature: 'progress_summary', refType, refId, content, model: settings.model,
+  });
+
+  return { artifact_id: artifactId, content, cost_cents };
+}
+
+async function summarizeDescription({ db, userId, settings, encryptionKey, refType, refId, descriptionText, sourceVersion, confirmed }) {
+  assertActive(settings, 'description_summary');
+  validateRefTypeAndId(refType, refId);
+  const version = validateSourceVersion(sourceVersion);
+  if (!descriptionText || !String(descriptionText).trim()) {
+    throw httpErr(400, 'Keine Beschreibung vorhanden');
+  }
+
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const descriptionBlock = buildDescriptionBlock(descriptionText);
+  const templateVars = { description: descriptionBlock, nonce };
+
+  const tpl = loadPrompt('description-summary');
+  const userText   = interpolate(tpl.user, templateVars);
+  const systemText = interpolate(tpl.system, templateVars);
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'description_summary', confirmed };
+  const { raw, cost_cents } = await dispatchCall({
+    ...ctx, system: systemText, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.description_summary, json: false,
+  });
+
+  const summary = finalizeSummaryText(raw.content, DESCRIPTION_SUMMARY_MAX_CHARS);
+  const content = { summary, sourceVersion: version, kind: 'description', generatedAt: new Date().toISOString() };
+  const artifactId = replaceSummaryArtifact(db, {
+    userId, feature: 'description_summary', refType, refId, content, model: settings.model,
+  });
+
+  return { artifact_id: artifactId, content, cost_cents };
+}
+
 // ── Apply capture suggestions (after user confirmation) ──────
 function applyCapture(db, userId, meetingId, apply) {
   if (!db.prepare(
@@ -916,6 +1103,16 @@ function stripHtml(s) {
   return String(s).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Neutralisiert Fragmente, die wie unsere Nonce-Marker aussehen, in Werten,
+// die aus nicht vertrauenswürdigen/externen Nutzerdaten stammen (Titel,
+// Fortschrittseinträge, Beschreibungen, Seiteninhalt). Modulweiter Helper,
+// ursprünglich in summarizeLink eingeführt und für S2
+// (summarizeProgress/summarizeDescription) hierher extrahiert, um dieselbe
+// Härtung ohne Duplikation wiederzuverwenden (Security-Review-Muster).
+function neutralizeMarkers(s) {
+  return String(s || '').replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
+}
+
 module.exports = {
   // settings
   loadSettings, saveSettings, clearApiKey, publicSettings, DEFAULT_FEATURES,
@@ -925,6 +1122,7 @@ module.exports = {
   suggestThemes, weeklyDigest, listDigestArchive,
   crossMeetingInsight, loadCrossMeeting, deleteCrossMeeting,
   driftDetection,
+  summarizeProgress, summarizeDescription,
   // usage re-exports
   usageSummary: (db, uid, period) => usage.usageSummary(db, uid, period),
   // CLI
