@@ -74,6 +74,14 @@ struct Topic: Identifiable, Codable, Equatable {
     // Feld automatisch per decodeIfPresent — fehlt es im JSON (altes Server-Verhalten
     // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
     var progress: ProgressSummary?
+
+    // ABWEICHUNG (siehe Abschlussbericht Paket A3): gehört laut Vertrag zu
+    // Paket A1 ("App-Datenschicht"), wurde dort in diesem Worktree-Stand aber
+    // nicht gefunden — additiv nachgezogen, damit `AISummaryCardView`
+    // (Paket A3) KI-Zusammenfassungen konsumieren kann. Optional/additiv wie
+    // `progress` oben: fehlt das Feld im JSON, bleibt es `nil` statt eines
+    // Decode-Fehlers. MUSS beim Merge mit dem echten Paket A1 abgeglichen werden.
+    var aiSummary: AISummaryPair?
 }
 
 // MARK: - TodoItem
@@ -135,6 +143,10 @@ struct TodoItem: Identifiable, Codable, Equatable {
     // Feld automatisch per decodeIfPresent — fehlt es im JSON (altes Server-Verhalten
     // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
     var progress: ProgressSummary?
+
+    // ABWEICHUNG (siehe Abschlussbericht Paket A3): siehe Kommentar bei
+    // `Topic.aiSummary` oben — identische Begründung/Vorgehen.
+    var aiSummary: AISummaryPair?
 }
 
 enum DueStatus { case none, overdue, today, future }

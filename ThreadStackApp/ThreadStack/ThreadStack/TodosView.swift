@@ -1,7 +1,46 @@
 import SwiftUI
 
+// MARK: - Reine Logik (testbar ohne SwiftUI-View-Rendering)
+
+/// Sichtbarkeitslogik für die Kompakt-Karten in Übersicht (`TodosView`) und
+/// Meeting-Detail (`MeetingDetailView`), getrennt vom View-Body (analog
+/// `ProgressBadgeLogic`), damit sie ohne Rendering unit-testbar ist (siehe
+/// `TodoOverviewLogicTests`). Regel laut Vertrag: erledigte Vorhaben zeigen
+/// weder Fortschrittszeile noch Composer noch KI-Zusammenfassung; archivierte
+/// Meeting-Themen (`isReadOnly`) zusätzlich keinen Composer/keine
+/// KI-Zusammenfassung (bestehender Schreibschutz) — die Fortschrittszeile
+/// selbst bleibt dort aber sichtbar (reiner Lesezugriff bleibt erlaubt).
+enum TodoOverviewLogic {
+    static func showsProgressBadge(done: Bool) -> Bool { !done }
+
+    static func showsInlineComposer(done: Bool, isReadOnly: Bool) -> Bool {
+        !done && !isReadOnly
+    }
+
+    static func showsAISummary(done: Bool, isReadOnly: Bool) -> Bool {
+        !done && !isReadOnly
+    }
+
+    /// Ob für eine sichtbare Karte Polling gestartet werden sollte: nur wenn
+    /// die Karte überhaupt eine KI-Zusammenfassung anbieten würde UND
+    /// mindestens einer der beiden möglichen Status `pending` ist.
+    static func shouldStartPolling(done: Bool, isReadOnly: Bool, pair: AISummaryPair?) -> Bool {
+        guard showsAISummary(done: done, isReadOnly: isReadOnly) else { return false }
+        return pair?.progress?.kind == .pending || pair?.description?.kind == .pending
+    }
+}
+
 struct TodosView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var progressStore: ProgressStore
+    // ABWEICHUNG (siehe Abschlussbericht Paket A3): `SummaryStore` ist laut
+    // Vertrag eine zentrale, app-weite Instanz (analog `progressStore` oben),
+    // registriert in `ThreadStackApp.swift` — diese Datei gehört jedoch nicht
+    // zu Paket A3s Datei-Eigentümerschaft und wird daher NICHT geändert. Als
+    // Stand-in hält jede Wurzel-Ansicht (`TodosView`, `MeetingDetailView`)
+    // eine eigene Instanz; Zusammenfassungen werden dadurch nicht
+    // bildschirmübergreifend geteilt (siehe Bekannte Risiken).
+    @StateObject private var summaryStore = SummaryStore()
     @State private var search = ""
     @State private var showNew = false
     @State private var hidePrivate = false
@@ -81,20 +120,26 @@ struct TodosView: View {
                 }
             } else if !openTodos.isEmpty {
                 Section(header: sectionHeader("Offen", count: openTodos.count, color: DS.accent)) {
-                    ForEach(openTodos) { t in TodoRowView(todo: t) }
-                        .onDelete { deleteTodo(from: openTodos, at: $0) }
+                    ForEach(openTodos) { t in
+                        TodoRowView(todo: t, progressStore: progressStore, summaryStore: summaryStore)
+                    }
+                    .onDelete { deleteTodo(from: openTodos, at: $0) }
                 }
             }
             if !snoozedTodos.isEmpty {
                 Section(header: sectionHeader("Schlafend", count: snoozedTodos.count,
                                               color: .gray, icon: "moon.zzz.fill")) {
-                    ForEach(snoozedTodos) { t in TodoRowView(todo: t) }
+                    ForEach(snoozedTodos) { t in
+                        TodoRowView(todo: t, progressStore: progressStore, summaryStore: summaryStore)
+                    }
                 }
             }
             if !doneTodos.isEmpty {
                 Section(header: sectionHeader("Erledigt", count: doneTodos.count, color: .secondary)) {
-                    ForEach(doneTodos) { t in TodoRowView(todo: t) }
-                        .onDelete { deleteTodo(from: doneTodos, at: $0) }
+                    ForEach(doneTodos) { t in
+                        TodoRowView(todo: t, progressStore: progressStore, summaryStore: summaryStore)
+                    }
+                    .onDelete { deleteTodo(from: doneTodos, at: $0) }
                 }
             }
             #if os(macOS)
@@ -141,6 +186,13 @@ struct TodosView: View {
         .alert("Fehler", isPresented: Binding(
             get: { error != nil }, set: { if !$0 { error = nil } }
         )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .onAppear {
+            summaryStore.attach(state)
+            summaryStore.ingest(from: state.todos)
+        }
+        .onChange(of: state.todos) { _, newValue in
+            summaryStore.ingest(from: newValue)
+        }
     }
 
     private func sectionHeader(_ label: String, count: Int, color: Color,
@@ -169,6 +221,10 @@ struct TodosView: View {
 
 struct TodoRowView: View {
     let todo: TodoItem
+    // A3: Fortschritt/KI-Zusammenfassung/Inline-Composer nutzen dieselben,
+    // von `TodosView` gehaltenen Store-Instanzen — keine eigenen pro Zeile.
+    @ObservedObject var progressStore: ProgressStore
+    @ObservedObject var summaryStore: SummaryStore
     @EnvironmentObject var state: AppState
     @State private var showEdit = false
     @State private var showComplete = false
@@ -179,6 +235,8 @@ struct TodoRowView: View {
     @State private var error: String?
 
     private var themeLinks: [(theme: Theme, link: ThemeLink)] { state.themeLinks(for: todo.id) }
+    private var summaryRef: SummaryStore.Ref { .init(refType: "todo", refId: todo.id) }
+    private var aiSummary: AISummaryPair? { summaryStore.pair(refType: "todo", refId: todo.id) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -205,11 +263,24 @@ struct TodoRowView: View {
                     if !todo.done, let due = todo.dueDateFormatted {
                         dueBadge(text: due, status: todo.dueStatus)
                     }
-                    ProgressBadgeView(summary: todo.progress) // A3
+                    // Erledigte Todos: keine Fortschrittszeile (Vertrag) —
+                    // schlafende Todos behalten sie weiterhin sichtbar.
+                    if TodoOverviewLogic.showsProgressBadge(done: todo.done) {
+                        ProgressBadgeView(summary: todo.progress) // A3
+                    }
                     if todo.isSnoozed, let wake = todo.snoozeWakeFormatted {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
+                    // Hinweis (siehe Abschlussbericht Paket A3): eine "Aus
+                    // Meetings"-Gruppe (Topics mit `isTodo == true` aus allen
+                    // Meetings) existiert in `TodosView.swift`/`state.todos`
+                    // nicht — `state.todos` liefert ausschließlich
+                    // eigenständige `TodoItem`s (`GET /api/todos`). Die
+                    // bestehende Herkunfts-Kennzeichnung für aus Themen
+                    // stammende Todos lebt in `ThemeDetailScreen`
+                    // (`ThemesView.swift`, außerhalb dieser Datei-
+                    // Eigentümerschaft) — hier daher bewusst NICHT dupliziert.
                     if !themeLinks.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 4) {
@@ -217,8 +288,22 @@ struct TodoRowView: View {
                             }
                         }
                     }
+                    if TodoOverviewLogic.showsAISummary(done: todo.done, isReadOnly: false) {
+                        AISummaryCardView(kind: .progress, summary: aiSummary?.progress,
+                                          refType: "todo", refId: todo.id, store: summaryStore,
+                                          onShowAllEntries: { showEdit = true })
+                        AISummaryCardView(kind: .description, summary: aiSummary?.description,
+                                          refType: "todo", refId: todo.id, store: summaryStore)
+                    }
                 }
                 Spacer()
+            }
+
+            // Story 6: Zwischenstand direkt in der Zeile erfassen — kein
+            // Angebot bei erledigten Todos (Vertrag).
+            if TodoOverviewLogic.showsInlineComposer(done: todo.done, isReadOnly: false) {
+                InlineEntryComposerView(refType: "todo", refId: todo.id, hasSnooze: todo.isSnoozed,
+                                        store: progressStore)
             }
 
             if todo.done && !todo.result.isEmpty {
@@ -230,6 +315,14 @@ struct TodoRowView: View {
             }
         }
         .opacity(todo.isSnoozed ? 0.7 : 1)
+        .onAppear {
+            if TodoOverviewLogic.shouldStartPolling(done: todo.done, isReadOnly: false, pair: aiSummary) {
+                Task { await summaryStore.poll(refs: [summaryRef]) }
+            }
+        }
+        .onDisappear {
+            summaryStore.cancelPolling(for: summaryRef)
+        }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
                 Task { do { try await state.deleteTodo(id: todo.id) }
