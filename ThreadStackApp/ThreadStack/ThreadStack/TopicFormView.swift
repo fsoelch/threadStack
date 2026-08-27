@@ -19,6 +19,26 @@ enum TopicSaveTarget: Equatable {
     }
 }
 
+/// Reine Logik für die einklappbare "Weitere Details"-Gruppe (Schlafen bis +
+/// Aufwach-Uhrzeit) — siehe `TodoFormDetailsSummary` (analoges Muster für
+/// `TodoFormView`), hier auf die für Themen relevanten Felder reduziert.
+enum TopicFormDetailsSummary {
+    static func summaryText(hasSnooze: Bool, snoozeDateText: String) -> String? {
+        hasSnooze ? "Schlafen bis \(snoozeDateText)" : nil
+    }
+
+    static func isExpandedByDefault(hasSnooze: Bool) -> Bool {
+        hasSnooze
+    }
+
+    static func shortGermanDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "d.M."
+        return f.string(from: date)
+    }
+}
+
 struct TopicFormView: View {
     let meetingId: String
     var topic: Topic? = nil
@@ -26,14 +46,22 @@ struct TopicFormView: View {
     @EnvironmentObject var progressStore: ProgressStore // Fortschrittsverlauf-Zugriff
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
+    /// Rich-Text-HTML der Beschreibung (siehe `DescriptionReadView`/
+    /// `DescriptionEditorSheet`) — bewusst NICHT mehr Klartext (siehe
+    /// zentrale Bug-Behebung dieses Pakets in `TodoFormView.swift`).
     @State private var description = ""
+    @State private var showDescriptionEditor = false
+    /// Nur im Anlegen-Modus verwendet: die Beschreibung ist dort sofort
+    /// editierbar (kein Stift-Klick nötig, siehe UX-Vorgabe).
+    @StateObject private var createDescriptionController = KnowledgeEditorController()
+    @State private var createDescriptionContentLoaded = false
     @State private var isTodo = false
     @State private var hasSnooze = false
     @State private var snoozeDate = Date()
     @State private var snoozeHasTime = false
+    @State private var detailsExpanded = false
     @State private var loading = false
     @State private var error: String?
-    @State private var showLinkSheet = false
     // Immer sichtbare Eingabe für einen neuen Zwischenstand (Paket A1),
     // direkt unter der Beschreibung eingebettet (Paket A2 dieser
     // Nachbesserung). Ersetzt den bisherigen "Wo stehe ich gerade?"-Block.
@@ -48,22 +76,25 @@ struct TopicFormView: View {
     // aufzurufen (das wuerde sonst ein Duplikat anlegen).
     @State private var createdId: String?
 
+    private var detailsSummaryText: String? {
+        TopicFormDetailsSummary.summaryText(
+            hasSnooze: hasSnooze, snoozeDateText: TopicFormDetailsSummary.shortGermanDate(snoozeDate)
+        )
+    }
+
+    private var detailsHeaderText: String {
+        if let detailsSummaryText { return "Weitere Details – \(detailsSummaryText)" }
+        return "Weitere Details"
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("Titel") {
                     TextField("Thema eingeben", text: $title)
                 }
-                Section("Beschreibung") {
-                    TextField("Optional", text: $description, axis: .vertical)
-                        .lineLimit(3...)
-                    Button {
-                        showLinkSheet = true
-                    } label: {
-                        Label("Link mit KI-Zusammenfassung einfügen", systemImage: "link")
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityHint("Öffnet einen Dialog zum Einfügen eines Links, optional mit KI-Zusammenfassung.")
+                Section {
+                    descriptionSection
                 }
                 Section("Fortschritt") {
                     progressSection
@@ -72,16 +103,12 @@ struct TopicFormView: View {
                     Toggle("Als Todo markieren", isOn: $isTodo)
                 }
                 Section {
-                    Toggle("😴 Schlafen bis", isOn: $hasSnooze)
-                    if hasSnooze {
-                        DatePicker("Wacht auf am", selection: $snoozeDate, displayedComponents: .date)
-                        Toggle("🕐 zu bestimmter Uhrzeit", isOn: $snoozeHasTime)
-                        if snoozeHasTime {
-                            DatePicker("Uhrzeit", selection: $snoozeDate, displayedComponents: .hourAndMinute)
-                        }
+                    DisclosureGroup(isExpanded: $detailsExpanded) {
+                        detailsGroupContent
+                    } label: {
+                        Text(detailsHeaderText)
+                            .accessibilityLabel(detailsHeaderText)
                     }
-                } footer: {
-                    Text(snoozeHasTime ? "Wacht exakt zu dieser Uhrzeit auf — mit Benachrichtigung." : "Bis zu diesem Datum ausblenden.")
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
@@ -111,18 +138,54 @@ struct TopicFormView: View {
                 }
                 Button("Weiter bearbeiten", role: .cancel) {}
             }
-            .sheet(isPresented: $showLinkSheet) {
-                LinkInsertSheet(onInsert: { text in
-                    description += (description.isEmpty ? "" : "\n\n") + text
-                })
+            .sheet(isPresented: $showDescriptionEditor) {
+                DescriptionEditorSheet(initialHTML: description, title: "Beschreibung bearbeiten") { newHTML in
+                    description = newHTML
+                }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var descriptionSection: some View {
+        if topic == nil {
+            // Neuanlage: sofort editierbar, kein Stift-Klick nötig (UX-Vorgabe).
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Beschreibung").scaledFont(.footnote).foregroundStyle(.secondary)
+                DescriptionRichTextEditor(controller: createDescriptionController)
+            }
+            .onChange(of: createDescriptionController.isReady) { _, ready in
+                guard ready else { createDescriptionContentLoaded = false; return }
+                Task {
+                    await createDescriptionController.setContent("")
+                    createDescriptionContentLoaded = true
+                }
+            }
+        } else {
+            DescriptionReadView(html: description) {
+                showDescriptionEditor = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detailsGroupContent: some View {
+        Toggle("😴 Schlafen bis", isOn: $hasSnooze)
+        if hasSnooze {
+            DatePicker("Wacht auf am", selection: $snoozeDate, displayedComponents: .date)
+            Toggle("🕐 zu bestimmter Uhrzeit", isOn: $snoozeHasTime)
+            if snoozeHasTime {
+                DatePicker("Uhrzeit", selection: $snoozeDate, displayedComponents: .hourAndMinute)
+            }
+            Text(snoozeHasTime ? "Wacht exakt zu dieser Uhrzeit auf — mit Benachrichtigung." : "Bis zu diesem Datum ausblenden.")
+                .scaledFont(.caption).foregroundStyle(.secondary)
         }
     }
 
     @ViewBuilder
     private var progressSection: some View {
         if let t = topic {
-            ProgressTimelineView(refType: "topic", refId: t.id, store: progressStore) {
+            ProgressTimelineView(refType: "topic", refId: t.id, store: progressStore, descriptionHTML: description) {
                 ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused) {
                     Task { await commitProgressComposer(refId: t.id) }
                 }
@@ -132,10 +195,10 @@ struct TopicFormView: View {
                 }
             }
         } else {
-            // Noch keine refId — nur der Composer, ohne Zielbild/Verlauf/
-            // Wiedereinstiegskarte (ergeben für ein noch nicht existierendes
-            // Thema keinen Sinn). Der eigentliche Commit erfolgt erst in
-            // save(), sobald die id feststeht.
+            // Noch keine refId — nur der Composer, ohne Nächster-Schritt/
+            // Verlauf/Wiedereinstiegskarte (ergeben für ein noch nicht
+            // existierendes Thema keinen Sinn). Der eigentliche Commit
+            // erfolgt erst in save(), sobald die id feststeht.
             ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused, onSave: {})
         }
     }
@@ -155,7 +218,7 @@ struct TopicFormView: View {
     private func populate() {
         guard let t = topic else { return }
         title = t.title
-        description = stripHTML(t.description)
+        description = t.description
         isTodo = t.isTodo
         if let s = t.snoozedUntil, !s.isEmpty {
             if s.count > 10, let d = parseFlexDate(s) {
@@ -164,6 +227,7 @@ struct TopicFormView: View {
                 hasSnooze = true; snoozeDate = d
             }
         }
+        detailsExpanded = TopicFormDetailsSummary.isExpandedByDefault(hasSnooze: hasSnooze)
     }
 
     private static func parseDate(_ s: String) -> Date? {
@@ -182,6 +246,14 @@ struct TopicFormView: View {
         return f.string(from: d)
     }
 
+    /// Liefert die zu speichernde Beschreibung als HTML — siehe
+    /// `TodoFormView.resolveDescriptionHTML` (analoges Muster).
+    private func resolveDescriptionHTML() async -> String {
+        guard topic == nil else { return description }
+        guard createDescriptionController.isReady, createDescriptionContentLoaded else { return "" }
+        return (try? await createDescriptionController.content()) ?? ""
+    }
+
     private func save() {
         loading = true
         let snooze: String? = hasSnooze
@@ -190,6 +262,7 @@ struct TopicFormView: View {
         let notificationTitle = title
         let fireAt: Date? = (hasSnooze && snoozeHasTime) ? snoozeDate : nil
         Task {
+            let descriptionHTML = await resolveDescriptionHTML()
             do {
                 var savedId: String?
                 switch TopicSaveTarget.resolve(existingTopicId: topic?.id, createdId: createdId) {
@@ -197,7 +270,7 @@ struct TopicFormView: View {
                     let t = topic! // sicher: id stammt hier nachweislich aus topic?.id
                     try await state.updateTopic(
                         meetingId: meetingId, id: t.id,
-                        title: title, description: description,
+                        title: title, description: descriptionHTML,
                         done: t.done, result: t.result, resultDate: t.resultDate,
                         isTodo: isTodo, snoozedUntil: snooze
                     )
@@ -209,7 +282,7 @@ struct TopicFormView: View {
                     // fehlgeschlagen) — jetzt updaten statt erneut anlegen.
                     try await state.updateTopic(
                         meetingId: meetingId, id: existingId,
-                        title: title, description: description,
+                        title: title, description: descriptionHTML,
                         done: false, result: "", resultDate: "",
                         isTodo: isTodo, snoozedUntil: snooze
                     )
@@ -218,7 +291,7 @@ struct TopicFormView: View {
                 case .create:
                     let created = try await state.createTopicReturning(
                         meetingId: meetingId, title: title,
-                        description: description, isTodo: isTodo,
+                        description: descriptionHTML, isTodo: isTodo,
                         snoozedUntil: snooze
                     )
                     savedId = created.id

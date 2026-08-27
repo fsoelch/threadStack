@@ -6,7 +6,7 @@ const path = require('path');
 
 const {
   sanitizeProgressHtml, progressPlainText, sanitizePlainField, truncateExcerpt,
-  MAX_PROGRESS_TEXT, MAX_PROGRESS_HTML, MAX_GOAL, MAX_NEXT_STEP,
+  MAX_PROGRESS_TEXT, MAX_PROGRESS_HTML, MAX_NEXT_STEP,
 } = require('../lib/progress/sanitize');
 
 test('sanitizeProgressHtml: entfernt <img>', () => {
@@ -106,7 +106,6 @@ test('truncateExcerpt: leerer/nullish Text', () => {
 });
 
 test('Konstanten: exakte Laengengrenzen', () => {
-  assert.equal(MAX_GOAL, 500);
   assert.equal(MAX_NEXT_STEP, 1000);
   assert.equal(MAX_PROGRESS_TEXT, 5000);
   assert.equal(MAX_PROGRESS_HTML, 50000);

@@ -15,6 +15,8 @@ const linkCache = require('./ai/link-cache');
 const aiUsage = require('./ai/usage');
 const progress = require('./lib/progress');
 const archive = require('./lib/archive');
+const summaries = require('./lib/summaries');
+let summaryScheduler; // wird nach dem Laden von ai/index.js weiter unten gesetzt
 
 const app      = express();
 // If behind a trusted reverse proxy (e.g. nginx on same host), set TRUST_PROXY=1
@@ -529,6 +531,9 @@ db.exec(`
 // existierende todos/topics abgleicht.
 progress.runProgressMigrations(db);
 progress.purgeProgressOrphans(db);
+// ── Migration: Zielbild entfernen (Redesign "Übersichtlichere Todos und
+// Tasks", Arbeitspaket S1) ── Idempotent: zweiter Aufruf ist ein No-Op.
+progress.dropProgressGoal(db);
 
 // ── Migration: Archiv-Kernmodul (Arbeitspaket B1/B2, "Meetings archivieren
 // statt löschen") ────
@@ -546,6 +551,11 @@ if (fs.existsSync(ENC_FILE)) {
   encryptionKey = crypto.randomBytes(32);
   fs.writeFileSync(ENC_FILE, encryptionKey.toString('hex'), { mode: 0o600 });
 }
+
+// ── Summaries: verwaiste KI-Zusammenfassungen aufräumen (Paket S3) ──
+// Kein automatischer Backfill, nur Aufräumen von Artefakten zu inzwischen
+// gelöschten Todos/Topics (z. B. nach Cascade-Deletes).
+try { summaries.purgeSummaryOrphans(db); } catch (e) { console.error('[summaries] purge failed:', e.message || e); }
 
 function uid() {
   return Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
@@ -702,22 +712,28 @@ const requireAdmin = (req, res, next) => {
 };
 
 // ── Serialisation helpers ───────────────────────────────────
-function parseMeeting(m, topics = []) {
+// Neutrale "keine KI-Zusammenfassung"-Ansicht (Paket S3, Schnittstelle 8/9).
+const NA_SUMMARY = Object.freeze({ status: 'not_applicable', text: null, generatedAt: null, model: null, errorCode: null });
+const NA_SUMMARY_PAIR = Object.freeze({ progress: NA_SUMMARY, description: NA_SUMMARY });
+
+function parseMeeting(m, topics = [], summaryMap = null) {
   return {
     id: m.id, title: m.title, description: m.description, color: m.color,
     participants: JSON.parse(m.participants || '[]'),
     isRecurring: !!m.is_recurring, recurrencePattern: m.recurrence_pattern,
     nextDate: m.next_date, createdAt: m.created_at,
-    topics: topics.filter(t => t.meeting_id === m.id).map(parseTopic),
+    topics: topics.filter(t => t.meeting_id === m.id).map(t => parseTopic(t, summaryMap)),
   };
 }
-function parseTopic(t) {
-  return {
+function parseTopic(t, summaryMap = null) {
+  const base = {
     id: t.id, meetingId: t.meeting_id, title: t.title, description: t.description,
     done: !!t.done, result: t.result, resultDate: t.result_date, createdAt: t.created_at,
     sortOrder: t.sort_order, isTodo: !!t.is_todo, groupId: t.group_id ?? null,
     snoozedUntil: t.snoozed_until || null,
   };
+  if (summaryMap) base.aiSummary = summaryMap.get(`topic:${t.id}`) || NA_SUMMARY_PAIR;
+  return base;
 }
 
 const A = BASE + '/api';
@@ -801,20 +817,26 @@ app.get(`${A}/meetings`, requireAuth, (req, res) => {
   const ts = ms.length
     ? db.prepare(`SELECT * FROM topics WHERE meeting_id IN (${ms.map(()=>'?').join(',')}) ORDER BY sort_order, created_at`).all(...ms.map(m=>m.id))
     : [];
-  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
-  // EINE Batch-Query über summaryFor() für alle Topics dieser Meetings (kein
-  // N+1) - Ergebnis wird nachträglich in die bereits geparsten Topic-Objekte
-  // gejoint, ohne parseMeeting()/parseTopic() selbst anzufassen.
+  // Additive Progress-Anreicherung (Fortschrittsverlauf): EINE Batch-Query
+  // über summaryFor() für alle Topics dieser Meetings (kein N+1) - Ergebnis
+  // wird nachträglich in die bereits geparsten Topic-Objekte gejoint, ohne
+  // parseMeeting()/parseTopic() selbst anzufassen.
   const topicItems = ts.map(t => ({
     refType: 'topic', refId: t.id,
     refCreatedAt: t.created_at, refUpdatedAt: t.updated_at,
     refDone: !!t.done, refSnoozedUntil: t.snoozed_until || null,
   }));
   const progressMap = progress.summaryFor(db, req.session.uid, topicItems);
+  // Additive KI-Zusammenfassungs-Anreicherung (Paket S3): EIN forRefs()-Aufruf
+  // für alle Topics dieser Meetings (kein N+1), niemals ein KI-Aufruf hier.
+  const summaryItems = ts.map(t => ({ refType: 'topic', refId: t.id }));
+  const summarySettings = ai.loadSettings(db, req.session.uid);
+  const summaryMap = summaries.forRefs(db, req.session.uid, summaryItems, { settings: summarySettings, scheduler: summaryScheduler });
   const meetings = ms.map(m => parseMeeting(m, ts));
   for (const meeting of meetings) {
     for (const topic of meeting.topics) {
       topic.progress = progressMap.get(`topic:${topic.id}`) ?? null;
+      topic.aiSummary = summaryMap.get(`topic:${topic.id}`) ?? null;
     }
   }
   res.json(meetings);
@@ -871,12 +893,15 @@ app.delete(`${A}/meetings/:id`, requireAuth, (req, res) => {
   // SQLite kaskadiert topics.meeting_id (ON DELETE CASCADE) automatisch beim
   // Löschen des Meetings — die betroffenen Topic-IDs müssen daher VORHER
   // eingesammelt werden, damit der Fortschrittsverlauf (progress_entries/
-  // progress_meta) für diese Topics ebenfalls sofort aufgeräumt wird.
+  // progress_meta) UND die KI-Zusammenfassungen (Paket S3) für diese Topics
+  // ebenfalls sofort aufgeräumt werden.
   const topicIds = db.prepare('SELECT id FROM topics WHERE meeting_id=?').all(req.params.id).map(r => r.id);
   const r = db.prepare('DELETE FROM meetings WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
   if (!r.changes) return res.status(404).json({ error: 'Nicht gefunden' });
   if (topicIds.length) {
     progress.deleteForRefs(db, topicIds.map(id => ({ refType: 'topic', refId: id })));
+    try { summaries.deleteForRefs(db, req.session.uid, topicIds.map(id => ({ refType: 'topic', refId: id }))); }
+    catch (_) { /* best effort */ }
   }
   // Security-Review-Nachbesserung (Arbeitspaket B2): Falls das Meeting zuvor
   // archiviert war, bleibt sonst eine verwaiste archive_state-Zeile zurück
@@ -1061,6 +1086,7 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (resultDate !== undefined && !isValidDate(resultDate)) return res.status(400).json({ error: 'Ungültiges Ergebnis-Datum' });
   const cleanDesc = stripUnsafeHtml(description);
+  const descriptionChanged = cleanDesc !== t.description;
   const nowIso = new Date().toISOString();
   db.prepare('UPDATE topics SET title=?,description=?,done=?,result=?,result_date=?,is_todo=?,snoozed_until=?,updated_at=? WHERE id=?').run(
     title, cleanDesc,
@@ -1073,11 +1099,28 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
     t.id
   );
   // Propagate title+description changes to all group members
+  let groupMemberIds = [];
   if (t.group_id) {
     db.prepare('UPDATE topics SET title=?, description=?, updated_at=? WHERE group_id=? AND id!=?')
       .run(title, cleanDesc, nowIso, t.group_id, t.id);
+    if (descriptionChanged) {
+      groupMemberIds = db.prepare('SELECT id FROM topics WHERE group_id=? AND id!=?').all(t.group_id, t.id).map(r => r.id);
+    }
   }
-  res.json({ ok: true });
+  const responseBody = { ok: true };
+  if (descriptionChanged) {
+    let pendingSummary = false;
+    try {
+      const r = summaries.onDescriptionChanged({ userId: req.session.uid, refType: 'topic', refId: t.id, reason: 'updated' });
+      pendingSummary = !!(r && r.enqueued);
+    } catch (_) { /* best effort — Zusammenfassung darf das Speichern nie verhindern */ }
+    for (const memberId of groupMemberIds) {
+      try { summaries.onDescriptionChanged({ userId: req.session.uid, refType: 'topic', refId: memberId, reason: 'updated' }); }
+      catch (_) { /* best effort */ }
+    }
+    responseBody.aiSummary = { pending: pendingSummary };
+  }
+  res.json(responseBody);
 });
 
 app.delete(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
@@ -1086,6 +1129,7 @@ app.delete(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   if (topicArchivedGuard(res, t.id)) return;
   db.prepare('DELETE FROM theme_links WHERE ref_type=? AND ref_id=?').run('topic', t.id);
+  try { summaries.deleteForRefs(db, req.session.uid, [{ refType: 'topic', refId: t.id }]); } catch (_) { /* best effort */ }
   db.prepare('DELETE FROM topics WHERE id=?').run(t.id);
   progress.deleteForRefs(db, [{ refType: 'topic', refId: t.id }]);
   // If only one group member remains, dissolve the group
@@ -1120,17 +1164,23 @@ const TODOS_ORDER_SQL = `
 
 app.get(`${A}/todos`, requireAuth, (req, res) => {
   const rows = db.prepare(`SELECT * FROM todos WHERE user_id=? ${TODOS_ORDER_SQL}`).all(req.session.uid);
-  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
-  // EINE Batch-Query über summaryFor() für alle geladenen Todos (kein N+1).
+  // Additive Progress-Anreicherung (Fortschrittsverlauf): EINE Batch-Query
+  // über summaryFor() für alle geladenen Todos (kein N+1).
   const items = rows.map(t => ({
     refType: 'todo', refId: t.id,
     refCreatedAt: t.created_at, refUpdatedAt: t.updated_at,
     refDone: !!t.done, refSnoozedUntil: t.snoozed_until || null,
   }));
   const progressMap = progress.summaryFor(db, req.session.uid, items);
+  // Additive KI-Zusammenfassungs-Anreicherung (Paket S3): EIN forRefs()-Aufruf
+  // für alle geladenen Todos (kein N+1), niemals ein KI-Aufruf hier.
+  const summaryItems = rows.map(t => ({ refType: 'todo', refId: t.id }));
+  const summarySettings = ai.loadSettings(db, req.session.uid);
+  const summaryMap = summaries.forRefs(db, req.session.uid, summaryItems, { settings: summarySettings, scheduler: summaryScheduler });
   res.json(rows.map(t => {
     const todo = parseTodo(t);
     todo.progress = progressMap.get(`todo:${t.id}`) ?? null;
+    todo.aiSummary = summaryMap.get(`todo:${t.id}`) || NA_SUMMARY_PAIR;
     return todo;
   }));
 });
@@ -1145,7 +1195,12 @@ app.post(`${A}/todos`, requireAuth, (req, res) => {
   const id = uid();
   const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
   db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,snoozed_until,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), dueDate || '', isPrivate ? 1 : 0, snoozedUntil || '', mx+1, new Date().toISOString());
-  res.status(201).json(parseTodo(db.prepare('SELECT * FROM todos WHERE id=?').get(id)));
+  let pendingSummary = false;
+  try {
+    const r = summaries.onDescriptionChanged({ userId: req.session.uid, refType: 'todo', refId: id, reason: 'created' });
+    pendingSummary = !!(r && r.enqueued);
+  } catch (_) { /* best effort — Zusammenfassung darf das Anlegen nie verhindern */ }
+  res.status(201).json({ ...parseTodo(db.prepare('SELECT * FROM todos WHERE id=?').get(id)), aiSummary: { pending: pendingSummary } });
 });
 
 app.put(`${A}/todos/reorder`, requireAuth, (req, res) => {
@@ -1164,21 +1219,33 @@ app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (dueDate !== undefined && !isValidDate(dueDate)) return res.status(400).json({ error: 'Ungültiges Fälligkeitsdatum' });
   if (resultDate !== undefined && !isValidDate(resultDate)) return res.status(400).json({ error: 'Ungültiges Ergebnis-Datum' });
+  const cleanDesc = stripUnsafeHtml(description);
+  const descriptionChanged = cleanDesc !== t.description;
   db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,due_date=?,is_private=?,updated_at=? WHERE id=?').run(
-    title, stripUnsafeHtml(description), done !== undefined ? (done?1:0) : t.done,
+    title, cleanDesc, done !== undefined ? (done?1:0) : t.done,
     stripUnsafeHtml(result ?? t.result), resultDate ?? t.result_date,
     snoozedUntil !== undefined ? (snoozedUntil || '') : t.snoozed_until,
     dueDate !== undefined ? (dueDate || '') : t.due_date,
     isPrivate !== undefined ? (isPrivate ? 1 : 0) : t.is_private,
     new Date().toISOString(),
     t.id);
-  res.json({ ok: true });
+  const responseBody = { ok: true };
+  if (descriptionChanged) {
+    let pendingSummary = false;
+    try {
+      const r = summaries.onDescriptionChanged({ userId: req.session.uid, refType: 'todo', refId: t.id, reason: 'updated' });
+      pendingSummary = !!(r && r.enqueued);
+    } catch (_) { /* best effort */ }
+    responseBody.aiSummary = { pending: pendingSummary };
+  }
+  res.json(responseBody);
 });
 
 app.delete(`${A}/todos/:id`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT id FROM todos WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   db.prepare('DELETE FROM theme_links WHERE ref_type=? AND ref_id=?').run('todo', t.id);
+  try { summaries.deleteForRefs(db, req.session.uid, [{ refType: 'todo', refId: t.id }]); } catch (_) { /* best effort */ }
   db.prepare('DELETE FROM todos WHERE id=?').run(t.id);
   progress.deleteForRefs(db, [{ refType: 'todo', refId: t.id }]);
   res.json({ ok: true });
@@ -1391,14 +1458,19 @@ app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
   const todos = db.prepare(
     `SELECT * FROM todos WHERE user_id=? AND id IN (${todoIds.map(()=>'?').join(',')}) ${TODOS_ORDER_SQL}`
   ).all(req.session.uid, ...todoIds);
-  // Additive Progress-Anreicherung (Zielbild/Fortschrittsverlauf, S2-Wiring):
-  // EINE Batch-Query über summaryFor() für alle geladenen Todos (kein N+1).
+  // Additive Progress-Anreicherung (Fortschrittsverlauf): EINE Batch-Query
+  // über summaryFor() für alle geladenen Todos (kein N+1).
   const progressItems = todos.map(td => ({
     refType: 'todo', refId: td.id,
     refCreatedAt: td.created_at, refUpdatedAt: td.updated_at,
     refDone: !!td.done, refSnoozedUntil: td.snoozed_until || null,
   }));
   const progressMap = progress.summaryFor(db, req.session.uid, progressItems);
+  // Additive KI-Zusammenfassungs-Anreicherung (Paket S3): EIN forRefs()-Aufruf
+  // für alle geladenen Todos (kein N+1), niemals ein KI-Aufruf hier.
+  const summaryItems = todos.map(td => ({ refType: 'todo', refId: td.id }));
+  const summarySettings = ai.loadSettings(db, req.session.uid);
+  const summaryMap = summaries.forRefs(db, req.session.uid, summaryItems, { settings: summarySettings, scheduler: summaryScheduler });
   res.json(todos.map(td => {
     const originThemeId = seen.get(td.id);
     const origin = themesById.get(originThemeId);
@@ -1407,6 +1479,7 @@ app.get(`${A}/themes/:id/todos`, requireAuth, (req, res) => {
       originThemeId,
       originThemeTitle: originThemeId === t.id ? null : (origin ? origin.title : null),
       progress: progressMap.get(`todo:${td.id}`) ?? null,
+      aiSummary: summaryMap.get(`todo:${td.id}`) || NA_SUMMARY_PAIR,
     };
   }));
 });
@@ -1767,6 +1840,43 @@ app.delete(`${A}/users/:id`, requireAdmin, (req, res) => {
 
 // ── AI routes (Erweiterung v1.1, Phase 1) ────────────────────
 const ai = require('./ai');
+
+// ── Summaries: Scheduler + Router wiring (Paket S3) ──────────────────────
+// `ai` wird als vollständiges ai/index.js-Modul injiziert (liefert u.a.
+// loadSettings/assertActive sowie — nach Merge mit Paket S2 — summarizeProgress
+// und summarizeDescription; siehe Abschlussbericht Paket S3).
+summaryScheduler = summaries.createSummaryScheduler({
+  db, encryptionKey, ai, now: () => new Date(), enabled: true,
+});
+summaries.configure({ scheduler: summaryScheduler });
+
+// Schreibschutz für archivierte Themen (lib/archive, Paket B-Serie). lib/archive
+// existiert in diesem Arbeitsstand (Paket S3) noch nicht — lazy + defensiv
+// geladen, damit die Integration beim Merge ohne weitere Codeänderung greift.
+// Bis dahin: Themen gelten nie als schreibgeschützt (konservativer Fallback,
+// siehe Abschlussbericht).
+function isRefReadOnly(refType, refId) {
+  if (refType !== 'topic') return false;
+  try {
+    const archiveMod = require('./lib/archive');
+    if (archiveMod && typeof archiveMod.isTopicArchived === 'function') {
+      return !!archiveMod.isTopicArchived(db, refId);
+    }
+  } catch (_) { /* lib/archive noch nicht vorhanden */ }
+  return false;
+}
+
+// `ownsRef` wird weiter unten (Stack-Layer, Paket "Erweiterung v1.1 Phase 2")
+// als function-Deklaration definiert und ist dank Hoisting hier bereits nutzbar.
+app.use(A, summaries.createSummaryRouter({
+  db,
+  requireAuth,
+  ownsRef,
+  isRefReadOnly,
+  scheduler: summaryScheduler,
+  aiSettingsLoader: ai.loadSettings,
+  now: () => new Date(),
+}));
 
 function aiErr(res, e) {
   const status = e.httpStatus || 500;
@@ -2777,6 +2887,9 @@ app.use(`${A}/progress`, progress.createProgressRouter({
   getLatestFrameId,
   isRefReadOnly: (refType, refId) => refType === 'topic' && archive.isTopicArchived(db, refId),
   now: () => new Date(),
+  // Paket S3: löst die ereignisgetriebene KI-Fortschritts-Zusammenfassung aus,
+  // synchron/wurffrei, niemals awaited (siehe lib/summaries/service.js).
+  onProgressEntriesChanged: summaries.onProgressEntriesChanged,
 }));
 
 // ── Archiv-API (Meetings archivieren statt löschen, Arbeitspaket B1/B2) ──

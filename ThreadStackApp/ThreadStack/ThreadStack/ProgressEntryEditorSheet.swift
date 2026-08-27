@@ -66,15 +66,25 @@ struct ProgressEntryEditorSheet: View {
     let refType: String
     let refId: String
     @ObservedObject var store: ProgressStore
+    /// Rohes HTML der Beschreibung des zugehörigen Todos/Themas (vom Aufrufer
+    /// übergeben, siehe `TodoFormView`/`TopicFormView`) — für die (gekürzte)
+    /// Kontextzeile unten. Das frühere Zielbild (`ProgressDetail.goal`)
+    /// entfällt laut Produktentscheidung vollständig, ersatzlos, aus der
+    /// App-UI; diese Kontextzeile ersetzt es durch die tatsächliche
+    /// Beschreibung des Vorhabens. `nil`/leer → Zeile entfällt ersatzlos
+    /// (NIE eine leere "Noch kein Zielbild"-Fläche, siehe Vertrag).
+    let descriptionHTML: String?
     /// Wird nach erfolgreichem Speichern aufgerufen, bevor das Sheet
     /// schließt — analog zu `KnowledgeEditorView.onSaved`.
     var onSaved: (() -> Void)? = nil
 
-    init(entry: ProgressEntry, refType: String, refId: String, store: ProgressStore, onSaved: (() -> Void)? = nil) {
+    init(entry: ProgressEntry, refType: String, refId: String, store: ProgressStore,
+         descriptionHTML: String? = nil, onSaved: (() -> Void)? = nil) {
         self.entry = entry
         self.refType = refType
         self.refId = refId
         self.store = store
+        self.descriptionHTML = descriptionHTML
         self.onSaved = onSaved
     }
 
@@ -99,9 +109,16 @@ struct ProgressEntryEditorSheet: View {
 
     private var navigationTitleText: String { "Zwischenstand bearbeiten" }
 
-    private var goalExcerpt: String? {
-        let goal = store.detail(refType: refType, refId: refId)?.goal.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (goal?.isEmpty ?? true) ? nil : goal
+    /// Gekürzter Klartext-Auszug der Beschreibung (siehe `descriptionHTML`
+    /// oben) — wiederverwendet die bereits bestehende Kürzungslogik
+    /// `ProgressEntry.deriveExcerpt` (kein zweiter, abweichender Kürzungs-
+    /// Algorithmus). `nil` bei fehlender/leerer Beschreibung — es wird dann
+    /// bewusst KEINE Kontextzeile gerendert (siehe Vertrag).
+    private var descriptionExcerpt: String? {
+        guard let descriptionHTML, !descriptionHTML.isEmpty else { return nil }
+        let excerpt = ProgressEntry.deriveExcerpt(fromBodyHtml: descriptionHTML, limit: 140)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return excerpt.isEmpty ? nil : excerpt
     }
 
     /// Letzter (vorhandener) Zwischenstand als Kontext-Auszug — der gerade
@@ -120,12 +137,12 @@ struct ProgressEntryEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                if goalExcerpt != nil || previousEntryExcerpt != nil {
+                if descriptionExcerpt != nil || previousEntryExcerpt != nil {
                     Section("Kontext") {
-                        if let goalExcerpt {
-                            Label(goalExcerpt, systemImage: "target")
+                        if let descriptionExcerpt {
+                            Label(descriptionExcerpt, systemImage: "text.alignleft")
                                 .scaledFont(.footnote).foregroundStyle(.secondary)
-                                .accessibilityLabel("Zielbild: \(goalExcerpt)")
+                                .accessibilityLabel("Beschreibung: \(descriptionExcerpt)")
                         }
                         if let previousEntryExcerpt {
                             Label(previousEntryExcerpt, systemImage: "clock.arrow.circlepath")

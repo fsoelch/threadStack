@@ -17,8 +17,8 @@ import Foundation
 // MARK: - Fixtures
 
 private func makeSummaryView(status: String, text: String? = "Zusammenfassungstext",
-                              updatedAt: String? = "2026-08-20T10:00:00.000Z") -> AISummaryView {
-    AISummaryView(status: status, text: text, updatedAt: updatedAt)
+                              generatedAt: String? = "2026-08-20T10:00:00.000Z") -> AISummaryView {
+    AISummaryView(status: status, text: text, generatedAt: generatedAt, model: "mock-model", errorCode: nil)
 }
 
 // MARK: - AISummaryStatus (Robustheit gegen unbekannte Server-Werte)
@@ -26,17 +26,17 @@ private func makeSummaryView(status: String, text: String? = "Zusammenfassungste
 struct AISummaryStatusTests {
 
     @Test func mapsAllKnownStatusValues() {
-        #expect(AISummaryView(status: "ready", text: nil, updatedAt: nil).kind == .ready)
-        #expect(AISummaryView(status: "stale", text: nil, updatedAt: nil).kind == .stale)
-        #expect(AISummaryView(status: "pending", text: nil, updatedAt: nil).kind == .pending)
-        #expect(AISummaryView(status: "error", text: nil, updatedAt: nil).kind == .error)
-        #expect(AISummaryView(status: "disabled", text: nil, updatedAt: nil).kind == .disabled)
-        #expect(AISummaryView(status: "not_applicable", text: nil, updatedAt: nil).kind == .notApplicable)
+        #expect(AISummaryView(status: "ready", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .ready)
+        #expect(AISummaryView(status: "stale", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .stale)
+        #expect(AISummaryView(status: "pending", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .pending)
+        #expect(AISummaryView(status: "error", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .error)
+        #expect(AISummaryView(status: "disabled", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .disabled)
+        #expect(AISummaryView(status: "not_applicable", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .notApplicable)
     }
 
     @Test func unknownServerValueFallsBackSafely() {
-        #expect(AISummaryView(status: "some_future_status", text: nil, updatedAt: nil).kind == .unknown)
-        #expect(AISummaryView(status: "", text: nil, updatedAt: nil).kind == .unknown)
+        #expect(AISummaryView(status: "some_future_status", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .unknown)
+        #expect(AISummaryView(status: "", text: nil, generatedAt: nil, model: nil, errorCode: nil).kind == .unknown)
     }
 }
 
@@ -127,74 +127,9 @@ struct TodoOverviewLogicTests {
     }
 }
 
-// MARK: - SummaryStore (Ingest/Zustand ohne Netzwerk)
-
-@MainActor
-struct SummaryStoreIngestTests {
-
-    @Test func ingestPopulatesFromTodoAISummary() {
-        let store = SummaryStore()
-        let pair = AISummaryPair(progress: makeSummaryView(status: "ready", text: "Läuft gut"), description: nil)
-        let todo = TodoItem(id: "t1", title: "T", description: "", done: false, result: "", resultDate: "",
-                             snoozedUntil: nil, dueDate: nil, isPrivate: false, sortOrder: nil,
-                             createdAt: "2026-08-01T00:00:00.000Z", originThemeId: nil, originThemeTitle: nil,
-                             progress: nil, aiSummary: pair)
-
-        store.ingest(from: [todo])
-
-        #expect(store.pair(refType: "todo", refId: "t1")?.progress?.text == "Läuft gut")
-    }
-
-    @Test func ingestPopulatesFromTopicAISummary() {
-        let store = SummaryStore()
-        let pair = AISummaryPair(progress: nil, description: makeSummaryView(status: "ready", text: "Kurzfassung"))
-        let topic = Topic(id: "x1", meetingId: "m1", title: "X", description: "lang…", done: false, result: "",
-                           resultDate: "", groupId: nil, isTodo: false, snoozedUntil: nil, sortOrder: nil,
-                           createdAt: "2026-08-01T00:00:00.000Z", progress: nil, aiSummary: pair)
-
-        store.ingest(from: [topic])
-
-        #expect(store.pair(refType: "topic", refId: "x1")?.description?.text == "Kurzfassung")
-    }
-
-    /// Ein Todo ohne `aiSummary` (nil) darf einen bereits vorhandenen,
-    /// aktuelleren Eintrag (z.B. durch `poll`/`regenerate`) NICHT überschreiben.
-    @Test func ingestDoesNotOverwriteWithNilAISummary() {
-        let store = SummaryStore()
-        let existing = AISummaryPair(progress: makeSummaryView(status: "ready", text: "Behalten"), description: nil)
-        store.ingest(from: [TodoItem(id: "t1", title: "T", description: "", done: false, result: "",
-                                      resultDate: "", snoozedUntil: nil, dueDate: nil, isPrivate: false,
-                                      sortOrder: nil, createdAt: "2026-08-01T00:00:00.000Z",
-                                      originThemeId: nil, originThemeTitle: nil, progress: nil, aiSummary: existing)])
-
-        // Zweiter Ingest-Aufruf ohne aiSummary (z.B. veralteter Zwischenstand
-        // aus einer anderen Quelle) — darf den Store nicht zurücksetzen.
-        store.ingest(from: [TodoItem(id: "t1", title: "T", description: "", done: false, result: "",
-                                      resultDate: "", snoozedUntil: nil, dueDate: nil, isPrivate: false,
-                                      sortOrder: nil, createdAt: "2026-08-01T00:00:00.000Z",
-                                      originThemeId: nil, originThemeTitle: nil, progress: nil, aiSummary: nil)])
-
-        #expect(store.pair(refType: "todo", refId: "t1")?.progress?.text == "Behalten")
-    }
-
-    @Test func pairIsNilForUnknownRef() {
-        let store = SummaryStore()
-        #expect(store.pair(refType: "todo", refId: "unbekannt") == nil)
-    }
-
-    /// Abbrechen eines nicht laufenden Pollings darf nicht crashen (Randfall).
-    @Test func cancelPollingWithoutRunningTaskIsNoop() {
-        let store = SummaryStore()
-        store.cancelPolling(for: .init(refType: "todo", refId: "t1"))
-    }
-
-    /// `regenerate` ohne angehängten `AppState` (Stand-in-Fehlerfall, siehe
-    /// Abschlussbericht) wirft einen `ProgressError`, statt zu crashen oder
-    /// interne Details zu leaken.
-    @Test func regenerateWithoutAttachedAppStateThrowsOffline() async {
-        let store = SummaryStore()
-        await #expect(throws: ProgressError.self) {
-            try await store.regenerate(kind: "progress", refType: "todo", refId: "t1")
-        }
-    }
-}
+// Hinweis: Grundlegendes SummaryStore-Verhalten (ingest/pair/cancelPolling/
+// regenerate-Fehlerpfad) wird bereits vollständig durch die A1-eigenen Tests
+// in `SummaryStoreTests.swift` (`SummaryStoreIngestTests`,
+// `SummaryStoreRegenerateTests`, `SummaryStorePollBehaviorTests`) abgedeckt -
+// keine zweite, parallele Testsuite dafür (Wiederverwendung statt
+// Neuentwicklung, siehe CLAUDE.md).

@@ -238,7 +238,15 @@
       return Promise.resolve(window.confirm((opts.title || '') + '\n\n' + (opts.message || '')));
     },
     reducedMotion: function () { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; },
+    openObject: function (refType, refId, opts) {
+      log('openObject(' + refType + ', ' + refId + ', ' + JSON.stringify(opts || {}) + ')');
+    },
     progress: {
+      aiSummaryEnabled: function (kind) { log('aiSummaryEnabled(' + kind + ')'); return mock.aiEnabled; },
+      regenerateSummary: function (kind, refType, refId) {
+        log('regenerateSummary(' + kind + ', ' + refType + ', ' + refId + ')');
+        return Promise.resolve();
+      },
       openEntryDialog: function (ctx) {
         log('openEntryDialog(' + JSON.stringify({ refType: ctx.refType, refId: ctx.refId, entryId: ctx.entryId }) + ')');
         var text = window.prompt('Mock-Dialog: Zwischenstand bearbeiten (Klartext, wird als <p> gespeichert).', 'Bearbeiteter Text …');
@@ -246,13 +254,6 @@
         var detail = store[ctx.refId];
         var e = detail.entries.filter(function (x) { return x.id === ctx.entryId; })[0];
         if (e) { e.bodyHtml = '<p>' + text.replace(/</g, '&lt;') + '</p>'; e.editedAt = new Date().toISOString(); }
-        return Promise.resolve('saved');
-      },
-      openGoalDialog: function (ctx) {
-        log('openGoalDialog(' + JSON.stringify({ refType: ctx.refType, refId: ctx.refId }) + ')');
-        var text = window.prompt('Mock-Dialog: neues Zielbild', ctx.goal || '');
-        if (text == null) return Promise.resolve('cancelled');
-        store[ctx.refId].goal = text;
         return Promise.resolve('saved');
       },
       openNextStepDialog: function (ctx) {
@@ -359,7 +360,7 @@
       refType: 'todo', refId: 'a2'
     });
 
-    status.textContent = 'gemountet für ' + currentRefId + ' (Zielbild: "' + timelineHandle.getGoal().slice(0, 40) + '")';
+    status.textContent = 'gemountet für ' + currentRefId + ' (Nächster Schritt: "' + timelineHandle.getNextStep().slice(0, 40) + '")';
   }
 
   function unmountAll() {

@@ -2,30 +2,26 @@
 //  SummaryModels.swift
 //  ThreadStack
 //
-//  ABWEICHUNG VOM ARBEITSPAKET-ZUSCHNITT (siehe Abschlussbericht Paket A3):
-//  Dieser Datei-Inhalt gehört laut Vertrag zu Arbeitspaket A1
-//  ("App-Datenschicht"), wurde dort aber in diesem Worktree-Stand nicht
-//  gefunden (weder committed noch in einem erreichbaren Sibling-Worktree) —
-//  auch nach Nachziehen des aktuellen `main`-Standes. Damit Paket A3
-//  ("App-UI Übersicht/Meeting-Detail") die geforderte KI-Zusammenfassungs-
-//  Karte überhaupt implementieren und testen kann, wird hier eine MINIMALE,
-//  am beschriebenen Vertrag orientierte Stand-in-Fassung nachgezogen (analog
-//  zum in der Aufgabenstellung beschriebenen Vorgehen von Paket A2 bei
-//  `ProgressDetail.goal`). Feldnamen/Typen bilden bewusst 1:1 die im Vertrag
-//  genannten Bezeichner ab (`AISummaryView`, `AISummaryPair`, `AISummaryStatus`,
-//  `.kind`), damit ein späterer Merge mit dem echten Paket A1 möglichst
-//  reibungslos verläuft. MUSS beim Merge mit dem echten Paket A1 abgeglichen
-//  bzw. ersetzt werden — siehe Abschlussbericht.
+//  Arbeitspaket A1 ("App-Datenschicht", Redesign Todo/Task-Übersicht):
+//  reine Datenmodelle für die serverseitig ereignisgetrieben generierten
+//  KI-Zusammenfassungen ("Fortschritt"/"Beschreibung"). Bildet exakt das
+//  JSON-Format ab, das der Server unter `GET /api/summaries` bzw. additiv in
+//  den Listen-Endpunkten (`GET /api/todos`/`GET /api/themes` als `aiSummary`)
+//  liefert (siehe Schnittstelle 12 im Vertrag).
 //
-//  Reine Datentypen (kein Networking, keine UI) — analog zu ProgressModels.swift.
+//  Diese Datei enthält ausschließlich Datentypen (kein Networking, keine
+//  UI) — der API-Zugriff lebt in `SummaryAPI.swift`, der Zustand in
+//  `SummaryStore.swift`.
 //
 
 import Foundation
 
-/// Typisierte, robuste Sicht auf `AISummaryView.status`. Unbekannte/zukünftige
-/// Server-Werte fallen auf `.unknown`, statt die Decodierung selbst zum
-/// Scheitern zu bringen (siehe CLAUDE.md Sicherheits-Baseline: jede Eingabe
-/// von außen validieren, defensiv gegen unbekannte Werte).
+/// Robuste, typisierte Sicht auf `AISummaryView.status`. Bewusst nicht als
+/// Decodierungs-Ziel selbst verwendet (siehe `AISummaryView.status: String`)
+/// — ein zukünftiger, unbekannter Server-Wert fällt auf `.unknown`, statt die
+/// Dekodierung des gesamten `AISummaryView` zum Absturz zu bringen (siehe
+/// Vertrag: "String, NICHT enum — unbekannte Serverwerte dürfen das Decoding
+/// NIE brechen").
 enum AISummaryStatus: String {
     case ready
     case stale
@@ -48,32 +44,74 @@ enum AISummaryStatus: String {
     }
 }
 
-/// Eine einzelne KI-Zusammenfassung (Fortschritt ODER Beschreibung) für genau
-/// eine Ref. `status` bleibt bewusst `String` (nicht enum), `.kind` bietet die
-/// robuste, typisierte Sicht darauf (siehe `AISummaryStatus`).
+/// Eine einzelne KI-Zusammenfassung (Fortschritt ODER Beschreibung) für eine
+/// Ref. `status` bleibt bewusst `String` (siehe Vertrag) — `kind` bietet
+/// Aufrufern trotzdem eine typisierte, robuste Sicht ohne eigenes
+/// String-Matching.
 struct AISummaryView: Codable, Equatable {
     let status: String
     let text: String?
-    let updatedAt: String?
+    let generatedAt: String?
+    let model: String?
+    let errorCode: String?
 
     var kind: AISummaryStatus { AISummaryStatus(rawValue: status) }
-
-    init(status: String, text: String?, updatedAt: String?) {
-        self.status = status
-        self.text = text
-        self.updatedAt = updatedAt
-    }
 }
 
-/// Bündelt die beiden möglichen KI-Zusammenfassungen einer Ref (Fortschritt
-/// und Beschreibung) — eingebettet in `TodoItem`/`Topic` als optionales Feld
-/// `aiSummary`, analog zu `ProgressSummary` (`progress`-Feld).
+/// Fortschritts- und Beschreibungs-Zusammenfassung einer Ref, wie sie sowohl
+/// von `GET /api/summaries` je Ref-Schlüssel als auch additiv als
+/// `aiSummary` in Listen-Endpunkten geliefert wird. Beide Felder optional:
+/// eine Zusammenfassungsart kann fehlen (z.B. wenn für diesen Ref-Typ nicht
+/// anwendbar), ohne dass die Dekodierung des gesamten Objekts scheitert.
 struct AISummaryPair: Codable, Equatable {
-    var progress: AISummaryView?
-    var description: AISummaryView?
+    let progress: AISummaryView?
+    let description: AISummaryView?
+}
 
-    init(progress: AISummaryView? = nil, description: AISummaryView? = nil) {
-        self.progress = progress
-        self.description = description
+/// Fehler-Vertrag für das Summary-Feature. `errorDescription` liefert
+/// ausschließlich deutsche, nutzerfreundliche Texte ohne interne Details
+/// (Stacktraces, Query-Strings, Serverpfade) — sicher für die direkte
+/// Anzeige in der UI (siehe Sicherheits-Baseline in CLAUDE.md). Der Vertrag
+/// listet für die Summary-Endpunkte (anders als bei `ProgressError`) keine
+/// stabilen, dokumentierten `code`-Werte auf — die Zuordnung erfolgt daher
+/// primär über den HTTP-Status, der servergelieferte `error`-Text wird nach
+/// Möglichkeit direkt übernommen (das Backend liefert dort bereits
+/// nutzerverständlichen deutschen Text, analog zu allen anderen
+/// Fehlerpfaden dieser App).
+enum SummaryError: LocalizedError, Equatable {
+    case invalidRequest(String)   // 400
+    case notFound                  // 404
+    case conflict(String)          // 409
+    case budgetExceeded            // 402
+    case rateLimited                // 429
+    case offline                    // Netzwerkfehler (kein Server erreicht)
+    case server(String)             // 500/sonstige, mit deutschem Nutzertext aus der Server-Response
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidRequest(let m): return m
+        case .notFound: return "Dieser Eintrag existiert nicht mehr."
+        case .conflict(let m): return m
+        case .budgetExceeded: return "KI-Budget aufgebraucht."
+        case .rateLimited: return "Zu viele Anfragen. Bitte kurz warten."
+        case .offline: return "Keine Verbindung zum Server."
+        case .server(let m): return m
+        }
+    }
+
+    /// Bildet einen HTTP-Fehlerstatus + optionale Server-Nachricht auf den
+    /// passenden `SummaryError`-Case ab. Fehlende/leere Nachrichten fallen
+    /// auf einen generischen, sicheren deutschen Text zurück statt interne
+    /// Details preiszugeben.
+    static func map(status: Int, message: String?) -> SummaryError {
+        let text = (message?.isEmpty == false) ? message : nil
+        switch status {
+        case 400: return .invalidRequest(text ?? "Ungültige Anfrage.")
+        case 404: return .notFound
+        case 409: return .conflict(text ?? "Aktion aktuell nicht möglich.")
+        case 402: return .budgetExceeded
+        case 429: return .rateLimited
+        default: return .server(text ?? "Ein unerwarteter Fehler ist aufgetreten.")
+        }
     }
 }

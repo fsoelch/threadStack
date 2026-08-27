@@ -75,12 +75,10 @@ struct Topic: Identifiable, Codable, Equatable {
     // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
     var progress: ProgressSummary?
 
-    // ABWEICHUNG (siehe Abschlussbericht Paket A3): gehört laut Vertrag zu
-    // Paket A1 ("App-Datenschicht"), wurde dort in diesem Worktree-Stand aber
-    // nicht gefunden — additiv nachgezogen, damit `AISummaryCardView`
-    // (Paket A3) KI-Zusammenfassungen konsumieren kann. Optional/additiv wie
-    // `progress` oben: fehlt das Feld im JSON, bleibt es `nil` statt eines
-    // Decode-Fehlers. MUSS beim Merge mit dem echten Paket A1 abgeglichen werden.
+    // Redesign Todo/Task-Übersicht (Arbeitspaket A1): additiv, vom Server optional
+    // eingebettet (siehe SummaryModels.swift, Schnittstelle 12). Ältere Server liefern
+    // dieses Feld nicht — synthesized Codable dekodiert es per decodeIfPresent, bleibt
+    // dann einfach nil statt eines Decode-Fehlers.
     var aiSummary: AISummaryPair?
 }
 
@@ -144,8 +142,10 @@ struct TodoItem: Identifiable, Codable, Equatable {
     // bzw. andere Endpoints), bleibt progress einfach nil statt eines Decode-Fehlers.
     var progress: ProgressSummary?
 
-    // ABWEICHUNG (siehe Abschlussbericht Paket A3): siehe Kommentar bei
-    // `Topic.aiSummary` oben — identische Begründung/Vorgehen.
+    // Redesign Todo/Task-Übersicht (Arbeitspaket A1): additiv, vom Server optional
+    // eingebettet (siehe SummaryModels.swift, Schnittstelle 12). Ältere Server liefern
+    // dieses Feld nicht — synthesized Codable dekodiert es per decodeIfPresent, bleibt
+    // dann einfach nil statt eines Decode-Fehlers.
     var aiSummary: AISummaryPair?
 }
 
@@ -334,9 +334,19 @@ struct AIFeatures: Codable, Equatable {
     // ein non-optionales Feld würde die Dekodierung der gesamten AISettings-Response brechen.
     var link_summary: Bool?
     var linkSummaryOn: Bool { link_summary ?? false }
+    // Redesign Todo/Task-Übersicht (Arbeitspaket A1): KI-Zusammenfassungen für
+    // Fortschritt/Beschreibung, siehe Vertrag ("ai_settings.features_enabled bekommt
+    // zwei neue optionale Boolean-Schlüssel ... Default aus"). Ebenfalls optional
+    // (gleiches Muster wie `link_summary`), damit ältere Server-Stände ohne diese
+    // Schlüssel die Dekodierung nicht brechen.
+    var progress_summary: Bool?
+    var description_summary: Bool?
+    var progressSummaryOn: Bool { progress_summary ?? false }
+    var descriptionSummaryOn: Bool { description_summary ?? false }
     static let defaults = AIFeatures(brief: true, capture: true, result_draft: true,
                                      reentry: true, theme_tagging: false, digest: false,
-                                     cross_meeting: false, drift: false, link_summary: false)
+                                     cross_meeting: false, drift: false, link_summary: false,
+                                     progress_summary: false, description_summary: false)
 }
 
 struct AISettings: Codable, Equatable {

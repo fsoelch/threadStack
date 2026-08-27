@@ -6,6 +6,11 @@
 //  Erfolgspfade (Decodierung/Pfad-/Query-Aufbau) und `clientToken`-
 //  Durchreichung für den Progress-API-Client.
 //
+//  Redesign-Update (Todo/Task-Übersicht, Arbeitspaket A1): Zielbild entfällt
+//  vollständig aus der App-UI — die Tests für `AppState.saveProgressGoal`
+//  wurden entfernt, da diese Methode nicht mehr existiert (siehe
+//  `ProgressAPI.swift`).
+//
 //  Netzwerk-Mocking: nutzt bewusst das bereits vorhandene `KnowledgeMockURLProtocol`
 //  aus `KnowledgeAPITests.swift` (Arbeitspaket "knowledge-api") wieder, statt
 //  eine zweite, ähnliche `URLProtocol`-Stub-Klasse zu bauen (siehe CLAUDE.md:
@@ -134,15 +139,15 @@ struct ProgressAPIErrorPathTests {
         }
     }
 
-    @Test func saveProgressGoalThrowsTooLongWithLimitFromGoalTooLong() async throws {
+    @Test func saveProgressNextStepThrowsTooLongWithLimitFromNextStepTooLong() async throws {
         let state = makeProgressTestState { _ in
-            (400, jsonData(["error": "Zielbild zu lang", "code": "goal_too_long"]))
+            (400, jsonData(["error": "Nächster Schritt zu lang", "code": "next_step_too_long"]))
         }
         do {
-            _ = try await state.saveProgressGoal(refType: "todo", refId: "a1", goal: String(repeating: "x", count: 600))
+            _ = try await state.saveProgressNextStep(refType: "todo", refId: "a1", nextStep: String(repeating: "x", count: 1200))
             Issue.record("expected ProgressError.tooLong")
         } catch let e as ProgressError {
-            #expect(e == .tooLong(field: "Zielbild", limit: 500))
+            #expect(e == .tooLong(field: "Nächster Schritt", limit: 1000))
         }
     }
 
@@ -308,17 +313,6 @@ struct ProgressAPISuccessTests {
             return (200, jsonData(sampleDetailJSON()))
         }
         _ = try await state.loadProgress(refType: "todo", refId: "a/b")
-    }
-
-    @Test func saveProgressGoalSendsGoalBodyAndDecodesMeta() async throws {
-        let state = makeProgressTestState { req in
-            #expect(req.httpMethod == "PUT")
-            #expect(req.url?.path == "/api/progress/todo/a1/goal")
-            return (200, jsonData(["goal": "Neues Ziel", "goalUpdatedAt": "2026-08-01T00:00:00.000Z",
-                                    "nextStep": NSNull(), "nextStepUpdatedAt": NSNull()]))
-        }
-        let meta = try await state.saveProgressGoal(refType: "todo", refId: "a1", goal: "Neues Ziel")
-        #expect(meta.goal == "Neues Ziel")
     }
 
     @Test func saveProgressNextStepUsesNextStepPath() async throws {

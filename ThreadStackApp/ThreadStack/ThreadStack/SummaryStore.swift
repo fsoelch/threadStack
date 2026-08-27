@@ -2,239 +2,220 @@
 //  SummaryStore.swift
 //  ThreadStack
 //
-//  ABWEICHUNG VOM ARBEITSPAKET-ZUSCHNITT (siehe Abschlussbericht Paket A3):
-//  Wie `SummaryModels.swift` gehört auch dieser Store laut Vertrag zu Paket
-//  A1, existiert aber in keinem erreichbaren Stand — Stand-in-Fassung von
-//  Paket A3, MUSS beim Merge mit dem echten Paket A1 abgeglichen werden.
+//  Arbeitspaket A1 ("App-Datenschicht", Redesign Todo/Task-Übersicht):
+//  zentraler Zustands-Store für KI-Zusammenfassungen (Schnittstelle 12 im
+//  Vertrag). Hält pro Ref ("refType:refId", z.B. "todo:a1…") das zuletzt
+//  bekannte `AISummaryPair` (Fortschritt + Beschreibung), befüllt entweder
+//  additiv aus Listen-Antworten (`ingest(from:)`) oder per gezieltem
+//  Nachladen (`poll(refs:)` nach `regenerate(...)`, bis der Server die
+//  Generierung abgeschlossen hat).
 //
-//  Netzwerk-Pattern: folgt bewusst 1:1 dem bereits etablierten Muster aus
-//  `ProgressAPI.swift`/`ProgressStore.swift` (eigene, dateiweite
-//  `URLSession`-Testseam, da `AppState.session`/`AppState.url(_:)` privat
-//  sind und diese Datei `AppState.swift` nicht ändern darf; Fehler-Mapping
-//  auf `ProgressError` wiederverwendet statt eines neuen Fehlertyps, da die
-//  Nutzertexte inhaltlich identisch sind: "keine Verbindung", "zu viele
-//  Änderungen" etc.) — kein zweites, abweichendes Netzwerk-/Fehler-Konzept.
+//  Konsumierende Views fassen ausschließlich die `@Published`-Properties und
+//  die Methoden unten an, nie `AppState`/`SummaryAPI` direkt (analoges
+//  Muster zu `ProgressStore`, siehe dortiger Kommentar).
 //
-//  Server-Endpunkte sind ERFUNDEN (kein Paket S3 verfügbar), aber konsistent
-//  zum bestehenden `/api/progress/...`-Schema benannt:
-//    GET  /api/summary/:refType/:refId                 -> AISummaryPair (JSON)
-//    POST /api/summary/:kind/:refType/:refId/regenerate -> AISummaryView (JSON)
-//  Schlägt der Request fehl (z.B. weil der Endpunkt serverseitig noch nicht
-//  existiert), verhält sich das für Aufrufer wie jeder andere Netzwerkfehler
-//  (`ProgressError.offline`/`.server`) — kein Absturz, keine kaschierten
-//  Interna in der Fehlermeldung (siehe CLAUDE.md Sicherheits-Baseline).
+//  Polling-Kontrakt (bindend, siehe Vertrag): exakt 2000ms Intervall,
+//  maximal 10 Versuche, pro Ref ("Karte") unabhängig startbar/abbrechbar —
+//  ein `cancelPolling(for:)` für eine Ref darf das Polling anderer, parallel
+//  über denselben `poll(refs:)`-Aufruf gestarteter Refs nicht beeinflussen.
+//  Intervall/Versuchszahl sind über einen zusätzlichen, im Vertrag nicht
+//  spezifizierten Test-Seam-Initializer konfigurierbar (Default = exakt die
+//  vertraglich geforderten Werte), analog zum bereits etablierten Muster
+//  `ProgressStore.init(appState:defaults:)`/`AppState.init(session:)` —
+//  ohne diesen Seam wären Tests entweder unrealistisch langsam (bis zu 20s
+//  pro Testfall) oder müssten das Timing selbst gar nicht abdecken.
 //
 
 import Foundation
 import Combine
 
-// MARK: - Test-only network seam (analog ProgressAPISession)
-
-enum SummaryAPISession {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var overrides: [ObjectIdentifier: URLSession] = [:]
-
-    static let defaultSession: URLSession = {
-        let cfg = URLSessionConfiguration.default
-        cfg.httpCookieStorage = .shared
-        cfg.httpShouldSetCookies = true
-        cfg.httpCookieAcceptPolicy = .always
-        return URLSession(configuration: cfg)
-    }()
-
-    static func session(for state: AppState) -> URLSession {
-        lock.lock(); defer { lock.unlock() }
-        return overrides[ObjectIdentifier(state)] ?? defaultSession
-    }
-
-    /// Test-only: siehe `ProgressAPISession.setOverride` — identisches Muster.
-    static func setOverride(_ session: URLSession?, for state: AppState) {
-        lock.lock(); overrides[ObjectIdentifier(state)] = session; lock.unlock()
-    }
-}
-
-private struct SummaryErrorBody: Decodable {
-    let error: String?
-    let code: String?
-}
-
-private extension String {
-    var asSummaryURLPathSegment: String {
-        var allowed = CharacterSet.urlPathAllowed
-        allowed.remove(charactersIn: "/")
-        return addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
-    }
-}
-
-private extension AppState {
-    func summaryAPIURL(_ path: String) throws -> URL {
-        var base = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if base.hasSuffix("/") { base = String(base.dropLast()) }
-        guard !base.isEmpty, let u = URL(string: base + "/api" + path) else { throw APIError.invalidURL }
-        return u
-    }
-
-    func summaryRequest<T: Decodable>(_ method: String, _ path: String) async throws -> T {
-        var req = URLRequest(url: try summaryAPIURL(path))
-        req.httpMethod = method
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await SummaryAPISession.session(for: self).data(for: req)
-        } catch {
-            throw ProgressError.offline
-        }
-        guard let http = response as? HTTPURLResponse else { throw ProgressError.offline }
-        if http.statusCode == 401 { throw APIError.unauthorized }
-        if http.statusCode >= 400 {
-            let errorBody = try? JSONDecoder().decode(SummaryErrorBody.self, from: data)
-            throw ProgressError.map(code: errorBody?.code, message: errorBody?.error)
-        }
-        return try JSONDecoder().decode(T.self, from: data)
-    }
-
-    func fetchAISummaryPair(refType: String, refId: String) async throws -> AISummaryPair {
-        let path = "/summary/\(refType.asSummaryURLPathSegment)/\(refId.asSummaryURLPathSegment)"
-        return try await summaryRequest("GET", path)
-    }
-
-    func regenerateAISummary(kind: String, refType: String, refId: String) async throws -> AISummaryView {
-        let path = "/summary/\(kind.asSummaryURLPathSegment)/\(refType.asSummaryURLPathSegment)/\(refId.asSummaryURLPathSegment)/regenerate"
-        return try await summaryRequest("POST", path)
-    }
-}
-
-/// Zentraler Zustands-Store für KI-Zusammenfassungen (Fortschritt/Beschreibung).
-/// Hält pro Ref ("refType:refId") das zuletzt bekannte `AISummaryPair`.
-/// Konsumenten (Paket A3: `TodosView`, `MeetingDetailView`, `AISummaryCardView`)
-/// beobachten ausschließlich `summaries` und rufen die Methoden unten auf.
 @MainActor
 final class SummaryStore: ObservableObject {
 
-    /// Stabile Referenz auf ein Vorhaben, für Polling-Aufrufe.
-    struct Ref: Hashable {
-        let refType: String
-        let refId: String
-    }
+    /// Vertraglich exakt vorgegebene Default-Werte — siehe Datei-
+    /// Kopfkommentar. Als `static let` exponiert (statt rein privat), damit
+    /// Tests die tatsächlich für den Produktionspfad geltenden Defaults
+    /// bestätigen können, ohne 10×2000ms real abwarten zu müssen.
+    static let defaultPollIntervalNanoseconds: UInt64 = 2_000_000_000
+    static let defaultMaxPollAttempts = 10
 
+    // MARK: - Published state
+
+    /// Zuletzt bekannte Zusammenfassungen je Ref (Schlüssel "refType:refId").
     @Published private(set) var summaries: [String: AISummaryPair] = [:]
 
-    private weak var appState: AppState?
+    /// Fehler eines fehlgeschlagenen `regenerate(...)`-Aufrufs je Ref
+    /// (Schlüssel "kind:refType:refId", da Fortschritt/Beschreibung
+    /// unabhängig regeneriert werden können). Getrennt von `summaries`
+    /// gehalten: ein Regenerierungsfehler darf die zuletzt sichtbare
+    /// Zusammenfassung nicht verstecken (Fehler werden behandelt, nicht
+    /// verschluckt, siehe CLAUDE.md).
+    @Published private(set) var regenerateErrors: [String: SummaryError] = [:]
+
+    // MARK: - Internals
+
+    private let appState: AppState
+    private let pollIntervalNanoseconds: UInt64
+    private let maxPollAttempts: Int
+
+    /// Laufende Poll-Tasks je Ref — ermöglicht das gezielte Abbrechen EINER
+    /// Ref (`cancelPolling(for:)`), ohne die Polls anderer Refs zu berühren.
     private var pollTasks: [String: Task<Void, Never>] = [:]
 
-    static let maxPollAttempts = 10
-    static let pollIntervalNanoseconds: UInt64 = 3_000_000_000
+    /// Generation-Zähler je Ref: verhindert, dass ein bereits überholter
+    /// (durch einen neueren `startPolling`-Aufruf ersetzter) Task beim
+    /// eigenen Abschluss fälschlich den NEUEN Eintrag aus `pollTasks`
+    /// entfernt.
+    private var pollGeneration: [String: Int] = [:]
 
-    init(appState: AppState? = nil) {
+    init(appState: AppState,
+         pollIntervalNanoseconds: UInt64 = SummaryStore.defaultPollIntervalNanoseconds,
+         maxPollAttempts: Int = SummaryStore.defaultMaxPollAttempts) {
         self.appState = appState
+        self.pollIntervalNanoseconds = pollIntervalNanoseconds
+        self.maxPollAttempts = maxPollAttempts
     }
 
-    /// Später nachreichbar, falls der Store (z.B. mangels App-weiter
-    /// Registrierung in `ThreadStackApp.swift`, siehe Abschlussbericht) erst
-    /// nach der Konstruktion Zugriff auf `AppState` bekommt.
-    func attach(_ appState: AppState) {
-        self.appState = appState
-    }
+    // MARK: - Accessors
 
-    private func key(_ refType: String, _ refId: String) -> String { "\(refType):\(refId)" }
+    func pair(for refKey: String) -> AISummaryPair? { summaries[refKey] }
 
-    func pair(refType: String, refId: String) -> AISummaryPair? {
-        summaries[key(refType, refId)]
-    }
+    // MARK: - Ingest (aus Listen-Antworten)
 
-    // MARK: - Ingest (kein Netzwerk-Request — Daten kommen bereits aus dem Listen-Response)
-
-    /// Übernimmt `TodoItem.aiSummary` für alle übergebenen Todos in den Store.
-    /// Todos ohne `aiSummary` (nil) lassen einen ggf. bereits vorhandenen
-    /// Eintrag unverändert (z.B. weil zwischenzeitlich per `poll`/`regenerate`
-    /// aktuellere Daten geladen wurden).
-    func ingest(from todos: [TodoItem]) {
-        for t in todos {
-            guard let pair = t.aiSummary else { continue }
-            summaries[key("todo", t.id)] = pair
+    /// Übernimmt additiv aus Listen-Antworten (`GET /api/todos`/`GET /api/themes`,
+    /// Feld `aiSummary`) gelieferte Zusammenfassungen. Überschreibt bestehende
+    /// Einträge für dieselbe Ref vollständig (die Liste ist die aktuellere
+    /// Quelle) — ruft dabei bewusst kein Netzwerk auf.
+    func ingest(from list: [(refKey: String, pair: AISummaryPair)]) {
+        for item in list {
+            summaries[item.refKey] = item.pair
         }
     }
 
-    /// Übernimmt `Topic.aiSummary` für alle übergebenen Topics in den Store.
-    func ingest(from topics: [Topic]) {
-        for t in topics {
-            guard let pair = t.aiSummary else { continue }
-            summaries[key("topic", t.id)] = pair
-        }
-    }
+    // MARK: - Regenerieren
 
-    // MARK: - Poll
-
-    /// Startet für jede übergebene Ref, für die noch kein Poll läuft, einen
-    /// Hintergrund-Task, der den aktuellen Stand periodisch nachlädt, bis er
-    /// nicht mehr `pending` ist, der Task abgebrochen wird
-    /// (`cancelPolling(for:)`) oder `maxPollAttempts` erreicht ist (verhindert
-    /// unbegrenztes Polling bei dauerhaft hängendem Server-Job).
-    func poll(refs: [Ref]) async {
-        for ref in refs {
-            let k = key(ref.refType, ref.refId)
-            guard pollTasks[k] == nil else { continue }
-            guard let appState else { continue }
-            let task = Task { [weak self] in
-                var attempt = 0
-                while !Task.isCancelled && attempt < Self.maxPollAttempts {
-                    attempt += 1
-                    do {
-                        let pair = try await appState.fetchAISummaryPair(refType: ref.refType, refId: ref.refId)
-                        guard let self, !Task.isCancelled else { return }
-                        self.summaries[k] = pair
-                        let stillPending = pair.progress?.kind == .pending || pair.description?.kind == .pending
-                        if !stillPending { break }
-                    } catch {
-                        // Netzwerk-/Serverfehler beim Polling werden nicht als
-                        // sichtbarer Fehler propagiert (kein Toast pro Zeile) —
-                        // der zuletzt bekannte Zustand bleibt sichtbar, ein
-                        // erneuter Versuch erfolgt beim nächsten Sichtbarwerden
-                        // der Zeile. Fehler werden dennoch nicht verschluckt im
-                        // Sinne von "ignoriert und niemals wieder versucht":
-                        // Abbruch der aktuellen Poll-Schleife, kein Crash.
-                        break
-                    }
-                    guard !Task.isCancelled else { break }
-                    try? await Task.sleep(nanoseconds: Self.pollIntervalNanoseconds)
-                }
-                guard let self else { return }
-                self.pollTasks.removeValue(forKey: k)
-            }
-            pollTasks[k] = task
-        }
-    }
-
-    /// Bricht ein laufendes Polling für diese Ref ab (z.B. Zeile verschwindet
-    /// aus dem sichtbaren Bereich) — verhindert Task-Leaks.
-    func cancelPolling(for ref: Ref) {
-        let k = key(ref.refType, ref.refId)
-        pollTasks[k]?.cancel()
-        pollTasks.removeValue(forKey: k)
-    }
-
-    // MARK: - Regenerate
-
-    /// Fordert eine neue KI-Zusammenfassung für `kind` ("progress"|"description")
-    /// an und aktualisiert den lokalen Zustand bei Erfolg. Wirft bei Fehler
-    /// (Aufrufer zeigt `error.localizedDescription`, z.B. `AISummaryCardView`s
-    /// "Erneut versuchen").
-    @discardableResult
-    func regenerate(kind: String, refType: String, refId: String) async throws -> AISummaryView {
-        guard let appState else { throw ProgressError.offline }
+    /// `POST /api/summaries/:kind/:refType/:refId/regenerate?confirm=true`.
+    /// Wirft einen normalisierten `SummaryError`, den Aufrufer direkt für
+    /// die UI-Anzeige verwenden können (siehe `SummaryError.errorDescription`).
+    /// Löst selbst KEIN Polling aus — Aufrufer rufen bei Bedarf anschließend
+    /// `poll(refs:)` für dieselbe Ref auf.
+    func regenerate(kind: String, refType: String, refId: String) async throws {
+        let errorKey = "\(kind):\(refType):\(refId)"
         do {
-            let view = try await appState.regenerateAISummary(kind: kind, refType: refType, refId: refId)
-            let k = key(refType, refId)
-            var pair = summaries[k] ?? AISummaryPair()
-            if kind == "description" {
-                pair.description = view
-            } else {
-                pair.progress = view
-            }
-            summaries[k] = pair
-            return view
+            try await appState.regenerateSummary(kind: kind, refType: refType, refId: refId)
+            regenerateErrors[errorKey] = nil
         } catch {
-            throw ProgressStore.mapError(error)
+            let mapped = Self.mapError(error)
+            regenerateErrors[errorKey] = mapped
+            throw mapped
         }
+    }
+
+    // MARK: - Polling
+
+    /// Startet für jede übergebene Ref (sofern nicht bereits eine eigene
+    /// Poll-Schleife läuft) eine unabhängige Poll-Schleife mit dem
+    /// konfigurierten Intervall/Versuchslimit (Default: exakt 2000ms / 10
+    /// Versuche, siehe Vertrag) und wartet, bis ALLE beendet sind (Erfolg,
+    /// externer Abbruch über `cancelPolling(for:)`/Task-Cancellation der
+    /// aufrufenden Seite, oder Erreichen des Versuchslimits).
+    ///
+    /// Kooperativ abbrechbar: verschwindet die aufrufende View (z.B. via
+    /// SwiftUI `.task { await store.poll(refs: [...]) }`), wird die
+    /// umgebende `Task` automatisch abgebrochen — `withTaskCancellationHandler`
+    /// unten sorgt dafür, dass dieser Abbruch explizit auf die intern
+    /// gehaltenen Poll-Tasks (`pollTasks`) durchgereicht wird. Ein reines
+    /// `Task.isCancelled`-Prüfen in der Schleife würde NICHT ausreichen, da
+    /// die eigentliche Poll-Schleife in einem separaten, unstrukturierten
+    /// `Task` läuft (siehe `startPolling`), damit `cancelPolling(for:)`
+    /// gezielt NUR diese eine Ref stoppen kann — unstrukturierte Tasks
+    /// erben Abbrüche ihres erzeugenden Kontexts sonst nicht automatisch.
+    func poll(refs: [String]) async {
+        await withTaskGroup(of: Void.self) { group in
+            for refKey in refs {
+                group.addTask { [weak self] in
+                    await withTaskCancellationHandler {
+                        await self?.startPolling(refKey)
+                    } onCancel: {
+                        guard let self else { return }
+                        Task { @MainActor in self.cancelPolling(for: refKey) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bricht eine laufende Poll-Schleife für GENAU diese Ref ab — Polls
+    /// anderer, ggf. über denselben `poll(refs:)`-Aufruf gestarteter Refs
+    /// laufen unverändert weiter (siehe Vertrag: "pro Karte startbar/
+    /// abbrechbar").
+    func cancelPolling(for refKey: String) {
+        pollTasks[refKey]?.cancel()
+        pollTasks[refKey] = nil
+    }
+
+    private func startPolling(_ refKey: String) async {
+        // Eine bereits laufende Schleife für dieselbe Ref wird ersetzt statt
+        // parallel ein zweites Mal zu pollen (vermeidet doppelte Requests bei
+        // wiederholtem `poll(refs:)`-Aufruf für dieselbe Karte).
+        pollTasks[refKey]?.cancel()
+        pollGeneration[refKey, default: 0] += 1
+        let myGeneration = pollGeneration[refKey]!
+
+        let interval = pollIntervalNanoseconds
+        let attempts = maxPollAttempts
+        // Explizit `@MainActor`: die Poll-Schleife liest/schreibt
+        // `@Published`-Zustand des Stores und ruft dessen (isolierte)
+        // Methoden auf — keine Isolations-Inferenz-Annahme nötig.
+        let task = Task { @MainActor [weak self] in
+            for _ in 0..<attempts {
+                if Task.isCancelled { return }
+                try? await Task.sleep(nanoseconds: interval)
+                if Task.isCancelled { return }
+                guard let self else { return }
+                await self.refreshSummary(for: refKey)
+                if !self.isPending(refKey) { return }
+            }
+        }
+        pollTasks[refKey] = task
+        await task.value
+        // Nur aufräumen, wenn in der Zwischenzeit kein neuerer Poll für
+        // dieselbe Ref gestartet wurde (siehe `pollGeneration`-Kommentar oben).
+        if pollGeneration[refKey] == myGeneration {
+            pollTasks[refKey] = nil
+        }
+    }
+
+    private func refreshSummary(for refKey: String) async {
+        guard let fetched = try? await appState.loadSummaries(refs: [refKey]) else { return }
+        if let pair = fetched[refKey] {
+            summaries[refKey] = pair
+        }
+    }
+
+    private func isPending(_ refKey: String) -> Bool {
+        let pair = summaries[refKey]
+        return pair?.progress?.kind == .pending || pair?.description?.kind == .pending
+    }
+
+    // MARK: - Fehler-Normalisierung
+
+    /// Normalisiert jeden von den `AppState`-Summary-Methoden geworfenen
+    /// Fehler auf `SummaryError`, damit Aufrufer nur EINEN Fehlertyp
+    /// behandeln müssen (analoges Muster zu `ProgressStore.mapError`).
+    /// `APIError.unauthorized` (401) wird dabei NICHT generisch kaschiert,
+    /// damit die zentrale Re-Login-Behandlung an anderer Stelle der App
+    /// weiterhin auf den ursprünglichen `APIError.unauthorized` reagieren
+    /// kann (dieses Mapping geschieht erst NACH dem `throw` in `AppState`).
+    static func mapError(_ error: Error) -> SummaryError {
+        if let e = error as? SummaryError { return e }
+        if let e = error as? APIError {
+            switch e {
+            case .unauthorized: return .server("Sitzung abgelaufen — bitte neu anmelden.")
+            case .invalidURL, .network: return .offline
+            case .server(let m): return .server(m)
+            }
+        }
+        return .offline
     }
 }

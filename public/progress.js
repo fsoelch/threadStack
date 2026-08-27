@@ -1,26 +1,35 @@
 /*
- * ThreadStack — Fortschrittsverlauf (Arbeitspaket W1: Platzierung/Konsolidierung
- * des Fortschrittsverlaufs in die Todo-/Themen-Bearbeiten-Ansicht)
+ * ThreadStack — Fortschrittsverlauf (Arbeitspaket W1, erweitert im Redesign
+ * "Übersichtlichere Todos und Tasks" um Story 3/6/7/8)
  *
  * Exponiert ausschließlich window.TSProgress = {
  *   mountTimeline, mountReentryCard, badgeHtml, compareByProgress,
  *   isUndocumented, formatAbsolute, formatRelative, invalidate,
- *   deriveEntrySource, isEffectivelyEmptyHtml
+ *   deriveEntrySource, isEffectivelyEmptyHtml, progressLineHtml,
+ *   mountInlineComposer, mountCardSummary, pollSummaries
  * }.
- * Konsumiert window.TSHost (api, toast, escHtml, confirm, reducedMotion) sowie
- * window.TSHost.progress (openGoalDialog, openNextStepDialog, openEntryDialog,
- * confirmDelete, aiReentry, aiEnabled, onProgressChanged) — siehe
- * progress-dev.html für ein lauffähiges Mock dieser Schnittstelle.
+ * Konsumiert window.TSHost (api, toast, escHtml, confirm, reducedMotion,
+ * openObject) sowie window.TSHost.progress (openNextStepDialog,
+ * openEntryDialog, confirmDelete, aiReentry, aiEnabled, onProgressChanged,
+ * aiSummaryEnabled, regenerateSummary) — siehe progress-dev.html für ein
+ * lauffähiges Mock dieser Schnittstelle. `openGoalDialog` entfällt (Redesign:
+ * das Zielbild wurde entfernt, das Ziel ergibt sich aus der Beschreibung).
  *
- * mountTimeline bettet den Verlauf fest ein (Composer-Slot -> Zielbild ->
- * Nächster Schritt -> Reentry-Slot -> Verlauf), statt ihn in einem separaten
- * Panel zu öffnen. Der Composer selbst (Rich-Text-Eingabe für einen neuen
+ * mountTimeline bettet den Verlauf fest ein (Composer-Slot -> Nächster
+ * Schritt -> Reentry-Slot -> Verlauf), statt ihn in einem separaten Panel zu
+ * öffnen. Der Composer selbst (Rich-Text-Eingabe für einen neuen
  * Zwischenstand) lebt als Host-DOM im Konsumenten (W2/index.html) und wird
  * hier nur ortsfest eingehängt — dieses Modul kennt seinen Inhalt nicht.
+ * `progressLineHtml`/`mountInlineComposer`/`mountCardSummary` sind eigenständige
+ * Bausteine für die Übersichtskarte (kompakte Fortschrittszeile, Inline-
+ * Zwischenstand-Erfassung, KI-Zusammenfassung) und unabhängig von mountTimeline.
  *
- * Nur Anzeige-/Lese-Bausteine: Zeitstrahl, Ruhephasen-Marker, Wiedereinstiegs-
- * karte, Badge-Markup, Sortier-Comparator, Datumsformatierung. Erfassen/
- * Bearbeiten/Löschen laufen ausschließlich über TSHost.progress.*.
+ * Anzeige-/Lese-Bausteine: Zeitstrahl, Ruhephasen-Marker, Wiedereinstiegskarte,
+ * Badge-Markup, Sortier-Comparator, Datumsformatierung, KI-Zusammenfassungs-
+ * Anzeige. Bearbeiten/Löschen bestehender Einträge laufen weiterhin
+ * ausschließlich über TSHost.progress.*; das Erfassen NEUER Zwischenstände
+ * kann zusätzlich direkt über mountInlineComposer erfolgen (kein zweiter
+ * Zustands-/Idempotenzmechanismus - eigener clientToken pro Instanz).
  *
  * Keine Fremdbibliothek, kein Build-Step.
  */
@@ -138,9 +147,37 @@
     var aria = 'Fortschritt: ' + count + ' ' + unit + (rel ? ', letzter ' + rel : '');
     if (stale) aria += ' — länger nicht aktualisiert';
     var cls = 'progress-badge ' + (stale ? 'progress-badge-stale' : 'progress-badge-normal');
+    // "Stale" wird über Icon UND Text erkennbar - Farbe ist nie alleiniger
+    // Bedeutungsträger (Redesign "Übersichtlichere Todos und Tasks").
+    var suffixHtml = progress.badgeSuffix
+      ? ' <span class="progress-badge-suffix">· ' + escHtml(progress.badgeSuffix) + '</span>'
+      : '';
     return '<span class="' + cls + '" aria-label="' + escHtml(aria) + '">' +
       '<span class="progress-badge-icon" aria-hidden="true">' + icon + '</span>' +
-      '<span class="progress-badge-label">' + escHtml(progress.badgeLabel) + '</span></span>';
+      '<span class="progress-badge-label">' + escHtml(progress.badgeLabel) + '</span>' + suffixHtml + '</span>';
+  }
+
+  /**
+   * Einzeilige, kompakte Fortschrittsanzeige für Übersichtskarten (Story 3).
+   * Anders als badgeHtml() liefert diese Funktion IMMER Markup, auch ohne
+   * Zwischenstand (neutraler Leerzustand statt gar keiner Anzeige). "Veraltet"
+   * wird über Icon UND Text erkennbar, nie nur über Farbe.
+   */
+  function progressLineHtml(progress) {
+    var hasEntries = progress && typeof progress === 'object' && progress.entryCount > 0 && progress.badgeLabel;
+    if (!hasEntries) {
+      return '<span class="progress-line progress-line-empty">' +
+        '<span class="progress-line-icon" aria-hidden="true">◌</span>' +
+        '<span class="progress-line-label">Noch kein Zwischenstand</span></span>';
+    }
+    var stale = progress.badgeEmphasis === 'stale';
+    var icon = stale ? '⏳' : '📈';
+    var suffix = progress.badgeSuffix ? ' · ' + progress.badgeSuffix : '';
+    var aria = progress.badgeLabel + suffix;
+    var cls = 'progress-line ' + (stale ? 'progress-line-stale' : 'progress-line-normal');
+    return '<span class="' + cls + '" aria-label="' + escHtml(aria) + '">' +
+      '<span class="progress-line-icon" aria-hidden="true">' + icon + '</span>' +
+      '<span class="progress-line-label">' + escHtml(progress.badgeLabel) + escHtml(suffix) + '</span></span>';
   }
 
   /**
@@ -236,9 +273,12 @@
     return (typeof window !== 'undefined') ? window.TSHost : null;
   }
 
-  function detailUrl(refType, refId, cursor) {
+  function detailUrl(refType, refId, cursor, limit) {
     var url = '/api/progress/' + encodeURIComponent(refType) + '/' + encodeURIComponent(refId);
-    if (cursor) url += '?cursor=' + encodeURIComponent(cursor);
+    var params = [];
+    if (limit && limit > 0) params.push('limit=' + encodeURIComponent(limit));
+    if (cursor) params.push('cursor=' + encodeURIComponent(cursor));
+    if (params.length) url += '?' + params.join('&');
     return url;
   }
 
@@ -252,14 +292,14 @@
     return url;
   }
 
-  function fetchDetail(refType, refId, force) {
-    var k = cacheKey(refType, refId);
+  function fetchDetail(refType, refId, force, limit) {
+    var k = cacheKey(refType, refId) + (limit ? ':' + limit : '');
     if (!force && detailCache[k]) return detailCache[k];
     var host = getHost();
     if (!host || typeof host.api !== 'function') {
       return Promise.reject(new Error('TSHost.api ist nicht verfügbar'));
     }
-    var p = host.api('GET', detailUrl(refType, refId), null).then(function (detail) {
+    var p = host.api('GET', detailUrl(refType, refId, null, limit), null).then(function (detail) {
       if (!detail || typeof detail !== 'object') throw new Error('Ungültige Antwort vom Server');
       return detail;
     });
@@ -270,7 +310,12 @@
 
   function invalidate(refType, refId) {
     if (!isValidRefType(refType) || !isValidRefId(refId)) return;
-    delete detailCache[cacheKey(refType, refId)];
+    var prefix = cacheKey(refType, refId);
+    for (var k in detailCache) {
+      if (Object.prototype.hasOwnProperty.call(detailCache, k) && (k === prefix || k.indexOf(prefix + ':') === 0)) {
+        delete detailCache[k];
+      }
+    }
   }
 
   // ---- Kleine DOM-Helfer -----------------------------------------------------
@@ -320,13 +365,15 @@
     this.refId = opts.refId;
     this.composerSlot = isElement(opts.composerSlot) ? opts.composerSlot : null;
     this.reentrySlot = isElement(opts.reentrySlot) ? opts.reentrySlot : null;
+    // Redesign "Übersichtlichere Todos und Tasks": ersetzt das entfallene
+    // Zielbild als Kontextzeile im Zwischenstand-Dialog (siehe openEntryDialogFor).
+    this.descriptionHtml = typeof opts.descriptionHtml === 'string' ? opts.descriptionHtml : '';
     this.destroyed = false;
     this.state = {
       loading: true,
       error: null,
       entries: [],
-      page: { limit: 20, hasMore: false, nextCursor: null },
-      goal: '',
+      page: { limit: opts.limit && opts.limit > 0 ? opts.limit : 20, hasMore: false, nextCursor: null },
       nextStep: '',
       loadingMore: false,
       loadMoreError: null,
@@ -397,12 +444,11 @@
     this.state.loading = true;
     this.state.error = null;
     this.render();
-    fetchDetail(this.refType, this.refId, force).then(function (detail) {
+    fetchDetail(this.refType, this.refId, force, this.state.page.limit).then(function (detail) {
       if (self.destroyed) return;
       self.state.loading = false;
       self.state.entries = Array.isArray(detail.entries) ? detail.entries : [];
-      self.state.page = detail.page || { limit: 20, hasMore: false, nextCursor: null };
-      self.state.goal = typeof detail.goal === 'string' ? detail.goal : '';
+      self.state.page = detail.page || { limit: self.state.page.limit, hasMore: false, nextCursor: null };
       self.state.nextStep = typeof detail.nextStep === 'string' ? detail.nextStep : '';
       self.state.refExists = !detail.ref || detail.ref.exists !== false;
       self.state.expanded = {};
@@ -463,25 +509,8 @@
       entryId: entry.id,
       source: entry.source,
       prefillHtml: entry.bodyHtml || '',
-      goal: this.state.goal || '',
+      descriptionHtml: this.descriptionHtml || '',
       lastEntryHtml: lastEntry ? (lastEntry.bodyHtml || '') : ''
-    }).then(function (result) {
-      if (self.destroyed) return;
-      if (result === 'saved') {
-        self.load(true);
-        if (host.progress.onProgressChanged) host.progress.onProgressChanged(self.refType, self.refId);
-      }
-    }).catch(function () { /* Dialog-Fehler werden vom Host selbst kommuniziert */ });
-  };
-
-  TimelineInstance.prototype.openGoalDialogFor = function () {
-    var host = getHost();
-    if (!host || !host.progress || typeof host.progress.openGoalDialog !== 'function') return;
-    var self = this;
-    host.progress.openGoalDialog({
-      refType: this.refType,
-      refId: this.refId,
-      goal: this.state.goal || ''
     }).then(function (result) {
       if (self.destroyed) return;
       if (result === 'saved') {
@@ -551,8 +580,6 @@
         var again = self.rootEl.querySelector('[data-action="toggle-more"][data-entry-id="' + cssEscape(entryId) + '"]');
         if (again) again.focus();
       }, 0);
-    } else if (action === 'edit-goal') {
-      this.openGoalDialogFor();
     } else if (action === 'edit-nextstep') {
       this.openNextStepDialogFor();
     } else if (action === 'edit-entry') {
@@ -659,23 +686,17 @@
   };
 
   /**
-   * Kopfbereich (Zielbild / Nächster Schritt). Beschreibt ausschließlich
+   * Kopfbereich (Nächster Schritt). Beschreibt ausschließlich
    * `.progress-section-head` — rührt Composer-/Reentry-Slot-Hosts nicht an.
-   * Texte werden IMMER über textContent gesetzt (nie innerHTML): Zielbild und
-   * Nächster Schritt sind Klartextfelder und dürfen nie als HTML interpretiert
-   * werden.
+   * Texte werden IMMER über textContent gesetzt (nie innerHTML): "Nächster
+   * Schritt" ist ein Klartextfeld und darf nie als HTML interpretiert werden.
+   * Redesign "Übersichtlichere Todos und Tasks": das Zielbild entfällt hier
+   * ersatzlos (ergibt sich aus der Beschreibung, die außerhalb dieses Moduls
+   * angezeigt wird).
    */
   TimelineInstance.prototype.renderHead = function () {
     var head = this.headEl;
     head.innerHTML = '';
-
-    var goalRow = el('div', { class: 'progress-goal-row' });
-    goalRow.appendChild(el('span', { class: 'progress-row-label' }, '🎯 Zielbild'));
-    var goalText = el('span', { class: 'progress-row-text' });
-    var goalBtn = el('button', {
-      type: 'button', class: 'progress-icon-btn', 'data-action': 'edit-goal',
-      'aria-label': 'Zielbild bearbeiten', title: 'Bearbeiten'
-    }, '<span aria-hidden="true">✎</span>');
 
     var nextRow = el('div', { class: 'progress-nextstep-row' });
     nextRow.appendChild(el('span', { class: 'progress-row-label' }, '➡️ Nächster Schritt'));
@@ -686,30 +707,14 @@
     }, '<span aria-hidden="true">✎</span>');
 
     if (this.state.loading) {
-      goalText.textContent = 'Zielbild wird geladen …';
-      goalText.className = 'progress-row-text progress-row-text-muted';
-      goalBtn.disabled = true;
       nextText.textContent = 'Nächster Schritt wird geladen …';
       nextText.className = 'progress-row-text progress-row-text-muted';
       nextBtn.disabled = true;
     } else if (this.state.error) {
-      goalText.textContent = 'Zielbild konnte nicht geladen werden.';
-      goalText.className = 'progress-row-text progress-row-text-muted';
-      goalBtn.disabled = true;
       nextText.textContent = 'Nächster Schritt konnte nicht geladen werden.';
       nextText.className = 'progress-row-text progress-row-text-muted';
       nextBtn.disabled = true;
     } else {
-      var goalVal = this.state.goal || '';
-      if (goalVal) {
-        goalText.textContent = goalVal;
-        goalText.className = 'progress-row-text';
-      } else {
-        goalText.textContent = 'Noch kein Zielbild hinterlegt.';
-        goalText.className = 'progress-row-text progress-row-text-empty';
-      }
-      goalBtn.disabled = false;
-
       var nextVal = this.state.nextStep || '';
       if (nextVal) {
         nextText.textContent = nextVal;
@@ -721,11 +726,8 @@
       nextBtn.disabled = false;
     }
 
-    goalRow.appendChild(goalText);
-    goalRow.appendChild(goalBtn);
     nextRow.appendChild(nextText);
     nextRow.appendChild(nextBtn);
-    head.appendChild(goalRow);
     head.appendChild(nextRow);
   };
 
@@ -805,7 +807,6 @@
     raf(function () { if (!self.destroyed) self.checkOverflow(); });
   };
 
-  TimelineInstance.prototype.getGoal = function () { return this.state.goal || ''; };
   TimelineInstance.prototype.getNextStep = function () { return this.state.nextStep || ''; };
 
   TimelineInstance.prototype.reload = function () { this.load(true); };
@@ -836,7 +837,6 @@
       return {
         reload: function () {},
         destroy: function () { container.innerHTML = ''; },
-        getGoal: function () { return ''; },
         getNextStep: function () { return ''; }
       };
     }
@@ -844,7 +844,6 @@
     return {
       reload: inst.reload.bind(inst),
       destroy: inst.destroy.bind(inst),
-      getGoal: inst.getGoal.bind(inst),
       getNextStep: inst.getNextStep.bind(inst)
     };
   }
@@ -963,17 +962,12 @@
     body.appendChild(head);
 
     if (reentry.empty === true) {
-      body.appendChild(el('p', { class: 'progress-reentry-hint' }, 'Für dieses Vorhaben liegen noch kein Zielbild und keine Zwischenstände vor.'));
+      body.appendChild(el('p', { class: 'progress-reentry-hint' }, 'Für dieses Vorhaben liegen noch keine Zwischenstände vor.'));
       if (this.onRequestCompose) {
         var cta0 = el('button', { type: 'button', class: 'progress-btn progress-btn-primary', 'data-action': 'reentry-primary-cta' }, '+ Zwischenstand erfassen');
         body.appendChild(cta0);
       }
     } else {
-      if (detail.goal) {
-        var goalEl = el('blockquote', { class: 'progress-reentry-goal' });
-        goalEl.textContent = detail.goal;
-        body.appendChild(goalEl);
-      }
       var lastEntry = detail.entries && detail.entries[0];
       if (lastEntry) {
         var lastWrap = el('div', { class: 'progress-reentry-last' });
@@ -1053,6 +1047,391 @@
   }
 
   // ==========================================================================
+  // Inline-Zwischenstand-Composer für die Übersichtskarte (Story 6)
+  // ==========================================================================
+
+  var MAX_ENTRY_TEXT = 5000;
+
+  function genClientToken() {
+    return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  }
+
+  function entriesPostUrl(refType, refId) {
+    return '/api/progress/' + encodeURIComponent(refType) + '/' + encodeURIComponent(refId) + '/entries';
+  }
+
+  function ComposerInstance(container, opts) {
+    this.container = container;
+    this.refType = opts.refType;
+    this.refId = opts.refId;
+    this.snoozedUntil = opts.snoozedUntil || null;
+    this.done = !!opts.done;
+    this.onSaved = typeof opts.onSaved === 'function' ? opts.onSaved : function () {};
+    this.onError = typeof opts.onError === 'function' ? opts.onError : function () {};
+    this.destroyed = false;
+    this.open = false;
+    this.text = '';
+    this.saving = false;
+    this.errorMsg = null;
+    this.clientToken = genClientToken();
+    this.rootEl = el('div', { class: 'progress-inline-composer' });
+    container.innerHTML = '';
+    container.appendChild(this.rootEl);
+    this._onClick = this.handleClick.bind(this);
+    this.rootEl.addEventListener('click', this._onClick);
+    this._onInput = this.handleInput.bind(this);
+    this.render();
+  }
+
+  ComposerInstance.prototype.handleInput = function (ev) {
+    if (ev.target && ev.target.matches && ev.target.matches('[data-role="composer-text"]')) {
+      this.text = ev.target.value;
+      this.errorMsg = null;
+      this.updateCounter();
+    }
+  };
+
+  ComposerInstance.prototype.updateCounter = function () {
+    var counter = this.rootEl.querySelector('[data-role="composer-counter"]');
+    if (!counter) return;
+    var len = this.text.length;
+    counter.textContent = len + ' / ' + MAX_ENTRY_TEXT + ' Zeichen';
+    counter.className = 'progress-composer-counter' + (len > MAX_ENTRY_TEXT ? ' progress-composer-counter-over' : '');
+  };
+
+  ComposerInstance.prototype.handleClick = function (ev) {
+    var t = ev.target.closest ? ev.target.closest('[data-action]') : null;
+    if (!t) return;
+    var action = t.getAttribute('data-action');
+    if (action === 'open-composer') {
+      this.open = true;
+      this.render();
+      var ta = this.rootEl.querySelector('[data-role="composer-text"]');
+      if (ta) ta.focus();
+    } else if (action === 'cancel-composer') {
+      this.open = false;
+      this.errorMsg = null;
+      this.render();
+    } else if (action === 'save-composer') {
+      this.save();
+    }
+  };
+
+  ComposerInstance.prototype.save = function () {
+    if (this.saving) return;
+    var host = getHost();
+    var plain = this.text.replace(/\s+/g, ' ').trim();
+    if (!plain) {
+      this.errorMsg = 'Bitte gib einen Text ein.';
+      this.render();
+      return;
+    }
+    if (this.text.length > MAX_ENTRY_TEXT) {
+      this.errorMsg = 'Dein Zwischenstand ist zu lang (mehr als ' + MAX_ENTRY_TEXT + ' Zeichen). Bitte kürze ihn.';
+      this.render();
+      return;
+    }
+    if (!host || typeof host.api !== 'function') {
+      this.errorMsg = 'Keine Verbindung zum Server. Deine Eingabe bleibt erhalten.';
+      this.render();
+      return;
+    }
+    this.saving = true;
+    this.errorMsg = null;
+    this.render();
+    var self = this;
+    var source = deriveEntrySource({ snoozedUntil: this.snoozedUntil });
+    var bodyHtml = '<p>' + escHtml(this.text).replace(/\n/g, '<br>') + '</p>';
+    host.api('POST', entriesPostUrl(this.refType, this.refId), {
+      body: bodyHtml, source: source, clientToken: this.clientToken
+    }).then(function (result) {
+      if (self.destroyed) return;
+      self.saving = false;
+      self.open = false;
+      self.text = '';
+      self.clientToken = genClientToken();
+      invalidate(self.refType, self.refId);
+      self.render();
+      self.onSaved(result);
+    }).catch(function (err) {
+      if (self.destroyed) return;
+      self.saving = false;
+      self.errorMsg = self.mapError(err);
+      self.render();
+      self.onError(err);
+    });
+  };
+
+  ComposerInstance.prototype.mapError = function (err) {
+    var status = err && err.status;
+    var code = err && err.code;
+    if (status === 429 || code === 'rate_limited') return 'Zu viele Änderungen. Bitte kurz warten.';
+    if (status === 404 || code === 'ref_not_found') {
+      return this.refType === 'topic' ? 'Dieses Thema wurde inzwischen gelöscht.' : 'Dieses Todo wurde inzwischen gelöscht.';
+    }
+    if (status === 409 && code === 'ARCHIVED_READONLY') return 'Dieses Meeting ist archiviert. Zum Bearbeiten bitte wiederherstellen.';
+    if (status === 409 && code === 'ref_done') return 'Dieses Vorhaben ist bereits erledigt.';
+    if (status == null) return 'Keine Verbindung zum Server. Deine Eingabe bleibt erhalten.';
+    return genericErrorMessage();
+  };
+
+  ComposerInstance.prototype.render = function () {
+    if (this.destroyed) return;
+    var root = this.rootEl;
+    root.removeEventListener('input', this._onInput);
+    root.innerHTML = '';
+
+    if (this.done) return; // Erledigte Todos bieten keine Zwischenstand-Erfassung an.
+
+    if (!this.open) {
+      var trigger = el('button', {
+        type: 'button', class: 'progress-icon-btn', 'data-action': 'open-composer',
+        'aria-label': 'Zwischenstand erfassen', title: 'Zwischenstand erfassen'
+      }, '<span aria-hidden="true">💬</span>');
+      root.appendChild(trigger);
+      return;
+    }
+
+    var box = el('div', { class: 'progress-composer-box' });
+
+    var snoozedFuture = typeof this.snoozedUntil === 'string' && this.snoozedUntil && new Date(this.snoozedUntil).getTime() > Date.now();
+    if (snoozedFuture) {
+      box.appendChild(el('p', { class: 'progress-composer-snooze-hint' }, 'Wird beim Speichern als Zwischenstand zu deiner Ruhephase geführt, weil du „Schlafen bis" gesetzt hast.'));
+    }
+
+    var ta = document.createElement('textarea');
+    ta.className = 'progress-composer-textarea';
+    ta.setAttribute('data-role', 'composer-text');
+    ta.setAttribute('placeholder', 'Was hat sich getan?');
+    ta.setAttribute('rows', '3');
+    ta.value = this.text;
+    ta.disabled = this.saving;
+    box.appendChild(ta);
+
+    var footer = el('div', { class: 'progress-composer-footer' });
+    footer.appendChild(el('span', { class: 'progress-composer-counter', 'data-role': 'composer-counter' }, this.text.length + ' / ' + MAX_ENTRY_TEXT + ' Zeichen'));
+    var actions = el('div', { class: 'progress-composer-actions' });
+    actions.appendChild(el('button', { type: 'button', class: 'progress-btn progress-btn-secondary', 'data-action': 'cancel-composer' }, 'Abbrechen'));
+    var saveBtn = el('button', {
+      type: 'button', class: 'progress-btn progress-btn-primary', 'data-action': 'save-composer', 'aria-busy': this.saving ? 'true' : 'false'
+    }, this.saving ? 'Speichert …' : 'Speichern');
+    saveBtn.disabled = this.saving;
+    actions.appendChild(saveBtn);
+    footer.appendChild(actions);
+    box.appendChild(footer);
+
+    if (this.errorMsg) {
+      box.appendChild(el('p', { class: 'progress-error-text', role: 'alert' }, escHtml(this.errorMsg)));
+    }
+
+    root.appendChild(box);
+    root.addEventListener('input', this._onInput);
+    this.updateCounter();
+  };
+
+  ComposerInstance.prototype.destroy = function () {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    this.rootEl.removeEventListener('click', this._onClick);
+    this.rootEl.removeEventListener('input', this._onInput);
+    if (this.container) this.container.innerHTML = '';
+  };
+
+  function mountInlineComposer(container, opts) {
+    if (!hasDom) throw new Error('mountInlineComposer benötigt eine DOM-Umgebung');
+    if (!container || typeof container.appendChild !== 'function') {
+      throw new TypeError('mountInlineComposer: container (Element) erforderlich');
+    }
+    opts = opts || {};
+    if (!isValidRefType(opts.refType) || !isValidRefId(opts.refId)) {
+      container.innerHTML = '';
+      return { destroy: function () { container.innerHTML = ''; } };
+    }
+    var inst = new ComposerInstance(container, opts);
+    return { destroy: inst.destroy.bind(inst) };
+  }
+
+  // ==========================================================================
+  // KI-Zusammenfassung auf der Übersichtskarte (Story 7/8)
+  // ==========================================================================
+
+  var SUMMARY_KIND_LABEL = { progress: 'KI-Zusammenfassung', description: 'KI-Kurzfassung' };
+
+  function summaryRegenerateUrl(kind, refType, refId) {
+    return '/api/summaries/' + encodeURIComponent(kind) + '/' + encodeURIComponent(refType) + '/' + encodeURIComponent(refId) + '/regenerate?confirm=true';
+  }
+
+  function SummaryCardInstance(container, opts) {
+    this.container = container;
+    this.refType = opts.refType;
+    this.refId = opts.refId;
+    this.kind = opts.kind;
+    this.onRegenerate = typeof opts.onRegenerate === 'function' ? opts.onRegenerate : null;
+    this.destroyed = false;
+    this.regenerating = false;
+    this.setSummary(opts.summary);
+  }
+
+  SummaryCardInstance.prototype.setSummary = function (summary) {
+    this.summary = summary && typeof summary === 'object' ? summary : { status: 'not_applicable' };
+    this.render();
+  };
+
+  SummaryCardInstance.prototype.regenerate = function () {
+    if (this.regenerating) return;
+    var host = getHost();
+    var self = this;
+    this.regenerating = true;
+    this.render();
+    var p;
+    if (host && host.progress && typeof host.progress.regenerateSummary === 'function') {
+      p = host.progress.regenerateSummary(this.kind, this.refType, this.refId);
+    } else if (host && typeof host.api === 'function') {
+      p = host.api('POST', summaryRegenerateUrl(this.kind, this.refType, this.refId), null);
+    } else {
+      p = Promise.reject(new Error('kein Host verfügbar'));
+    }
+    Promise.resolve(p).then(function () {
+      if (self.destroyed) return;
+      self.regenerating = false;
+      self.summary = { status: 'pending', text: self.summary.text || null, generatedAt: null, model: null, errorCode: null };
+      self.render();
+      if (self.onRegenerate) self.onRegenerate(self.kind, self.refType, self.refId);
+    }).catch(function () {
+      if (self.destroyed) return;
+      self.regenerating = false;
+      self.render();
+    });
+  };
+
+  SummaryCardInstance.prototype.render = function () {
+    if (this.destroyed) return;
+    var root = this.container;
+    root.innerHTML = '';
+    var status = this.summary && this.summary.status;
+
+    // disabled/not_applicable/unbekannter Status: nichts rendern (keine leere Fläche).
+    if (status === 'disabled' || status === 'not_applicable' || !status) return;
+
+    var box = el('div', { class: 'progress-summary-box progress-summary-' + status });
+    var head = el('div', { class: 'progress-summary-head' });
+    head.appendChild(el('span', { class: 'progress-summary-icon', 'aria-hidden': 'true' }, '✨'));
+    head.appendChild(el('span', { class: 'progress-summary-label' }, SUMMARY_KIND_LABEL[this.kind] || 'KI-Zusammenfassung'));
+    box.appendChild(head);
+
+    if (status === 'pending' && !this.summary.text) {
+      box.appendChild(el('p', { class: 'progress-summary-loading' }, 'Wird erstellt …'));
+    } else if (status === 'error') {
+      box.appendChild(el('p', { class: 'progress-error-text' }, 'Zusammenfassung momentan nicht verfügbar.'));
+      var retryBtn = el('button', {
+        type: 'button', class: 'progress-btn progress-btn-secondary', 'data-action': 'retry-summary',
+        'aria-busy': this.regenerating ? 'true' : 'false'
+      }, 'Erneut versuchen');
+      retryBtn.disabled = this.regenerating;
+      box.appendChild(retryBtn);
+    } else if (this.summary.text) {
+      var textEl = el('p', { class: 'progress-summary-text' });
+      textEl.textContent = this.summary.text;
+      box.appendChild(textEl);
+      if (status === 'stale') {
+        box.appendChild(el('p', { class: 'progress-summary-stale-hint', 'aria-live': 'polite' }, 'Wird aktualisiert …'));
+      }
+      if (this.kind === 'progress') {
+        var link = el('button', { type: 'button', class: 'progress-link-btn', 'data-action': 'open-timeline' }, 'Alle Zwischenstände ansehen');
+        box.appendChild(link);
+      }
+    }
+
+    root.appendChild(box);
+
+    var self = this;
+    root.addEventListener('click', function (ev) {
+      var t = ev.target.closest ? ev.target.closest('[data-action]') : null;
+      if (!t) return;
+      var action = t.getAttribute('data-action');
+      if (action === 'retry-summary') self.regenerate();
+      else if (action === 'open-timeline') {
+        var host = getHost();
+        if (host && typeof host.openObject === 'function') host.openObject(self.refType, self.refId, { focus: 'progress' });
+      }
+    }, { once: true });
+  };
+
+  SummaryCardInstance.prototype.destroy = function () {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    if (this.container) this.container.innerHTML = '';
+  };
+
+  function mountCardSummary(container, opts) {
+    if (!hasDom) throw new Error('mountCardSummary benötigt eine DOM-Umgebung');
+    if (!container || typeof container.appendChild !== 'function') {
+      throw new TypeError('mountCardSummary: container (Element) erforderlich');
+    }
+    opts = opts || {};
+    if (!isValidRefType(opts.refType) || !isValidRefId(opts.refId) || (opts.kind !== 'progress' && opts.kind !== 'description')) {
+      container.innerHTML = '';
+      return { destroy: function () { container.innerHTML = ''; }, update: function () {} };
+    }
+    var inst = new SummaryCardInstance(container, opts);
+    return {
+      destroy: inst.destroy.bind(inst),
+      update: inst.setSummary.bind(inst)
+    };
+  }
+
+  // ==========================================================================
+  // Polling auf fertige KI-Zusammenfassungen (Story 7/8)
+  // ==========================================================================
+
+  var SUMMARY_POLL_INTERVAL_MS = 2000;
+  var SUMMARY_POLL_MAX_ATTEMPTS = 10;
+
+  function summariesUrl(refs) {
+    return '/api/summaries?refs=' + encodeURIComponent(refs.join(','));
+  }
+
+  function anyPending(map) {
+    var pending = false;
+    map.forEach(function (pair) {
+      if (pair && ((pair.progress && pair.progress.status === 'pending') || (pair.description && pair.description.status === 'pending'))) {
+        pending = true;
+      }
+    });
+    return pending;
+  }
+
+  /**
+   * Fragt GET /api/summaries für die übergebenen refs ab und wiederholt dies
+   * alle 2000ms bis zu 10 Mal, solange mindestens ein Ergebnis noch "pending"
+   * ist. Löst IMMER auf (nie ab), auch nach Erschöpfen der Versuche - der
+   * letzte bekannte Stand wird zurückgegeben.
+   * @param {string[]} refs z.B. ["todo:abc","topic:def"]
+   * @returns {Promise<Map<string,{progress,description}>>}
+   */
+  function pollSummaries(refs) {
+    var list = Array.isArray(refs) ? refs.filter(function (r) { return typeof r === 'string' && r; }) : [];
+    if (!list.length) return Promise.resolve(new Map());
+    var host = getHost();
+    if (!host || typeof host.api !== 'function') return Promise.resolve(new Map());
+
+    function attempt(n) {
+      return host.api('GET', summariesUrl(list), null).then(function (res) {
+        var map = new Map();
+        var summaries = (res && res.summaries) || {};
+        for (var key in summaries) {
+          if (Object.prototype.hasOwnProperty.call(summaries, key)) map.set(key, summaries[key]);
+        }
+        if (n >= SUMMARY_POLL_MAX_ATTEMPTS || !anyPending(map)) return map;
+        return new Promise(function (resolve) {
+          setTimeout(function () { resolve(attempt(n + 1)); }, SUMMARY_POLL_INTERVAL_MS);
+        });
+      }).catch(function () { return new Map(); });
+    }
+    return attempt(1);
+  }
+
+  // ==========================================================================
   // Öffentliche Schnittstelle
   // ==========================================================================
 
@@ -1066,7 +1445,11 @@
     formatRelative: formatRelative,
     invalidate: invalidate,
     deriveEntrySource: deriveEntrySource,
-    isEffectivelyEmptyHtml: isEffectivelyEmptyHtml
+    isEffectivelyEmptyHtml: isEffectivelyEmptyHtml,
+    progressLineHtml: progressLineHtml,
+    mountInlineComposer: mountInlineComposer,
+    mountCardSummary: mountCardSummary,
+    pollSummaries: pollSummaries
   };
 
   if (typeof window !== 'undefined') {
@@ -1091,7 +1474,8 @@
       isValidRefId: isValidRefId,
       escHtml: escHtml,
       deriveEntrySource: deriveEntrySource,
-      isEffectivelyEmptyHtml: isEffectivelyEmptyHtml
+      isEffectivelyEmptyHtml: isEffectivelyEmptyHtml,
+      progressLineHtml: progressLineHtml
     };
   }
 })(typeof window !== 'undefined' ? window : this);

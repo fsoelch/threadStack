@@ -6,13 +6,19 @@
 //  aus den SwiftUI-Views extrahierten Logik-Funktionen (siehe
 //  `ProgressBadgeView.swift`, `ProgressTimelineView.swift`,
 //  `ProgressReentryCardView.swift`, `ProgressEntryEditorSheet.swift`,
-//  `ProgressGoalEditorSheet.swift`). SwiftUI-View-Bodies selbst werden hier
+//  `DescriptionReadView.swift`). SwiftUI-View-Bodies selbst werden hier
 //  bewusst NICHT getestet (siehe Vertrag: "da SwiftUI-Views selbst schwer
 //  isoliert testbar sind, extrahiere reine Logik-Funktionen").
+//
+//  `ProgressGoalEditorSheet.swift` (inkl. `ProgressGoalCharLimit`) entfiel
+//  ersatzlos: das Zielbild wird laut Produktentscheidung vollständig aus der
+//  App-UI entfernt (siehe `ProgressDetail.goal`, DEPRECATED) — die
+//  zugehörigen `ProgressGoalCharLimitTests` unten entfielen deshalb ebenso.
 //
 
 import Testing
 import Foundation
+import SwiftUI
 @testable import ThreadStack
 
 // MARK: - Fixtures
@@ -183,52 +189,6 @@ struct ProgressReentryLogicTests {
     }
 }
 
-// MARK: - Zeichenzähler Zielbild (ProgressGoalCharLimit, Grenze 500)
-
-struct ProgressGoalCharLimitTests {
-
-    @Test func counterHiddenBelowWarnThreshold() {
-        #expect(ProgressGoalCharLimit.shouldShowCounter(length: 399) == false)
-    }
-
-    @Test func counterVisibleAtAndAboveWarnThreshold() {
-        #expect(ProgressGoalCharLimit.shouldShowCounter(length: 400) == true)
-        #expect(ProgressGoalCharLimit.shouldShowCounter(length: 500) == true)
-        #expect(ProgressGoalCharLimit.shouldShowCounter(length: 501) == true)
-    }
-
-    @Test func exactlyAtLimitIsNotOverLimit() {
-        #expect(ProgressGoalCharLimit.isOverLimit(length: 500) == false)
-    }
-
-    @Test func oneOverLimitIsOverLimit() {
-        #expect(ProgressGoalCharLimit.isOverLimit(length: 501) == true)
-    }
-
-    @Test func saveDisabledWhenTextEmpty() {
-        #expect(ProgressGoalCharLimit.isSaveDisabled(trimmedText: "", length: 0) == true)
-    }
-
-    @Test func saveDisabledWhenTextIsWhitespaceOnlyAfterTrimming() {
-        // Der Aufrufer übergibt den bereits getrimmten Text — ein reiner
-        // Whitespace-String wird davor zu "" getrimmt.
-        let trimmed = "   \n\t  ".trimmingCharacters(in: .whitespacesAndNewlines)
-        #expect(ProgressGoalCharLimit.isSaveDisabled(trimmedText: trimmed, length: 7) == true)
-    }
-
-    @Test func saveEnabledForValidNonEmptyTextWithinLimit() {
-        #expect(ProgressGoalCharLimit.isSaveDisabled(trimmedText: "Ziel", length: 4) == false)
-    }
-
-    @Test func saveDisabledWhenOverLimitEvenIfTextNonEmpty() {
-        #expect(ProgressGoalCharLimit.isSaveDisabled(trimmedText: "x", length: 501) == true)
-    }
-
-    @Test func saveEnabledExactlyAtLimit() {
-        #expect(ProgressGoalCharLimit.isSaveDisabled(trimmedText: "x", length: 500) == false)
-    }
-}
-
 // MARK: - Zeichenzähler Zwischenstand (ProgressEntryCharLimit, Grenze 5000)
 
 struct ProgressEntryCharLimitTests {
@@ -336,5 +296,81 @@ struct ProgressViewLogicFixtureTests {
         #expect(editable.editable == true)
         #expect(notEditable.editable == false)
         #expect(notEditable.kind == "result")
+    }
+}
+
+// MARK: - Zielbild-Entfernung (ProgressDetail.goal jetzt optional/DEPRECATED)
+
+struct ProgressDetailGoalRemovalTests {
+
+    /// Regression: `ProgressDetail.goal` wurde von `String` auf `String?`
+    /// geändert (Zielbild entfällt vollständig aus der App-UI) — stellt
+    /// sicher, dass sowohl ein weiterhin vom Server gelieferter Wert als
+    /// auch dessen vollständiges Fehlen klaglos decodiert werden.
+    @Test func decodesWithGoalFieldPresent() throws {
+        let json = """
+        {"ref":{"type":"todo","id":"t1","title":"x","done":false,"exists":true},
+         "goal":"Altes Zielbild","goalUpdatedAt":"2026-08-01T00:00:00.000Z",
+         "nextStep":"","nextStepUpdatedAt":null,
+         "stats":{"entryCount":0,"firstEntryAt":null,"lastEntryAt":null,"lastActivityAt":null,
+                   "dormant":false,"dormantDays":null,"stale":false,"staleDays":null},
+         "reentry":{"show":false,"dormantSince":null,"dormantLabel":null,"empty":true,
+                    "ai":{"available":false,"frameId":null}},
+         "entries":[], "page":{"limit":20,"hasMore":false,"nextCursor":null}}
+        """
+        let detail = try JSONDecoder().decode(ProgressDetail.self, from: Data(json.utf8))
+        #expect(detail.goal == "Altes Zielbild")
+    }
+
+    @Test func decodesWithGoalFieldNull() throws {
+        let json = """
+        {"ref":{"type":"todo","id":"t1","title":"x","done":false,"exists":true},
+         "goal":null,"goalUpdatedAt":null,
+         "nextStep":"","nextStepUpdatedAt":null,
+         "stats":{"entryCount":0,"firstEntryAt":null,"lastEntryAt":null,"lastActivityAt":null,
+                   "dormant":false,"dormantDays":null,"stale":false,"staleDays":null},
+         "reentry":{"show":false,"dormantSince":null,"dormantLabel":null,"empty":true,
+                    "ai":{"available":false,"frameId":null}},
+         "entries":[], "page":{"limit":20,"hasMore":false,"nextCursor":null}}
+        """
+        let detail = try JSONDecoder().decode(ProgressDetail.self, from: Data(json.utf8))
+        #expect(detail.goal == nil)
+    }
+}
+
+// MARK: - Beschreibungs-Leseansicht (DescriptionReadLogic)
+
+struct DescriptionReadLogicTests {
+
+    @Test func emptyHtmlIsEffectivelyEmpty() {
+        #expect(DescriptionReadLogic.isEffectivelyEmpty(html: "") == true)
+    }
+
+    @Test func whitespaceOnlyMarkupIsEffectivelyEmpty() {
+        #expect(DescriptionReadLogic.isEffectivelyEmpty(html: "<p>   </p>") == true)
+    }
+
+    @Test func nonEmptyTextIsNotEffectivelyEmpty() {
+        #expect(DescriptionReadLogic.isEffectivelyEmpty(html: "<p>Hallo</p>") == false)
+    }
+
+    @Test func placeholderTextDoesNotMentionZielbild() {
+        // Regression: die Beschreibungs-Leseansicht darf niemals das entfernte
+        // Zielbild-Konzept erwähnen.
+        #expect(DescriptionReadLogic.placeholderText.localizedCaseInsensitiveContains("Zielbild") == false)
+    }
+}
+
+// MARK: - Eingebetteter Fortschrittsverlauf: Seitengröße/Fehlertext (ProgressTimelineView)
+
+struct ProgressTimelineEmbeddedConfigTests {
+
+    @Test func embeddedPageSizeIsThree() {
+        #expect(ProgressTimelineConfig.embeddedPageSize == 3)
+    }
+
+    @Test func embeddedLoadErrorTextMatchesUXVorgabe() {
+        #expect(ProgressTimelineConfig.embeddedLoadErrorText
+                == "Das hat leider nicht geklappt. Bitte später erneut versuchen.")
     }
 }

@@ -6,6 +6,13 @@
 //  Progress-Modelle gegen die im Server-Vertrag (Paket S1) angegebenen
 //  JSON-Beispiele, inkl. Randfälle (null-Felder, unbekannter `badgeEmphasis`).
 //
+//  Redesign-Update (Todo/Task-Übersicht, Arbeitspaket A1): Zielbild entfällt
+//  vollständig aus der App-UI — `ProgressDetail.goal`/`goalUpdatedAt` sind
+//  jetzt DEPRECATED und optional (Bugfix, siehe `ProgressModels.swift`).
+//  `decodesDetailWithMissingDeprecatedGoalKeysEntirely` deckt zusätzlich den
+//  Fall ab, dass der Server den Schlüssel künftig komplett weglässt (nicht
+//  nur `null` liefert) — genau der im Auftrag beschriebene Bug.
+//
 
 import Testing
 import Foundation
@@ -165,6 +172,28 @@ struct ProgressDetailDecodingTests {
         #expect(d.entries.isEmpty)
         #expect(d.page.hasMore == false)
         #expect(d.page.nextCursor == nil)
+    }
+
+    /// Bugfix-Regressionstest (Auftrag: "aktuelle Bug ... goal ist heute
+    /// nicht-optional String"): der Server könnte die DEPRECATED-Schlüssel
+    /// `goal`/`goalUpdatedAt` künftig komplett weglassen statt nur `null` zu
+    /// liefern — beides muss die Dekodierung des gesamten `ProgressDetail`
+    /// unverändert erfolgreich durchlaufen lassen.
+    @Test func decodesDetailWithMissingDeprecatedGoalKeysEntirely() throws {
+        let json = """
+        { "ref": { "type":"todo","id":"a1","title":"Titel","done":false,"exists":true },
+          "nextStep":"Nächster Schritt", "nextStepUpdatedAt":null,
+          "stats": { "entryCount":0,"firstEntryAt":null,"lastEntryAt":null,"lastActivityAt":null,
+                     "dormant":false,"dormantDays":null,"stale":false,"staleDays":null },
+          "reentry": { "show":false, "dormantSince":null, "dormantLabel":null,
+                       "empty":true, "ai": { "available":false, "frameId":null } },
+          "entries":[],
+          "page": { "limit":20, "hasMore":false, "nextCursor":null } }
+        """.data(using: .utf8)!
+        let d = try JSONDecoder().decode(ProgressDetail.self, from: json)
+        #expect(d.goal == nil)
+        #expect(d.goalUpdatedAt == nil)
+        #expect(d.nextStep == "Nächster Schritt")
     }
 
     /// `exists:false` (Ref serverseitig gelöscht, Detail aber noch abrufbar) —

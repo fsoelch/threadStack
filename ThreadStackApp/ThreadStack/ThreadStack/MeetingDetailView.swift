@@ -15,11 +15,9 @@ struct MeetingDetailView: View {
 
     @EnvironmentObject var state: AppState
     @EnvironmentObject var progressStore: ProgressStore
-    // ABWEICHUNG (siehe Abschlussbericht Paket A3): siehe Kommentar bei
-    // `TodosView.summaryStore` — identische Begründung (`SummaryStore` sollte
-    // laut Vertrag app-weit über `ThreadStackApp.swift` injiziert werden,
-    // was außerhalb der Datei-Eigentümerschaft von Paket A3 liegt).
-    @StateObject private var summaryStore = SummaryStore()
+    // Zentrale, app-weite Instanz (analog `progressStore` oben), registriert
+    // in `ThreadStackApp.swift` und über `.environmentObject(...)` injiziert.
+    @EnvironmentObject var summaryStore: SummaryStore
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
     @State private var showEdit = false
@@ -88,11 +86,19 @@ struct MeetingDetailView: View {
         }
         .task(id: providedMeetingId) { await loadArchivedIfNeeded() }
         .onAppear {
-            summaryStore.attach(state)
-            if let current { summaryStore.ingest(from: current.topics) }
+            if let current { summaryStore.ingest(from: Self.summaryIngestItems(current.topics)) }
         }
         .onChange(of: current?.topics) { _, newValue in
-            if let newValue { summaryStore.ingest(from: newValue) }
+            if let newValue { summaryStore.ingest(from: Self.summaryIngestItems(newValue)) }
+        }
+    }
+
+    // Additive KI-Zusammenfassungs-Anreicherung aus der bereits geladenen
+    // Liste (kein zusätzlicher Netzwerk-Request, siehe SummaryStore.ingest).
+    private static func summaryIngestItems(_ items: [Topic]) -> [(refKey: String, pair: AISummaryPair)] {
+        items.compactMap { item in
+            guard let pair = item.aiSummary else { return nil }
+            return (refKey: "topic:\(item.id)", pair: pair)
         }
     }
 
@@ -707,8 +713,8 @@ struct TopicRowView: View {
         }
     }
 
-    private var summaryRef: SummaryStore.Ref { .init(refType: "topic", refId: topic.id) }
-    private var aiSummary: AISummaryPair? { summaryStore.pair(refType: "topic", refId: topic.id) }
+    private var summaryRef: String { "topic:\(topic.id)" }
+    private var aiSummary: AISummaryPair? { summaryStore.pair(for: summaryRef) }
 
     @ViewBuilder private var statusIcon: some View {
         if topic.done {

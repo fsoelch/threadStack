@@ -81,64 +81,24 @@ function makeTodo(db, { userId = 'test-user' } = {}) {
   return id;
 }
 
-test('PUT goal: setzt und liest Zielbild, leerer String erlaubt und loescht', async (t) => {
+test('PUT goal: entfernt (Redesign), liefert immer 410 ohne jeden Schreibvorgang', async (t) => {
   const { app, db, dir } = buildTestApp();
   t.after(() => cleanup(dir));
   const todoId = makeTodo(db);
   const agent = await loginAgent(app);
 
-  const r1 = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'MVP live bringen' });
-  assert.equal(r1.status, 200);
-  assert.equal(r1.body.goal, 'MVP live bringen');
-  assert.ok(r1.body.goalUpdatedAt);
+  const before = db.prepare('SELECT * FROM progress_meta WHERE ref_type=? AND ref_id=?').all('todo', todoId);
+
+  const r = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'MVP live bringen' });
+  assert.equal(r.status, 410);
+  assert.equal(r.body.code, 'goal_removed');
+
+  const after = db.prepare('SELECT * FROM progress_meta WHERE ref_type=? AND ref_id=?').all('todo', todoId);
+  assert.deepEqual(before, after, 'PUT .../goal darf keinerlei Schreibvorgang ausloesen');
 
   const detail = await agent.get(`/api/progress/todo/${todoId}`);
-  assert.equal(detail.body.goal, 'MVP live bringen');
-
-  const r2 = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: '' });
-  assert.equal(r2.status, 200);
-  assert.equal(r2.body.goal, '');
-});
-
-test('PUT goal: entfernt Markup (Klartext-Feld)', async (t) => {
-  const { app, db, dir } = buildTestApp();
-  t.after(() => cleanup(dir));
-  const todoId = makeTodo(db);
-  const agent = await loginAgent(app);
-
-  const r = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: '<b>Ziel</b> <script>alert(1)</script>erreichen' });
-  assert.equal(r.status, 200);
-  assert.equal(r.body.goal, 'Ziel erreichen');
-});
-
-test('PUT goal: 400 goal_too_long bei genau 501 Zeichen, 500 Zeichen sind ok', async (t) => {
-  const { app, db, dir } = buildTestApp();
-  t.after(() => cleanup(dir));
-  const todoId = makeTodo(db);
-  const agent = await loginAgent(app);
-
-  const exact = 'a'.repeat(500);
-  const rOk = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: exact });
-  assert.equal(rOk.status, 200);
-
-  const tooLong = 'a'.repeat(501);
-  const rTooLong = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: tooLong });
-  assert.equal(rTooLong.status, 400);
-  assert.equal(rTooLong.body.code, 'goal_too_long');
-});
-
-test('PUT goal: 404 bei fremdem Owner (identisch zu nicht-existent)', async (t) => {
-  const { app, db, dir, foreignIds } = buildTestApp();
-  t.after(() => cleanup(dir));
-  const todoId = makeTodo(db, { userId: 'other-user' });
-  foreignIds.add(`todo:${todoId}`);
-  const agent = await loginAgent(app);
-
-  const rForeign = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'x' });
-  const rMissing = await agent.put('/api/progress/todo/does-not-exist/goal').send({ goal: 'x' });
-  assert.equal(rForeign.status, 404);
-  assert.equal(rMissing.status, 404);
-  assert.deepEqual(rForeign.body, rMissing.body);
+  assert.equal(detail.body.goal, '', 'goal bleibt als leerer, veralteter Platzhalter bestehen');
+  assert.equal(detail.body.goalUpdatedAt, null);
 });
 
 test('PUT next-step: setzt und liest naechsten Schritt', async (t) => {
@@ -184,18 +144,16 @@ test('PUT next-step: 404 bei fremdem Owner', async (t) => {
   assert.equal(r.body.code, 'ref_not_found');
 });
 
-test('setGoal/setNextStep aktualisieren dieselbe progress_meta-Zeile (keine Doppel-Inserts)', async (t) => {
+test('setNextStep aktualisiert dieselbe progress_meta-Zeile (keine Doppel-Inserts)', async (t) => {
   const { app, db, dir } = buildTestApp();
   t.after(() => cleanup(dir));
   const todoId = makeTodo(db);
   const agent = await loginAgent(app);
 
-  await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'Ziel A' });
   await agent.put(`/api/progress/todo/${todoId}/next-step`).send({ nextStep: 'Schritt A' });
-  await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'Ziel B' });
+  await agent.put(`/api/progress/todo/${todoId}/next-step`).send({ nextStep: 'Schritt B' });
 
   const rows = db.prepare('SELECT * FROM progress_meta WHERE ref_type=? AND ref_id=?').all('todo', todoId);
   assert.equal(rows.length, 1);
-  assert.equal(rows[0].goal, 'Ziel B');
-  assert.equal(rows[0].next_step, 'Schritt A');
+  assert.equal(rows[0].next_step, 'Schritt B');
 });

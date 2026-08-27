@@ -33,14 +33,9 @@ enum TodoOverviewLogic {
 struct TodosView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var progressStore: ProgressStore
-    // ABWEICHUNG (siehe Abschlussbericht Paket A3): `SummaryStore` ist laut
-    // Vertrag eine zentrale, app-weite Instanz (analog `progressStore` oben),
-    // registriert in `ThreadStackApp.swift` — diese Datei gehört jedoch nicht
-    // zu Paket A3s Datei-Eigentümerschaft und wird daher NICHT geändert. Als
-    // Stand-in hält jede Wurzel-Ansicht (`TodosView`, `MeetingDetailView`)
-    // eine eigene Instanz; Zusammenfassungen werden dadurch nicht
-    // bildschirmübergreifend geteilt (siehe Bekannte Risiken).
-    @StateObject private var summaryStore = SummaryStore()
+    // Zentrale, app-weite Instanz (analog `progressStore` oben), registriert
+    // in `ThreadStackApp.swift` und über `.environmentObject(...)` injiziert.
+    @EnvironmentObject var summaryStore: SummaryStore
     @State private var search = ""
     @State private var showNew = false
     @State private var hidePrivate = false
@@ -187,11 +182,21 @@ struct TodosView: View {
             get: { error != nil }, set: { if !$0 { error = nil } }
         )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
         .onAppear {
-            summaryStore.attach(state)
-            summaryStore.ingest(from: state.todos)
+            summaryStore.ingest(from: Self.summaryIngestItems(state.todos))
         }
         .onChange(of: state.todos) { _, newValue in
-            summaryStore.ingest(from: newValue)
+            summaryStore.ingest(from: Self.summaryIngestItems(newValue))
+        }
+    }
+
+    // Additive KI-Zusammenfassungs-Anreicherung aus der bereits geladenen
+    // Liste (kein zusätzlicher Netzwerk-Request, siehe SummaryStore.ingest).
+    // Todos ohne `aiSummary` (z.B. Feature deaktiviert) werden ausgelassen -
+    // `SummaryStore.pair(for:)` liefert dafür bereits korrekt `nil`.
+    private static func summaryIngestItems(_ items: [TodoItem]) -> [(refKey: String, pair: AISummaryPair)] {
+        items.compactMap { item in
+            guard let pair = item.aiSummary else { return nil }
+            return (refKey: "todo:\(item.id)", pair: pair)
         }
     }
 
@@ -235,8 +240,8 @@ struct TodoRowView: View {
     @State private var error: String?
 
     private var themeLinks: [(theme: Theme, link: ThemeLink)] { state.themeLinks(for: todo.id) }
-    private var summaryRef: SummaryStore.Ref { .init(refType: "todo", refId: todo.id) }
-    private var aiSummary: AISummaryPair? { summaryStore.pair(refType: "todo", refId: todo.id) }
+    private var summaryRef: String { "todo:\(todo.id)" }
+    private var aiSummary: AISummaryPair? { summaryStore.pair(for: summaryRef) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
