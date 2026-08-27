@@ -99,22 +99,22 @@ test('Progress-Router: DELETE /entries/:entryId 401 ohne Login (Route-Reihenfolg
   assert.equal(r.status, 401);
 });
 
-test('Progress-Router: PUT goal/next-step über den echten Server persistieren', async (t) => {
+test('Progress-Router: PUT next-step über den echten Server persistiert, PUT goal liefert 410', async (t) => {
   const dir = setupEnv();
   const { app, db } = loadServer(REPO_ROOT);
   t.after(() => cleanup(dir));
   const { agent, todoId } = await bootstrapStackFixture(request, app, db);
 
   const goal = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'MVP live bringen' });
-  assert.equal(goal.status, 200);
-  assert.equal(goal.body.goal, 'MVP live bringen');
+  assert.equal(goal.status, 410);
+  assert.equal(goal.body.code, 'goal_removed');
 
   const next = await agent.put(`/api/progress/todo/${todoId}/next-step`).send({ nextStep: 'Angebot einholen' });
   assert.equal(next.status, 200);
   assert.equal(next.body.nextStep, 'Angebot einholen');
 
   const detail = await agent.get(`/api/progress/todo/${todoId}`);
-  assert.equal(detail.body.goal, 'MVP live bringen');
+  assert.equal(detail.body.goal, '', 'goal bleibt als leerer, veralteter Platzhalter bestehen');
   assert.equal(detail.body.nextStep, 'Angebot einholen');
 });
 
@@ -144,8 +144,8 @@ test('Thema-zu-Todo-Konvertierung: Fortschrittsverlauf wandert auf die neue Refe
   t.after(() => cleanup(dir));
   const { agent, meetingId, topicId } = await bootstrapStackFixture(request, app, db);
 
-  const goal = await agent.put(`/api/progress/topic/${topicId}/goal`).send({ goal: 'Angebot fertigstellen' });
-  assert.equal(goal.status, 200);
+  const nextStep = await agent.put(`/api/progress/topic/${topicId}/next-step`).send({ nextStep: 'Angebot fertigstellen' });
+  assert.equal(nextStep.status, 200);
   const entry = await agent.post(`/api/progress/topic/${topicId}/entries`)
     .send({ body: '<p>Erster Stand</p>', source: 'manual', clientToken: 'conv-test-1' });
   assert.equal(entry.status, 201);
@@ -161,7 +161,7 @@ test('Thema-zu-Todo-Konvertierung: Fortschrittsverlauf wandert auf die neue Refe
 
   const newProgress = await agent.get(`/api/progress/todo/${newTodoId}`);
   assert.equal(newProgress.status, 200);
-  assert.equal(newProgress.body.goal, 'Angebot fertigstellen', 'Zielbild sollte migriert sein, nicht verloren gehen');
+  assert.equal(newProgress.body.nextStep, 'Angebot fertigstellen', 'Naechster Schritt sollte migriert sein, nicht verloren gehen');
   assert.equal(newProgress.body.entries.length, 1, 'Zwischenstand sollte migriert sein, nicht verloren gehen');
   assert.ok(/Erster Stand/.test(newProgress.body.entries[0].bodyHtml));
 });
@@ -172,8 +172,8 @@ test('Todo-zu-Thema-Verschiebung: Fortschrittsverlauf wandert auf die neue Refer
   t.after(() => cleanup(dir));
   const { agent, meetingId, todoId } = await bootstrapStackFixture(request, app, db);
 
-  const goal = await agent.put(`/api/progress/todo/${todoId}/goal`).send({ goal: 'Migrationsziel' });
-  assert.equal(goal.status, 200);
+  const nextStep = await agent.put(`/api/progress/todo/${todoId}/next-step`).send({ nextStep: 'Migrationsziel' });
+  assert.equal(nextStep.status, 200);
 
   const moved = await agent.post(`/api/todos/${todoId}/move`).send({ targetMeetingId: meetingId });
   assert.equal(moved.status, 200);
@@ -185,5 +185,5 @@ test('Todo-zu-Thema-Verschiebung: Fortschrittsverlauf wandert auf die neue Refer
 
   const newProgress = await agent.get(`/api/progress/topic/${newTopicId}`);
   assert.equal(newProgress.status, 200);
-  assert.equal(newProgress.body.goal, 'Migrationsziel', 'Zielbild sollte migriert sein, nicht verloren gehen');
+  assert.equal(newProgress.body.nextStep, 'Migrationsziel', 'Naechster Schritt sollte migriert sein, nicht verloren gehen');
 });
