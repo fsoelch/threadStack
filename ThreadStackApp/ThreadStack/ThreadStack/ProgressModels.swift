@@ -170,7 +170,12 @@ struct ProgressPage: Codable, Equatable {
 
 struct ProgressDetail: Codable, Equatable {
     let ref: ProgressRef
-    let goal: String
+    /// DEPRECATED (Zielbild entfällt vollständig aus der App-UI, siehe
+    /// Produktentscheidung): der Server liefert dieses Feld ggf. weiterhin
+    /// aus Kompatibilitätsgründen, es wird aber clientseitig nirgends mehr
+    /// angezeigt oder editiert. Optional, damit ein zukünftig entfernter
+    /// oder leerer Wert die Decodierung nicht zum Absturz bringt.
+    let goal: String?
     let goalUpdatedAt: String?
     let nextStep: String
     let nextStepUpdatedAt: String?

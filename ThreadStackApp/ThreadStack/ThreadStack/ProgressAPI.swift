@@ -205,10 +205,8 @@ extension AppState {
         return try await progressRequest("GET", path)
     }
 
-    func saveProgressGoal(refType: String, refId: String, goal: String) async throws -> ProgressMeta {
-        let path = progressPath(["progress", refType, refId, "goal"])
-        return try await progressRequest("PUT", path, body: ["goal": goal])
-    }
+    // `saveProgressGoal` wurde entfernt: Zielbild entfällt vollständig aus
+    // der App-UI (Produktentscheidung), siehe auch `ProgressStore.swift`.
 
     func saveProgressNextStep(refType: String, refId: String, nextStep: String) async throws -> ProgressMeta {
         let path = progressPath(["progress", refType, refId, "next-step"])

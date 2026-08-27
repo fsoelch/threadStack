@@ -162,24 +162,13 @@ final class ProgressStore: ObservableObject {
         }
     }
 
-    // MARK: - Zielbild / Nächster Schritt
-
-    @discardableResult
-    func saveGoal(refType: String, refId: String, goal: String) async throws -> ProgressMeta {
-        do {
-            let meta = try await appState.saveProgressGoal(refType: refType, refId: refId, goal: goal)
-            replaceDetail(refType: refType, refId: refId) { old in
-                ProgressDetail(ref: old.ref,
-                                goal: meta.goal ?? old.goal,
-                                goalUpdatedAt: meta.goalUpdatedAt ?? old.goalUpdatedAt,
-                                nextStep: old.nextStep, nextStepUpdatedAt: old.nextStepUpdatedAt,
-                                stats: old.stats, reentry: old.reentry, entries: old.entries, page: old.page)
-            }
-            return meta
-        } catch {
-            throw Self.mapError(error)
-        }
-    }
+    // MARK: - Nächster Schritt
+    //
+    // `saveGoal` (Zielbild) wurde entfernt: das Zielbild entfällt laut
+    // Produktentscheidung vollständig, ersatzlos aus der App-UI. Der
+    // zugehörige Server-Endpunkt (`PUT /progress/:refType/:refId/goal`) und
+    // `AppState.saveProgressGoal` wurden dazu in `ProgressAPI.swift`
+    // ebenfalls entfernt.
 
     @discardableResult
     func saveNextStep(refType: String, refId: String, nextStep: String) async throws -> ProgressMeta {

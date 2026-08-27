@@ -86,7 +86,7 @@ struct ProgressReentryCardView: View {
         VStack(alignment: .leading, spacing: 10) {
             header(reentry: reentry)
             if ProgressReentryLogic.isReducedVariant(reentry) {
-                Text("Noch kein Zwischenstand erfasst.")
+                Text("Für dieses Vorhaben liegen noch keine Zwischenstände vor.")
                     .scaledFont(.subheadline).foregroundStyle(.secondary)
             } else {
                 content(detail: detail)
@@ -116,12 +116,6 @@ struct ProgressReentryCardView: View {
     @ViewBuilder
     private func content(detail: ProgressDetail) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            let trimmedGoal = detail.goal.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmedGoal.isEmpty {
-                Label(trimmedGoal, systemImage: "target")
-                    .scaledFont(.footnote)
-                    .accessibilityLabel("Zielbild: \(trimmedGoal)")
-            }
             if let last = store.entries(refType: refType, refId: refId).first {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(last.excerpt).scaledFont(.footnote).lineLimit(3)
