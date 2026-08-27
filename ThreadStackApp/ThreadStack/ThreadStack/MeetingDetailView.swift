@@ -14,6 +14,10 @@ struct MeetingDetailView: View {
     let isReadOnly: Bool
 
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var progressStore: ProgressStore
+    // Zentrale, app-weite Instanz (analog `progressStore` oben), registriert
+    // in `ThreadStackApp.swift` und über `.environmentObject(...)` injiziert.
+    @EnvironmentObject var summaryStore: SummaryStore
     @Environment(\.dismiss) private var dismiss
     @State private var search = ""
     @State private var showEdit = false
@@ -81,6 +85,21 @@ struct MeetingDetailView: View {
             }
         }
         .task(id: providedMeetingId) { await loadArchivedIfNeeded() }
+        .onAppear {
+            if let current { summaryStore.ingest(from: Self.summaryIngestItems(current.topics)) }
+        }
+        .onChange(of: current?.topics) { _, newValue in
+            if let newValue { summaryStore.ingest(from: Self.summaryIngestItems(newValue)) }
+        }
+    }
+
+    // Additive KI-Zusammenfassungs-Anreicherung aus der bereits geladenen
+    // Liste (kein zusätzlicher Netzwerk-Request, siehe SummaryStore.ingest).
+    private static func summaryIngestItems(_ items: [Topic]) -> [(refKey: String, pair: AISummaryPair)] {
+        items.compactMap { item in
+            guard let pair = item.aiSummary else { return nil }
+            return (refKey: "topic:\(item.id)", pair: pair)
+        }
     }
 
     private func loadArchivedIfNeeded(force: Bool = false) async {
@@ -153,9 +172,15 @@ struct MeetingDetailView: View {
             } else if !openTopics.isEmpty {
                 Section(header: sectionHeader("Offen", count: openTopics.count, color: DS.accent)) {
                     if isReadOnly {
-                        ForEach(openTopics) { t in TopicRowView(topic: t, meetingId: current.id, isReadOnly: true) }
+                        ForEach(openTopics) { t in
+                            TopicRowView(topic: t, meetingId: current.id, isReadOnly: true,
+                                         progressStore: progressStore, summaryStore: summaryStore)
+                        }
                     } else {
-                        ForEach(openTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
+                        ForEach(openTopics) { t in
+                            TopicRowView(topic: t, meetingId: current.id,
+                                         progressStore: progressStore, summaryStore: summaryStore)
+                        }
                             .onDelete { deleteTopic(from: openTopics, at: $0, meetingId: current.id) }
                             .onMove   { moveTopics(in: openTopics, from: $0, to: $1, meetingId: current.id) }
                     }
@@ -166,7 +191,10 @@ struct MeetingDetailView: View {
             if !snoozedTopics.isEmpty {
                 Section(header: sectionHeader("Schlafend", count: snoozedTopics.count,
                                               color: .gray, icon: "moon.zzz.fill")) {
-                    ForEach(snoozedTopics) { t in TopicRowView(topic: t, meetingId: current.id, isReadOnly: isReadOnly) }
+                    ForEach(snoozedTopics) { t in
+                        TopicRowView(topic: t, meetingId: current.id, isReadOnly: isReadOnly,
+                                     progressStore: progressStore, summaryStore: summaryStore)
+                    }
                 }
             }
 
@@ -174,9 +202,15 @@ struct MeetingDetailView: View {
             if !doneTopics.isEmpty {
                 Section(header: sectionHeader("Erledigt", count: doneTopics.count, color: .secondary)) {
                     if isReadOnly {
-                        ForEach(doneTopics) { t in TopicRowView(topic: t, meetingId: current.id, isReadOnly: true) }
+                        ForEach(doneTopics) { t in
+                            TopicRowView(topic: t, meetingId: current.id, isReadOnly: true,
+                                         progressStore: progressStore, summaryStore: summaryStore)
+                        }
                     } else {
-                        ForEach(doneTopics) { t in TopicRowView(topic: t, meetingId: current.id) }
+                        ForEach(doneTopics) { t in
+                            TopicRowView(topic: t, meetingId: current.id,
+                                         progressStore: progressStore, summaryStore: summaryStore)
+                        }
                             .onDelete { deleteTopic(from: doneTopics, at: $0, meetingId: current.id) }
                     }
                 }
@@ -518,6 +552,10 @@ struct TopicRowView: View {
     let topic: Topic
     let meetingId: String
     var isReadOnly: Bool = false
+    // A3: Fortschritt/KI-Zusammenfassung/Inline-Composer nutzen dieselben,
+    // von `MeetingDetailView` gehaltenen Store-Instanzen — keine eigenen pro Zeile.
+    @ObservedObject var progressStore: ProgressStore
+    @ObservedObject var summaryStore: SummaryStore
     @EnvironmentObject var state: AppState
     @State private var showEdit = false
     @State private var showComplete = false
@@ -605,7 +643,11 @@ struct TopicRowView: View {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
-                    ProgressBadgeView(summary: topic.progress) // A3
+                    // Erledigte Themen: keine Fortschrittszeile (Vertrag) —
+                    // schlafende Themen behalten sie weiterhin sichtbar.
+                    if TodoOverviewLogic.showsProgressBadge(done: topic.done) {
+                        ProgressBadgeView(summary: topic.progress) // A3
+                    }
                     // Theme chips
                     if !themeLinks.isEmpty {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -627,12 +669,28 @@ struct TopicRowView: View {
                                 .scaledFont(.caption2).foregroundStyle(DS.accent)
                         }
                     }
+                    // Archivierte Meetings (isReadOnly): kein Composer, keine
+                    // KI-Zusammenfassung (bestehender Schreibschutz, Vertrag).
+                    if TodoOverviewLogic.showsAISummary(done: topic.done, isReadOnly: isReadOnly) {
+                        AISummaryCardView(kind: .progress, summary: aiSummary?.progress,
+                                          refType: "topic", refId: topic.id, store: summaryStore,
+                                          onShowAllEntries: { showEdit = true })
+                        AISummaryCardView(kind: .description, summary: aiSummary?.description,
+                                          refType: "topic", refId: topic.id, store: summaryStore)
+                    }
                 }
                 Spacer()
                 // Todo pin
                 if topic.isTodo {
                     Image(systemName: "pin.fill").font(.caption).foregroundStyle(.green)
                 }
+            }
+
+            // Story 6: Zwischenstand direkt in der Zeile erfassen — kein
+            // Angebot bei erledigten Themen oder archivierten Meetings (Vertrag).
+            if TodoOverviewLogic.showsInlineComposer(done: topic.done, isReadOnly: isReadOnly) {
+                InlineEntryComposerView(refType: "topic", refId: topic.id, hasSnooze: topic.isSnoozed,
+                                        store: progressStore)
             }
 
             // Done result
@@ -645,7 +703,18 @@ struct TopicRowView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
+        .onAppear {
+            if TodoOverviewLogic.shouldStartPolling(done: topic.done, isReadOnly: isReadOnly, pair: aiSummary) {
+                Task { await summaryStore.poll(refs: [summaryRef]) }
+            }
+        }
+        .onDisappear {
+            summaryStore.cancelPolling(for: summaryRef)
+        }
     }
+
+    private var summaryRef: String { "topic:\(topic.id)" }
+    private var aiSummary: AISummaryPair? { summaryStore.pair(for: summaryRef) }
 
     @ViewBuilder private var statusIcon: some View {
         if topic.done {

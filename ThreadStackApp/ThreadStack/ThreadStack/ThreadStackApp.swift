@@ -8,6 +8,12 @@ struct ThreadStackApp: App {
     // Session-/Cookie-Kontext) — Injektion analog zu `state` per
     // `.environmentObject(...)`, damit alle Views denselben Muster folgen.
     @StateObject private var progressStore: ProgressStore
+    // Redesign Todo/Task-Übersicht (Arbeitspaket A1/A3): zentrale
+    // SummaryStore-Instanz, an dieselbe AppState-Instanz gebunden wie `state`/
+    // `progressStore` — Injektion analog per `.environmentObject(...)`, damit
+    // Karten-Views (TodosView/MeetingDetailView) dieselbe, app-weit geteilte
+    // Instanz nutzen statt divergierender lokaler `@StateObject`s.
+    @StateObject private var summaryStore: SummaryStore
 
     init() {
         // Clear stale NSToolbar configuration from UserDefaults.
@@ -20,6 +26,7 @@ struct ThreadStackApp: App {
         let appState = AppState()
         _state = StateObject(wrappedValue: appState)
         _progressStore = StateObject(wrappedValue: ProgressStore(appState: appState))
+        _summaryStore = StateObject(wrappedValue: SummaryStore(appState: appState))
     }
 
     var body: some Scene {
@@ -27,6 +34,7 @@ struct ThreadStackApp: App {
             RootView()
                 .environmentObject(state)
                 .environmentObject(progressStore)
+                .environmentObject(summaryStore)
         }
         #if os(macOS)
         .defaultSize(width: 1100, height: 720)
