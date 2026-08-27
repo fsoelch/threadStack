@@ -6,6 +6,11 @@ const crypto = require('crypto');
 const cryptoMod = require('./crypto');
 const cost      = require('./cost');
 const usage     = require('./usage');
+// Archiv-Kernmodul (Paket B1): `notArchivedSql`/`isTopicArchived` schließen
+// archivierte Meetings/Topics aus allen KI-Datenquellen aus (Paket B3).
+// Ausschließlich das bestehende Modul nutzen, kein eigenes Prädikat
+// nachformulieren (Wiederverwendungsgebot, CLAUDE.md).
+const archive   = require('../lib/archive');
 
 // ── Provider registry ────────────────────────────────────────
 const PROVIDERS = {
@@ -31,6 +36,9 @@ const DEFAULT_FEATURES = {
   brief: true, capture: true, result_draft: true, reentry: true,
   theme_tagging: false, digest: false, cross_meeting: false, drift: false,
   link_summary: false,
+  // S2: ereignisgetriebene KI-Zusammenfassungen (Fortschritt/Beschreibung).
+  // Default AUS wie alle anderen kostenrelevanten Features.
+  progress_summary: false, description_summary: false,
 };
 
 function loadSettings(db, userId) {
@@ -277,7 +285,9 @@ async function callWithRetryJson({ ctx, system, user, maxTokens, validate }) {
 // ── Feature: Pre-Meeting Briefing (W-AI01) ───────────────────
 async function briefMeeting({ db, userId, settings, encryptionKey, meetingId, confirmed }) {
   assertActive(settings, 'brief');
-  const meeting = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId);
+  const meeting = db.prepare(
+    `SELECT * FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId);
   if (!meeting) throw httpErr(404, 'Meeting nicht gefunden');
 
   const topics = db.prepare('SELECT * FROM topics WHERE meeting_id=? ORDER BY sort_order, created_at').all(meetingId);
@@ -295,7 +305,8 @@ async function briefMeeting({ db, userId, settings, encryptionKey, meetingId, co
   for (const t of openTopics) {
     if (!t.group_id) continue;
     const others = db.prepare(
-      'SELECT t.title AS title, m.title AS meeting FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.group_id=? AND t.meeting_id!=?'
+      `SELECT t.title AS title, m.title AS meeting FROM topics t JOIN meetings m ON m.id=t.meeting_id
+        WHERE t.group_id=? AND t.meeting_id!=? AND ${archive.notArchivedSql('m')}`
     ).all(t.group_id, meetingId);
     others.forEach(o => linkedTopics.push(`${o.meeting}: ${o.title}`));
   }
@@ -330,7 +341,9 @@ async function briefMeeting({ db, userId, settings, encryptionKey, meetingId, co
 async function captureMeeting({ db, userId, settings, encryptionKey, meetingId, notes, confirmed }) {
   assertActive(settings, 'capture');
   if (!notes || !String(notes).trim()) throw httpErr(400, 'Notizen erforderlich');
-  const meeting = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId);
+  const meeting = db.prepare(
+    `SELECT * FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId);
   if (!meeting) throw httpErr(404, 'Meeting nicht gefunden');
 
   const topics = db.prepare('SELECT id, title FROM topics WHERE meeting_id=? AND done=0').all(meetingId);
@@ -360,7 +373,8 @@ async function draftResult({ db, userId, settings, encryptionKey, refType, refId
   let title, description;
   if (refType === 'topic') {
     const t = db.prepare(
-      'SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?'
+      `SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id
+        WHERE t.id=? AND m.user_id=? AND ${archive.notArchivedSql('m')}`
     ).get(refId, userId);
     if (!t) throw httpErr(404, 'Thema nicht gefunden');
     title = t.title; description = t.description;
@@ -419,7 +433,8 @@ async function summarizeLink({ db, userId, settings, encryptionKey, page, length
   // nicht vertrauenswürdigen Zielseite stammen (title aus <title>/og:title) -
   // Security-Review-Fund: unbehandelt wären Titel/URL eine schmale,
   // außerhalb des Nonce-Blocks liegende Injection-Fläche.
-  const neutralizeMarkers = (s) => String(s || '').replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
+  // (neutralizeMarkers ist ein modulweiter Helper, siehe unten — wird auch
+  // von summarizeProgress/summarizeDescription wiederverwendet, S2.)
   const safeContent = neutralizeMarkers(page.text);
   const safeTitle = neutralizeMarkers(page.title || '(ohne Titel)');
   const safeUrl = neutralizeMarkers(page.finalUrl || '');
@@ -472,8 +487,13 @@ async function summarizeReentry({ db, userId, settings, encryptionKey, frameId, 
   // Resolve referenced topic/todo for context
   let title = '(gelöscht)', description = '', lastResult = '';
   if (f.ref_type === 'topic') {
+    // Kein direkter `meetings`-JOIN in dieser Query (Topic wird nur per ID
+    // aufgelöst) - archivierten Status daher über den dafür vorgesehenen
+    // Batch-/Einzel-Lookup des Archiv-Kernmoduls prüfen, statt ein eigenes
+    // Prädikat nachzubauen. Archiviertes Topic wird wie ein nicht mehr
+    // existentes Topic behandelt (bestehender "(gelöscht)"-Fallback).
     const t = db.prepare('SELECT title, description, result FROM topics WHERE id=?').get(f.ref_id);
-    if (t) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
+    if (t && !archive.isTopicArchived(db, f.ref_id)) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
   } else if (f.ref_type === 'todo') {
     const t = db.prepare('SELECT title, description, result FROM todos WHERE id=? AND user_id=?').get(f.ref_id, userId);
     if (t) { title = t.title; description = t.description || ''; lastResult = t.result || ''; }
@@ -518,7 +538,8 @@ async function suggestThemes({ db, userId, settings, encryptionKey, refType, ref
   let title, description;
   if (refType === 'topic') {
     const t = db.prepare(
-      'SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?'
+      `SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id
+        WHERE t.id=? AND m.user_id=? AND ${archive.notArchivedSql('m')}`
     ).get(refId, userId);
     if (!t) throw httpErr(404, 'Thema nicht gefunden');
     title = t.title; description = t.description;
@@ -584,14 +605,14 @@ function gatherWeeklyStats(db, userId) {
   const done = db.prepare(
     `SELECT t.title, t.result, t.result_date, m.title AS meeting
        FROM topics t JOIN meetings m ON m.id=t.meeting_id
-      WHERE m.user_id=? AND t.done=1 AND t.result_date >= ?
+      WHERE m.user_id=? AND t.done=1 AND t.result_date >= ? AND ${archive.notArchivedSql('m')}
       ORDER BY t.result_date DESC LIMIT 30`
   ).all(userId, sinceIso.slice(0, 10));
 
   const fresh = db.prepare(
     `SELECT t.title, m.title AS meeting
        FROM topics t JOIN meetings m ON m.id=t.meeting_id
-      WHERE m.user_id=? AND t.created_at >= ?
+      WHERE m.user_id=? AND t.created_at >= ? AND ${archive.notArchivedSql('m')}
       ORDER BY t.created_at DESC LIMIT 30`
   ).all(userId, sinceIso);
 
@@ -693,7 +714,9 @@ function validateCMI(obj) {
 async function crossMeetingInsight({ db, userId, settings, encryptionKey, meetingId, confirmed }) {
   assertActive(settings, 'cross_meeting');
 
-  const meeting = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId);
+  const meeting = db.prepare(
+    `SELECT * FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId);
   if (!meeting) throw httpErr(404, 'Meeting nicht gefunden');
 
   const thisTopics = db.prepare(
@@ -706,7 +729,7 @@ async function crossMeetingInsight({ db, userId, settings, encryptionKey, meetin
   const otherTopics = db.prepare(
     `SELECT t.id, t.title, t.description, m.title AS meeting
        FROM topics t JOIN meetings m ON m.id=t.meeting_id
-      WHERE m.user_id=? AND t.meeting_id!=? AND t.done=0 LIMIT 100`
+      WHERE m.user_id=? AND t.meeting_id!=? AND t.done=0 AND ${archive.notArchivedSql('m')} LIMIT 100`
   ).all(userId, meetingId);
   if (otherTopics.length === 0) {
     return { artifact_id: null, content: { matches: [] }, cost_cents: 0 };
@@ -783,6 +806,7 @@ function driftDetection(db, userId, driftDays = 21) {
        AND t.created_at < ?
        AND (t.updated_at = '' OR t.updated_at < ?)
        AND (t.snoozed_until IS NULL OR t.snoozed_until = '' OR t.snoozed_until < ?)
+       AND ${archive.notArchivedSql('m')}
        AND NOT EXISTS (
          SELECT 1 FROM stack_frames sf
           WHERE sf.user_id=? AND sf.ref_type='topic' AND sf.ref_id=t.id
@@ -799,9 +823,194 @@ function driftDetection(db, userId, driftDays = 21) {
   }));
 }
 
+// ── Feature: Progress-/Description-Summary (S2, Schnittstelle 6) ────
+// Ereignisgetriebene Kurz-Zusammenfassungen, die von lib/summaries/ (anderes
+// Paket) nach relevanten Änderungen aufgerufen werden. Diese Funktionen holen
+// selbst KEINE Daten aus der DB (außer für die Artefakt-Persistenz) — Titel/
+// Einträge/Beschreibung werden vom Aufrufer übergeben, siehe Schnittstelle 6.
+
+// Eingabe-Deckel vor dem Prompt-Bau (bindend laut Architektur):
+const PROGRESS_ENTRY_MAX_COUNT  = 20;
+const PROGRESS_ENTRY_MAX_CHARS  = 1500;
+const PROGRESS_TOTAL_MAX_CHARS  = 12000;
+const DESCRIPTION_MAX_CHARS     = 8000;
+const PROGRESS_SUMMARY_MAX_CHARS    = 600;
+const DESCRIPTION_SUMMARY_MAX_CHARS = 400;
+
+// Extrahiert den reinen Text eines Fortschrittseintrags. Der genaue Aufbau
+// eines "entry"-Objekts ist im Schnittstellenvertrag nicht spezifiziert
+// (Annahme/Abweichung, siehe Abschlussbericht): unterstützt werden sowohl
+// einfache Strings als auch Objekte mit .text/.content/.note.
+function entryPlainText(e) {
+  if (e == null) return '';
+  if (typeof e === 'string') return e;
+  if (typeof e === 'object') {
+    if (e.text != null)    return e.text;
+    if (e.content != null) return e.content;
+    if (e.note != null)    return e.note;
+    return '';
+  }
+  return String(e);
+}
+
+function entryTimestamp(e) {
+  if (!e || typeof e !== 'object') return null;
+  return e.created_at || e.date || e.createdAt || null;
+}
+
+// Wählt die jüngsten Einträge aus (max. PROGRESS_ENTRY_MAX_COUNT). Wenn alle
+// Einträge einen erkennbaren Zeitstempel tragen, wird explizit danach
+// sortiert; andernfalls wird angenommen, dass der Aufrufer die Einträge
+// bereits chronologisch (älteste zuerst) liefert, sodass die letzten N
+// Einträge die jüngsten sind (Annahme, siehe Abschlussbericht).
+function selectRecentEntries(entries) {
+  const arr = Array.isArray(entries) ? entries.slice() : [];
+  const allTimestamped = arr.length > 0 && arr.every(e => entryTimestamp(e));
+  if (allTimestamped) {
+    arr.sort((a, b) => new Date(entryTimestamp(b)).getTime() - new Date(entryTimestamp(a)).getTime());
+    return arr.slice(0, PROGRESS_ENTRY_MAX_COUNT).reverse();
+  }
+  return arr.slice(-PROGRESS_ENTRY_MAX_COUNT);
+}
+
+// Baut den Text-Block für den Prompt: pro Eintrag HTML entfernen, Marker
+// neutralisieren (Prompt-Injection-Härtung, identisch zu summarizeLink),
+// auf 1500 Zeichen je Eintrag kappen, danach den Gesamtblock auf 12000
+// Zeichen kappen.
+function buildEntriesBlock(entries) {
+  const selected = selectRecentEntries(entries);
+  const lines = selected
+    .map(e => {
+      let text = neutralizeMarkers(stripHtml(entryPlainText(e)));
+      if (text.length > PROGRESS_ENTRY_MAX_CHARS) text = text.slice(0, PROGRESS_ENTRY_MAX_CHARS);
+      return text.trim();
+    })
+    .filter(Boolean)
+    .map(text => `- ${text}`);
+  let block = lines.join('\n');
+  if (block.length > PROGRESS_TOTAL_MAX_CHARS) block = block.slice(0, PROGRESS_TOTAL_MAX_CHARS);
+  return block;
+}
+
+function buildDescriptionBlock(descriptionText) {
+  let text = neutralizeMarkers(stripHtml(descriptionText || ''));
+  if (text.length > DESCRIPTION_MAX_CHARS) text = text.slice(0, DESCRIPTION_MAX_CHARS);
+  return text;
+}
+
+// Nachbearbeitung der Modellantwort: HTML entfernen, Steuerzeichen entfernen,
+// auf die feature-spezifische Zeichenzahl kappen, trimmen. Wirft 422 bei
+// leerem Ergebnis (identisch zum Muster in summarizeLink).
+function finalizeSummaryText(raw, maxChars) {
+  let text = stripHtml(String(raw || ''));
+  // eslint-disable-next-line no-control-regex
+  text = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  text = text.slice(0, maxChars).trim();
+  if (!text) {
+    const err = httpErr(422, 'Die Zusammenfassung ist leer ausgefallen.');
+    err.code = 'empty_summary';
+    throw err;
+  }
+  return text;
+}
+
+function validateRefTypeAndId(refType, refId) {
+  if (typeof refType !== 'string' || !refType.trim()) throw httpErr(400, 'Ungültiger refType');
+  if (typeof refId !== 'string' || !refId.trim())     throw httpErr(400, 'Ungültige refId');
+}
+
+function validateSourceVersion(sourceVersion) {
+  if (sourceVersion == null || String(sourceVersion).trim() === '') {
+    throw httpErr(400, 'sourceVersion erforderlich');
+  }
+  return String(sourceVersion);
+}
+
+// Persistiert ein Zusammenfassungs-Artefakt: vorherige Version für denselben
+// (user, feature, refType, refId) löschen und die neue in einer Transaktion
+// einfügen (atomar, damit es nie einen Zwischenzustand mit zwei/keinem
+// aktuellen Artefakt gibt).
+function replaceSummaryArtifact(db, { userId, feature, refType, refId, content, model }) {
+  const artifactId = uid();
+  const run = db.transaction(() => {
+    db.prepare(
+      'DELETE FROM ai_artifacts WHERE user_id=? AND feature=? AND ref_type=? AND ref_id=?'
+    ).run(userId, feature, refType, refId);
+    db.prepare(
+      'INSERT INTO ai_artifacts(id,user_id,ref_type,ref_id,feature,content,model,created_at) VALUES (?,?,?,?,?,?,?,?)'
+    ).run(artifactId, userId, refType, refId, feature, JSON.stringify(content), model, content.generatedAt);
+  });
+  run();
+  return artifactId;
+}
+
+async function summarizeProgress({ db, userId, settings, encryptionKey, refType, refId, entries, sourceVersion, confirmed }) {
+  assertActive(settings, 'progress_summary');
+  validateRefTypeAndId(refType, refId);
+  const version = validateSourceVersion(sourceVersion);
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw httpErr(400, 'Keine Fortschrittseinträge vorhanden');
+  }
+
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const entriesBlock = buildEntriesBlock(entries);
+  const templateVars = { entries: entriesBlock, nonce };
+
+  const tpl = loadPrompt('progress-summary');
+  const userText   = interpolate(tpl.user, templateVars);
+  const systemText = interpolate(tpl.system, templateVars);
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'progress_summary', confirmed };
+  const { raw, cost_cents } = await dispatchCall({
+    ...ctx, system: systemText, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.progress_summary, json: false,
+  });
+
+  const summary = finalizeSummaryText(raw.content, PROGRESS_SUMMARY_MAX_CHARS);
+  const content = { summary, sourceVersion: version, kind: 'progress', generatedAt: new Date().toISOString() };
+  const artifactId = replaceSummaryArtifact(db, {
+    userId, feature: 'progress_summary', refType, refId, content, model: settings.model,
+  });
+
+  return { artifact_id: artifactId, content, cost_cents };
+}
+
+async function summarizeDescription({ db, userId, settings, encryptionKey, refType, refId, descriptionText, sourceVersion, confirmed }) {
+  assertActive(settings, 'description_summary');
+  validateRefTypeAndId(refType, refId);
+  const version = validateSourceVersion(sourceVersion);
+  if (!descriptionText || !String(descriptionText).trim()) {
+    throw httpErr(400, 'Keine Beschreibung vorhanden');
+  }
+
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const descriptionBlock = buildDescriptionBlock(descriptionText);
+  const templateVars = { description: descriptionBlock, nonce };
+
+  const tpl = loadPrompt('description-summary');
+  const userText   = interpolate(tpl.user, templateVars);
+  const systemText = interpolate(tpl.system, templateVars);
+
+  const ctx = { db, userId, settings, encryptionKey, feature: 'description_summary', confirmed };
+  const { raw, cost_cents } = await dispatchCall({
+    ...ctx, system: systemText, user: userText,
+    maxTokens: cost.FEATURE_MAX_OUTPUT_TOKENS.description_summary, json: false,
+  });
+
+  const summary = finalizeSummaryText(raw.content, DESCRIPTION_SUMMARY_MAX_CHARS);
+  const content = { summary, sourceVersion: version, kind: 'description', generatedAt: new Date().toISOString() };
+  const artifactId = replaceSummaryArtifact(db, {
+    userId, feature: 'description_summary', refType, refId, content, model: settings.model,
+  });
+
+  return { artifact_id: artifactId, content, cost_cents };
+}
+
 // ── Apply capture suggestions (after user confirmation) ──────
 function applyCapture(db, userId, meetingId, apply) {
-  if (!db.prepare('SELECT 1 FROM meetings WHERE id=? AND user_id=?').get(meetingId, userId)) {
+  if (!db.prepare(
+    `SELECT 1 FROM meetings WHERE id=? AND user_id=? AND ${archive.notArchivedSql('meetings')}`
+  ).get(meetingId, userId)) {
     throw httpErr(404, 'Meeting nicht gefunden');
   }
   const created = { topics: [], todos: [], theme_links: [], results: 0 };
@@ -894,6 +1103,16 @@ function stripHtml(s) {
   return String(s).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// Neutralisiert Fragmente, die wie unsere Nonce-Marker aussehen, in Werten,
+// die aus nicht vertrauenswürdigen/externen Nutzerdaten stammen (Titel,
+// Fortschrittseinträge, Beschreibungen, Seiteninhalt). Modulweiter Helper,
+// ursprünglich in summarizeLink eingeführt und für S2
+// (summarizeProgress/summarizeDescription) hierher extrahiert, um dieselbe
+// Härtung ohne Duplikation wiederzuverwenden (Security-Review-Muster).
+function neutralizeMarkers(s) {
+  return String(s || '').replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
+}
+
 module.exports = {
   // settings
   loadSettings, saveSettings, clearApiKey, publicSettings, DEFAULT_FEATURES,
@@ -903,6 +1122,7 @@ module.exports = {
   suggestThemes, weeklyDigest, listDigestArchive,
   crossMeetingInsight, loadCrossMeeting, deleteCrossMeeting,
   driftDetection,
+  summarizeProgress, summarizeDescription,
   // usage re-exports
   usageSummary: (db, uid, period) => usage.usageSummary(db, uid, period),
   // CLI

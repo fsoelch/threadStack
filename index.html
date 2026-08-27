@@ -1692,13 +1692,14 @@ body.ai-disabled .ai-action { display: none !important; }
   padding:.05rem .3rem; font-size:.6875rem; font-family:var(--font-mono);
 }
 
-/* ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W2) ──────────
-   Eigene Klassen mit "ts-"/"todo-"-Präfix, um Kollisionen mit dem
-   TSProgress-Modul (public/progress.css, Paket W1) zu vermeiden. Dieser
-   Block betrifft ausschließlich das Layout der Host-Seite (Karten,
-   Bearbeiten-Ansicht) — die visuelle Gestaltung der von TSProgress selbst
-   gerenderten Bausteine (Timeline, Badge, Composer, Card-Summary) liegt in
-   progress.css. */
+/* ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W2, erweitert im
+   Redesign "Übersichtlichere Todos und Tasks") ──────────────────────────
+   Eigene Klassen mit "ts-progress-*"/"ts-"/"todo-"-Präfix, um Kollisionen mit
+   den "progress-*"-Klassen aus public/progress.js (mountTimeline/
+   mountReentryCard/mountInlineComposer/mountCardSummary) zu vermeiden — jenes
+   Modul besitzt die Klassen ohne "ts-"-Präfix. Der Fortschrittsverlauf ist
+   fest in die Todo-/Themen-Bearbeiten-Ansicht eingebettet (kein separates
+   Panel mehr). */
 .ts-progress-line-host { margin:.375rem 0 0 1.75rem; }
 .ts-card-summary-slot  { margin:.375rem 0 0 1.75rem; }
 .ts-card-summary-slot:empty { display:none; }
@@ -1739,6 +1740,74 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
 @media (prefers-reduced-motion: reduce) {
   details.more-details-native summary::before { transition:none; }
 }
+.ts-progress-section {
+  margin-top:1.125rem; padding-top:1.125rem; border-top:1px solid var(--border);
+}
+.ts-progress-section-title { font-size:.8125rem; font-weight:600; color:var(--text); margin-bottom:.625rem; }
+/* Heimatposition der Composer-/Reentry-Slot-Knoten (siehe mountTimeline-
+   Vertrag: darf kein Nachfahre des Mount-Containers sein). Wird beim Mounten
+   in den Fortschrittsbereich verschoben, daher hier ohne eigene Darstellung. */
+.ts-progress-slot-home { display:none; }
+.ts-progress-composer { margin-bottom:.75rem; }
+.ts-progress-composer .form-label { margin-bottom:.375rem; }
+.ts-progress-snooze-hint { font-size:.75rem; color:var(--text-muted); margin-top:.375rem; line-height:1.4; }
+.ts-progress-entry-context {
+  background:var(--card2); border:1px solid var(--border); border-radius:8px;
+  padding:.5rem .75rem; margin-bottom:.75rem; font-size:.75rem; color:var(--text-muted);
+}
+.ts-progress-entry-context strong { color:var(--text); }
+.ts-progress-entry-context .ts-progress-entry-context-body { margin-top:.25rem; max-height:5.5em; overflow:hidden; }
+.ts-progress-char-hint { font-size:.6875rem; color:var(--text-light); text-align:right; margin-top:.25rem; }
+.ts-progress-retry-toast { display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; }
+.ts-progress-retry-toast button {
+  background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.45); color:inherit;
+  border-radius:6px; padding:.15rem .55rem; font-size:.75rem; cursor:pointer; font-family:inherit;
+}
+.ts-progress-retry-toast button:hover { background:rgba(255,255,255,.3); }
+.todos-toolbar {
+  display:flex; align-items:center; gap:1rem; flex-wrap:wrap;
+  padding:.625rem .875rem; margin-bottom:.875rem;
+  background:var(--card2); border:1px solid var(--border); border-radius:10px;
+}
+.todos-toolbar .todos-toolbar-field { display:flex; align-items:center; gap:.45rem; }
+.todos-toolbar label { font-size:.75rem; color:var(--text-muted); white-space:nowrap; }
+.todos-toolbar select.form-control { width:auto; min-width:190px; padding:.3rem .5rem; font-size:.8125rem; }
+.todos-toolbar .toggle-row { margin:0; gap:.4rem; }
+
+/* ── Archiv (Arbeitspaket W1: "Meetings archivieren statt löschen") ── */
+.archive-badge {
+  display:inline-flex; align-items:center; gap:.3rem;
+  background:var(--card2); border:1px solid var(--border-md); border-radius:999px;
+  padding:.15rem .6rem; font-size:.75rem; color:var(--text-muted); white-space:nowrap;
+}
+.archive-badge-inline { margin-left:.4rem; vertical-align:middle; }
+.archive-card { display:flex; align-items:stretch; gap:.5rem; padding:.75rem 1rem; }
+.archive-card-body {
+  flex:1; min-width:0; display:flex; align-items:center; gap:.75rem;
+  background:none; border:none; padding:0; margin:0; text-align:left; cursor:pointer;
+  font:inherit; color:inherit;
+}
+.archive-card-body:hover .archive-card-title { color:var(--primary); }
+.archive-card-body:focus-visible { outline:2px solid var(--primary); outline-offset:2px; border-radius:6px; }
+.archive-card-main { flex:1; min-width:0; display:flex; flex-direction:column; gap:.3rem; }
+.archive-card-title { font-size:.9375rem; font-weight:600; letter-spacing:-.015em; }
+.archive-card-meta { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.archive-card-actions { display:flex; align-items:center; gap:.375rem; flex-shrink:0; }
+.archive-readonly-banner {
+  display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
+  background:var(--card2); border:1px solid var(--border-md); border-radius:10px;
+  padding:.5rem .75rem; margin:.5rem 0 .75rem;
+}
+.archive-readonly-banner-text { font-size:.8125rem; font-weight:600; color:var(--text); }
+/* Fortschrittsverlauf im Archiv-Detail (Nur-Lesen): TSProgress.mountTimeline
+   wird ohne composerSlot eingebettet (kein Eingabefeld) — die pro Eintrag
+   gerenderten Bearbeiten-/Löschen-Icons blendet diese Regel zusätzlich aus
+   und entfernt sie damit auch aus dem Tab-Fokus (display:none), ohne das
+   Modul selbst um eine readOnly-Option erweitern zu müssen. */
+.progress-readonly { margin-top:.75rem; }
+.progress-readonly .progress-entry-actions { display:none; }
+.progress-readonly .progress-composer,
+.progress-readonly .progress-reentry-wrap { display:none; }
 </style>
 <link rel="stylesheet" href="/assets/graph.css">
 <script defer src="/assets/graph.js"></script>
@@ -1747,7 +1816,7 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
 </head>
 <body>
 
-<div id="toast-container"></div>
+<div id="toast-container" aria-live="polite" aria-atomic="false"></div>
 
 <!-- ── Login ──────────────────────────────────────────────────── -->
 <div id="login-screen" style="display:none">
@@ -1928,11 +1997,11 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
 </div>
 
 <!-- ── Topic Modal ─────────────────────────────────────────────── -->
-<div id="topic-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'topic-modal')">
+<div id="topic-modal" class="modal-overlay" style="display:none" onclick="topicModalOverlayClick(event)">
   <div class="modal" onclick="event.stopPropagation()">
     <div class="modal-header">
       <h2 id="tm-title">Neues Thema</h2>
-      <button class="modal-close" onclick="closeTopicModal()">×</button>
+      <button class="modal-close" onclick="requestCloseTopicModal()">×</button>
     </div>
     <div class="modal-body">
       <div class="form-group">
@@ -1944,6 +2013,26 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
         <div class="rt-wrapper">
           <div class="rt-toolbar" id="t-desc-tb"></div>
           <div class="rt-content" id="t-desc" contenteditable="true" data-placeholder="Details zum Thema …"></div>
+        </div>
+      </div>
+      <div id="t-progress-section" class="ts-progress-section" style="display:none">
+        <div class="ts-progress-section-title">📈 Fortschritt</div>
+        <div id="t-progress-timeline-mount"></div>
+        <!-- Heimatposition der stabilen Slot-Knoten: NICHT innerhalb des Mount-Containers -->
+        <div id="t-progress-slot-home" class="ts-progress-slot-home">
+          <div id="t-progress-composer-slot" class="ts-progress-composer">
+            <label class="form-label" for="t-progress-note">Neuer Zwischenstand</label>
+            <div class="rt-wrapper">
+              <div class="rt-toolbar" id="t-progress-note-tb"></div>
+              <div class="rt-content" id="t-progress-note" contenteditable="true" oninput="updateProgressComposerCharHint('topic')"></div>
+            </div>
+            <div class="ts-progress-char-hint" id="t-progress-note-hint" style="display:none"></div>
+            <div class="ts-progress-snooze-hint" id="t-progress-snooze-hint" style="display:none"
+                 aria-describedby="t-progress-note">Wird beim Speichern als Zwischenstand zu deiner Ruhephase geführt, weil du „Schlafen bis" gesetzt hast.</div>
+            <div class="form-error" id="t-progress-note-error" style="display:none"></div>
+            <button type="button" class="btn btn-secondary btn-sm" id="t-progress-note-save-btn" onclick="saveTopicProgressComposerBtn()">Zwischenstand speichern</button>
+          </div>
+          <div id="t-progress-reentry-mount"></div>
         </div>
       </div>
       <div class="form-group">
@@ -1979,7 +2068,7 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeTopicModal()">Abbrechen</button>
+      <button class="btn btn-secondary" onclick="requestCloseTopicModal()">Abbrechen</button>
       <button class="btn btn-primary" id="tm-save-btn" onclick="saveTopicModal()">Speichern</button>
     </div>
   </div>
@@ -2145,7 +2234,6 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
           <div class="rt-content" id="todo-desc" contenteditable="true" data-placeholder="Details, Links …"></div>
         </div>
       </div>
-
       <div id="todo-progress-section" class="form-group" style="display:none">
         <label class="form-label">Fortschritt</label>
         <div id="todo-progress-composer"></div>
@@ -2833,7 +2921,7 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
       </div>
       <div class="form-group" id="sp-target-pick-wrap" style="display:none">
         <label class="form-label">Topic oder Todo wählen</label>
-        <select class="form-control" id="sp-target-pick"></select>
+        <select class="form-control" id="sp-target-pick" onchange="onStackPushTargetPick()"></select>
       </div>
       <div class="form-group">
         <label class="form-label">Was ist der nächste Schritt? <span style="color:var(--red)">*</span></label>
@@ -2904,6 +2992,14 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
       <div class="form-group" id="pop-snooze-fields" style="display:none">
         <label class="form-label">Aufwachen am</label>
         <input type="datetime-local" class="form-control" id="pop-snooze-until">
+      </div>
+
+      <div class="form-group" id="pop-progress-fields" style="display:none">
+        <label class="form-label">Wo stehe ich gerade? <span class="opt">(optional, wird als Zwischenstand gespeichert)</span></label>
+        <div class="rt-wrapper">
+          <div class="rt-toolbar" id="pop-progress-note-tb"></div>
+          <div class="rt-content" id="pop-progress-note" contenteditable="true" data-placeholder="Kurzer Stand für den nächsten Wiedereinstieg …"></div>
+        </div>
       </div>
 
       <div id="pop-error" class="form-error" style="display:none"></div>
@@ -3015,6 +3111,59 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
   </div>
 </div>
 
+
+<!-- ── Fortschrittsverlauf: Nächster Schritt bearbeiten ─────────── -->
+<div id="progress-nextstep-modal" class="modal-overlay" style="display:none" onclick="progressNextStepOverlayClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>➡️ Nächster Schritt</h2>
+      <button class="modal-close" onclick="closeProgressNextStepDialog('cancelled')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Was ist der nächste Schritt? <span class="opt">(optional)</span></label>
+        <textarea class="form-control" id="progress-nextstep-input" rows="3" maxlength="1000"
+          placeholder="Wird auch als Notiz vorbelegt, wenn du dieses Vorhaben auf den Stack legst."
+          oninput="document.getElementById('progress-nextstep-char-hint').textContent = this.value.length + ' / 1.000 Zeichen'"></textarea>
+        <div class="ts-progress-char-hint" id="progress-nextstep-char-hint">0 / 1.000 Zeichen</div>
+      </div>
+      <div id="progress-nextstep-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeProgressNextStepDialog('cancelled')">Abbrechen</button>
+      <button class="btn btn-primary" id="progress-nextstep-save-btn" onclick="submitProgressNextStepDialog()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Fortschrittsverlauf: Zwischenstand erfassen/bearbeiten ────── -->
+<div id="progress-entry-modal" class="modal-overlay" style="display:none" onclick="progressEntryOverlayClick(event)">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Zwischenstand bearbeiten</h2>
+      <button class="modal-close" onclick="closeProgressEntryDialog('cancelled')">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="ts-progress-entry-context" id="progress-entry-goal-context" style="display:none"></div>
+      <div class="form-group">
+        <label class="form-label">Wo stehst du gerade? <span class="opt">(max. 5.000 Zeichen)</span></label>
+        <div class="rt-wrapper">
+          <div class="rt-toolbar" id="progress-entry-body-tb"></div>
+          <div class="rt-content" id="progress-entry-body" contenteditable="true"
+            data-placeholder="Was ist der aktuelle Stand? Was ist als Nächstes zu tun?"
+            oninput="updateProgressEntryCharHint()"></div>
+        </div>
+        <div class="ts-progress-char-hint" id="progress-entry-char-hint">0 / 5.000 Zeichen (ungefähr)</div>
+      </div>
+      <div id="progress-entry-error" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeProgressEntryDialog('cancelled')">Abbrechen</button>
+      <button class="btn btn-primary" id="progress-entry-save-btn" onclick="submitProgressEntryDialog()">Speichern</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── AI Capture Modal ────────────────────────────────────────── -->
 <div id="ai-capture-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'ai-capture-modal')">
   <div class="modal modal-wide" onclick="event.stopPropagation()">
@@ -3039,7 +3188,7 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
 </div>
 
 <!-- ── Confirm ─────────────────────────────────────────────────── -->
-<div id="confirm-dialog" class="confirm-overlay" style="display:none">
+<div id="confirm-dialog" class="confirm-overlay" style="display:none" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-message">
   <div class="confirm-box">
     <h3 id="confirm-title">Sind Sie sicher?</h3>
     <p id="confirm-message"></p>
@@ -3107,6 +3256,11 @@ let selectedId  = null;
 let showPrivateTodos = true;
 let filterText  = '';
 let topicFilter = '';
+// Fortschrittsverlauf — Sortierung/Filter, sitzungsweit (Arbeitspaket W1, Story 9)
+let todoProgressSortOldest = false;
+let todoProgressFilterUndocumented = false;
+let topicProgressSortOldest = false;
+let topicProgressFilterUndocumented = false;
 
 let editMeetingId   = null;
 let editTopicMid    = null;
@@ -3116,6 +3270,11 @@ let completeTid     = null;
 let completeTodoId  = null;
 let editUserId      = null;
 let confirmCallback = null;
+// Sicherheitsfix (Security Review, Mittel, Fund 3): Label-/Klassen-Cleanup von
+// genericConfirm() darf nicht nur bei Klick auf einen der beiden Dialog-
+// Buttons laufen, sondern bei JEDEM Schließen des #confirm-dialog (z. B. auch
+// über Escape) — siehe closeConfirm() weiter unten.
+let confirmCleanup  = null;
 let themes          = [];
 let contacts        = [];
 let editContactId   = null;
@@ -3180,7 +3339,7 @@ function setBusy(btnId, busy) {
 // ── API ──────────────────────────────────────────────────────
 async function api(method, path, body) {
   const opts = { method, credentials: 'same-origin' };
-  if (body !== undefined) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
+  if (body != null) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
   const res  = await fetch(API + path, opts);
   if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
   const data = await res.json().catch(() => ({}));
@@ -3209,13 +3368,24 @@ window.TSHost = {
       if (meta?.focus === 'progress') focusTodoProgressSection();
     }
     else if (type === 'topic') {
-      if (meta?.meetingId) selectView(meta.meetingId);
-      openTopicModal(meta?.meetingId, id);
+      // Archivierte Meetings (meta.archived === true, Paket B3) sind nicht
+      // mehr in der aktiven `meetings`-Liste enthalten — selectView() +
+      // openTopicModal() würden dann einen leeren "Neues Thema"-Dialog statt
+      // der Nur-Lese-Ansicht öffnen (Security-Review-Fund). In dem Fall (oder
+      // falls das Meeting aus anderem Grund nicht mehr aktiv gefunden wird)
+      // stattdessen in die bestehende Archiv-Nur-Lese-Route navigieren.
       // Hinweis (Abweichung/Risiko, siehe Abschlussbericht Paket W2): die
       // Themen-Bearbeiten-Ansicht (#topic-modal) enthält aktuell keinen
       // eigenen Fortschrittsbereich, da das W2-UX-Lastenheft nur die
       // Todo-Übersicht/#todo-modal beschreibt — meta.focus wird hier daher
       // bewusst ignoriert statt eine nicht spezifizierte Fläche zu bauen.
+      const meetingId = meta?.meetingId;
+      if (meta?.archived === true || (meetingId && !getMeeting(meetingId))) {
+        if (meetingId) selectArchiveDetail(meetingId);
+      } else {
+        if (meetingId) selectView(meetingId);
+        openTopicModal(meetingId, id);
+      }
     }
     else if (type === 'contact') { selectView('__contacts__'); openContactModal(id); }
   },
@@ -3228,8 +3398,7 @@ window.TSHost = {
     // wiederverwendet für TSProgress.mountReentryCard): generischer
     // AI-Feature-Schalter bzw. AI-Reentry-Aufruf für einen Stack-Frame.
     aiEnabled: () => aiFeatureOn('reentry'),
-    aiReentry: (frameId) => aiCall('POST', `/ai/stack/${encodeURIComponent(frameId)}/reentry`)
-      .then(r => r?.content?.summary || ''),
+    aiReentry: (frameId) => runProgressAiReentry(frameId),
     // Neu in W2: Feature-Schalter für die KI-Zusammenfassungen von
     // Fortschritt/Beschreibung (prüft zusätzlich den globalen KI-Aus-
     // Schalter via aiFeatureOn -> aiIsActive()).
@@ -3270,6 +3439,15 @@ window.TSHost = {
       const item = refType === 'todo' ? todos.find(x => x.id === refId) : findTopicAnywhere(refId)?.topic;
       openProgressEntryDialog(refType, refId, entryId, initialHtml, contextHtml ?? item?.description, onSaved);
     },
+    // "Nächster Schritt" bleibt unverändert erhalten (die Redesign-Entscheidung
+    // betrifft dieses Feld nicht) — TSProgress.mountTimeline ruft diese Hooks
+    // weiterhin auf.
+    openNextStepDialog: (ctx) => openProgressNextStepDialog(ctx),
+    confirmDelete: ({ title, message }) => genericConfirm(title, message, 'Löschen', 'Abbrechen'),
+    // Wird vom Zeitstrahl nach Bearbeiten/Löschen eines BESTEHENDEN Eintrags
+    // (data-action="edit-entry"/"delete-entry") ausgelöst - Wiederverwendung
+    // der bestehenden Listen-/Cache-Aktualisierung statt einer zweiten.
+    onProgressChanged: (refType, refId) => onProgressChangedHost(refType, refId),
   },
 };
 
@@ -4706,6 +4884,12 @@ function clearClientSessionState() {
   const uidForCleanup = currentUser?.id;
   if (uidForCleanup) { try { localStorage.removeItem(`notifiedSnoozes:${uidForCleanup}`); } catch {} }
   currentUser = null; meetings = []; todos = []; selectedId = null;
+  // Archiv-Zustand (Arbeitspaket W1) muss ebenfalls hier abgeräumt werden,
+  // sonst überleben Archiv-Liste, -Detailansicht und der Suchtreffer-Cache
+  // den Nutzerwechsel auf einem geteilten Gerät (Security-Review-Fund).
+  archiveState = { items: [], total: 0, q: '', offset: 0, loaded: false, loading: false, error: null };
+  archiveDetailState = { id: null, data: null, loading: false, error: null };
+  for (const k of Object.keys(_archiveSearchDetailCache)) delete _archiveSearchDetailCache[k];
 }
 
 async function doLogout() {
@@ -4836,6 +5020,13 @@ function renderTodosNav() {
     <div class="todo-nav-item ai-action ${selectedId === '__digest__' ? 'active' : ''}" onclick="selectView('__digest__')">
       <div class="todo-nav-icon digest-icon">${ic('<path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>')}</div>
       <span class="todo-nav-label">Wochen-Digest</span>
+    </div>
+    <div class="todo-nav-item archive-nav-item ${selectedId === '__archive__' || selectedId === '__archive_detail__' ? 'active' : ''}"
+         role="button" tabindex="0"
+         onclick="selectView('__archive__')"
+         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectView('__archive__');}">
+      <div class="todo-nav-icon archive-icon">${ic('<path d="M3 7.5V6a1.5 1.5 0 011.5-1.5h15A1.5 1.5 0 0121 6v1.5M3 7.5v10.5A1.5 1.5 0 004.5 19.5h15a1.5 1.5 0 001.5-1.5V7.5M3 7.5h18M10 12h4"/>')}</div>
+      <span class="todo-nav-label">Archiv</span>
     </div>`;
 }
 
@@ -4917,12 +5108,17 @@ function renderMain() {
     const gr = document.getElementById('graph-root');
     if (gr) { window.TSGraph?.unmount?.(); gr.hidden = true; gr.innerHTML = ''; }
   }
+  // Fortschritts-Timelines der Archiv-Detailansicht sauber abhängen, sobald
+  // die Ansicht verlassen wird (vermeidet verwaiste Mounts/Requests).
+  if (selectedId !== '__archive_detail__') { destroyArchiveDetailTimelines(); archiveDetailMountedForId = null; }
   if (selectedId === '__themes__')   { renderThemesView(el); return; }
   if (selectedId === '__contacts__') { renderContactsView(el); return; }
   if (selectedId === '__todos__')    { renderTodosView(el); return; }
   if (selectedId === '__eod__')      { renderEodView(el); return; }
   if (selectedId === '__stack_history__') { renderStackHistoryView(el); return; }
   if (selectedId === '__digest__')   { renderDigestView(el); return; }
+  if (selectedId === '__archive__')  { renderArchiveView(el); return; }
+  if (selectedId === '__archive_detail__') { renderArchiveDetailView(el); return; }
   if (!selectedId) {
     el.innerHTML = `
       <div class="empty-state">
@@ -4935,26 +5131,51 @@ function renderMain() {
   }
   const m = getMeeting(selectedId);
   if (!m) { selectedId = null; renderMain(); return; }
+  el.innerHTML = renderMeetingDetailHtml(m, { readOnly: false });
+}
 
+// ── Meeting-Detail-Markup (aktiv + Archiv-Nur-Lese) ─────────────────────
+// Arbeitspaket W1 (Archiv-Feature): um einen readOnly-Zweig erweitert statt
+// eines zweiten Detail-Renderers (siehe CLAUDE.md "Wiederverwendung vor
+// Neuentwicklung" und Schnittstellenvertrag Punkt 3). Im readOnly-Modus
+// werden alle schreibenden Kopfzeilen-/Themen-Aktionen entfernt und durch
+// ein Archiv-Hinweisbanner (Wiederherstellen/Endgültig löschen) ersetzt.
+function renderMeetingDetailHtml(m, opts) {
+  const readOnly = !!(opts && opts.readOnly);
   const groupMap = buildGroupMap();
   const themeMap = buildThemeMap();
   const lct = topicFilter.toLowerCase();
   const matchesTopic = t => !topicFilter ||
     t.title.toLowerCase().includes(lct) ||
     (t.description||'').toLowerCase().includes(lct);
-  const open    = (m.topics||[]).filter(t => !t.done && !isSnoozed(t) && matchesTopic(t));
+  let open      = (m.topics||[]).filter(t => !t.done && !isSnoozed(t) && matchesTopic(t));
   const snoozed = (m.topics||[]).filter(t => !t.done &&  isSnoozed(t) && matchesTopic(t));
   const done    = (m.topics||[]).filter(t =>  t.done && matchesTopic(t))
     .sort((a,b) => new Date(b.resultDate||b.createdAt) - new Date(a.resultDate||a.createdAt));
   const past = isPast(m.nextDate);
+  // Fortschritt: Sortierung/Filter analog zur Todo-Übersicht (Story 9) —
+  // im readOnly-Modus bewusst deaktiviert (kein Werkzeug-Zustand nötig,
+  // Standardreihenfolge genügt für die Ansicht eines archivierten Meetings).
+  const openBeforeTopicProgressFilter = open.length;
+  if (!readOnly && topicProgressFilterUndocumented && window.TSProgress) {
+    open = open.filter(t => TSProgress.isUndocumented(t));
+  }
+  if (!readOnly && topicProgressSortOldest && window.TSProgress) {
+    open = open.slice().sort(TSProgress.compareByProgress);
+  }
 
-  el.innerHTML = `
+  return `
     <div class="full-width-view">
       <div class="meeting-header">
         <div class="meeting-header-accent" style="background:${m.color||'#1D6FE8'}"></div>
         <div class="meeting-header-body">
           <div class="meeting-header-info">
             <h1 class="meeting-title">${escHtml(m.title)}</h1>
+            ${readOnly ? `
+              <div class="archive-readonly-banner" role="status">
+                <span class="archive-readonly-banner-text">🗃️ Archiviert am ${escHtml(fmtDateOnly(m.archivedAt))}</span>
+                <button class="btn btn-secondary btn-sm" onclick="restoreArchivedMeeting('${m.id}', true)">↺ Wiederherstellen</button>
+              </div>` : ''}
             ${m.description ? `<div class="meeting-description rt-display">${displayHtml(m.description)}</div>` : ''}
             <div class="meeting-meta-chips">
               ${(m.participants||[]).length > 0 ? `
@@ -4972,16 +5193,20 @@ function renderMain() {
             </div>
           </div>
           <div class="meeting-header-actions">
-            ${aiFeatureOn('brief')   ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiBrief()">${SVG.sparkle} Briefing</button>` : ''}
-            ${aiFeatureOn('capture') ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiCapture()">${SVG.notes} Notizen</button>` : ''}
-            ${m.isRecurring && m.nextDate ? `<button class="btn btn-secondary btn-sm" onclick="doAdvanceDate('${m.id}')">${SVG.repeat} Nächster Termin</button>` : ''}
-            <button class="btn btn-secondary btn-sm" onclick="openMeetingModal('${m.id}')">${SVG.pencil} Bearbeiten</button>
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDelete('meeting','${m.id}')" title="Meeting löschen">🗑️</button>
+            ${readOnly ? `
+              <button class="btn btn-danger btn-sm" onclick="confirmPermanentlyDeleteMeeting('${m.id}','${escJsAttr(m.title)}', true)">🗑️ Endgültig löschen</button>
+            ` : `
+              ${aiFeatureOn('brief')   ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiBrief()">${SVG.sparkle} Briefing</button>` : ''}
+              ${aiFeatureOn('capture') ? `<button class="btn btn-secondary btn-sm ai-action" onclick="openAiCapture()">${SVG.notes} Notizen</button>` : ''}
+              ${m.isRecurring && m.nextDate ? `<button class="btn btn-secondary btn-sm" onclick="doAdvanceDate('${m.id}')">${SVG.repeat} Nächster Termin</button>` : ''}
+              <button class="btn btn-secondary btn-sm" onclick="openMeetingModal('${m.id}')">${SVG.pencil} Bearbeiten</button>
+              <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmArchiveMeeting('${m.id}')" title="Meeting archivieren">🗃️</button>
+            `}
           </div>
         </div>
       </div>
 
-      ${renderCmiBanner(m.id)}
+      ${readOnly ? '' : renderCmiBanner(m.id)}
 
       <div class="topics-section">
         <div class="topics-header">
@@ -4992,31 +5217,47 @@ function renderMain() {
           <input type="search" class="topic-search" id="topic-search-input"
             placeholder="Suchen …" value="${escHtml(topicFilter)}"
             oninput="onTopicSearch(this.value)" onclick="event.stopPropagation()">
-          <button class="btn btn-primary btn-sm" onclick="openTopicModal('${m.id}')">+ Thema</button>
+          ${readOnly ? '' : `<button class="btn btn-primary btn-sm" onclick="openTopicModal('${m.id}')">+ Thema</button>`}
         </div>
         ${(m.topics||[]).length === 0 ? `
-          <div class="empty-topics">Noch keine Themen — fügen Sie das erste hinzu.</div>` : ''}
+          <div class="empty-topics">Noch keine Themen${readOnly ? '.' : ' — fügen Sie das erste hinzu.'}</div>` : ''}
+        ${!readOnly && openBeforeTopicProgressFilter > 0 ? `
+        <div class="todos-toolbar">
+          <div class="todos-toolbar-field">
+            <label for="topic-progress-sort-select">Sortierung</label>
+            <select class="form-control" id="topic-progress-sort-select" onchange="topicProgressSortOldest = (this.value==='oldest'); renderMain()">
+              <option value="default"${!topicProgressSortOldest ? ' selected' : ''}>Standard</option>
+              <option value="oldest"${topicProgressSortOldest ? ' selected' : ''}>Ältester Stand zuerst</option>
+            </select>
+          </div>
+          <div class="toggle-row">
+            <span style="font-size:.8125rem;color:var(--text-muted)">Länger nicht dokumentiert</span>
+            <label class="toggle"><input type="checkbox"${topicProgressFilterUndocumented ? ' checked' : ''} onchange="topicProgressFilterUndocumented = this.checked; renderMain()"><span class="toggle-slider"></span></label>
+          </div>
+        </div>` : ''}
+        ${!readOnly && topicProgressFilterUndocumented && open.length === 0 && openBeforeTopicProgressFilter > 0 ? `
+          <div class="empty-topics">✅ Alles aktuell dokumentiert — kein offenes Thema ohne Zwischenstand.</div>` : ''}
         ${open.length > 0 ? `
           <div class="topic-group-header">
             <span class="topic-group-label-text open-label">Offen</span>
             <span class="topic-group-label-text" style="color:var(--text-light)">${open.length}</span>
             <div class="topic-group-header-line"></div>
           </div>
-          ${open.map(t => renderTopicCard(m.id, t, groupMap, themeMap)).join('')}` : ''}
+          ${open.map(t => renderTopicCard(m.id, t, groupMap, themeMap, readOnly)).join('')}` : ''}
         ${snoozed.length > 0 ? `
           <div class="topic-group-header">
             <span class="topic-group-label-text sleep-label">${SVG.moon} Schlafend</span>
             <span class="topic-group-label-text" style="color:var(--text-light)">${snoozed.length}</span>
             <div class="topic-group-header-line"></div>
           </div>
-          ${snoozed.map(t => renderTopicCard(m.id, t, groupMap, themeMap)).join('')}` : ''}
+          ${snoozed.map(t => renderTopicCard(m.id, t, groupMap, themeMap, readOnly)).join('')}` : ''}
         ${done.length > 0 ? `
           <div class="topic-group-header">
             <span class="topic-group-label-text done-label">Erledigt</span>
             <span class="topic-group-label-text" style="color:var(--text-light)">${done.length}</span>
             <div class="topic-group-header-line"></div>
           </div>
-          ${done.map(t => renderTopicCard(m.id, t, groupMap, themeMap)).join('')}` : ''}
+          ${done.map(t => renderTopicCard(m.id, t, groupMap, themeMap, readOnly)).join('')}` : ''}
       </div>
     </div><!-- /full-width-view -->`;
 }
@@ -5033,19 +5274,36 @@ function renderTodosView(el) {
         || new Date(a.createdAt) - new Date(b.createdAt);
   };
   const visibleTodos = showPrivateTodos ? todos : todos.filter(t => !t.isPrivate);
-  const open    = visibleTodos.filter(t => !t.done && !isSnoozed(t)).sort(byDueDate);
+  let open    = visibleTodos.filter(t => !t.done && !isSnoozed(t));
   const snoozedTodos = visibleTodos.filter(t => !t.done &&  isSnoozed(t)).sort(byDueDate);
   const done    = visibleTodos.filter(t =>  t.done)
     .sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
   const hasPrivate = todos.some(t => t.isPrivate);
   // Meeting-Topics als Todo: offen + schlafende separat
-  const meetingTodosOpen    = meetings.flatMap(m =>
+  let meetingTodosOpen    = meetings.flatMap(m =>
     (m.topics||[]).filter(t => t.isTodo && !t.done && !isSnoozed(t)).map(t => ({ meeting: m, topic: t }))
-  ).sort((a,b) => (a.topic.sortOrder??0) - (b.topic.sortOrder??0));
+  );
   const meetingTodosSnoozed = meetings.flatMap(m =>
     (m.topics||[]).filter(t => t.isTodo && !t.done &&  isSnoozed(t)).map(t => ({ meeting: m, topic: t }))
   );
+
+  // ── Fortschritt: Sortierung "Ältester Stand zuerst" + Filter "Länger
+  //    nicht dokumentiert" (Story 9). Zählt nur für die offenen Gruppen —
+  //    schlafende/erledigte Todos bleiben von Filter/Sortierung unberührt.
+  const openBeforeProgressFilter = open.length + meetingTodosOpen.length;
+  if (todoProgressFilterUndocumented && window.TSProgress) {
+    open = open.filter(t => TSProgress.isUndocumented(t));
+    meetingTodosOpen = meetingTodosOpen.filter(x => TSProgress.isUndocumented(x.topic));
+  }
+  if (todoProgressSortOldest && window.TSProgress) {
+    open = open.slice().sort(TSProgress.compareByProgress);
+    meetingTodosOpen = meetingTodosOpen.slice().sort((a, b) => TSProgress.compareByProgress(a.topic, b.topic));
+  } else {
+    open = open.slice().sort(byDueDate);
+    meetingTodosOpen = meetingTodosOpen.slice().sort((a,b) => (a.topic.sortOrder??0) - (b.topic.sortOrder??0));
+  }
   const themeMap = buildThemeMap();
+  const showProgressToolbar = openBeforeProgressFilter > 0 || snoozedTodos.length > 0 || meetingTodosSnoozed.length > 0;
 
   el.innerHTML = `
     <div class="full-width-view">
@@ -5066,10 +5324,28 @@ function renderTodosView(el) {
       </div>
 
       <div class="topics-section">
+        ${showProgressToolbar ? `
+        <div class="todos-toolbar">
+          <div class="todos-toolbar-field">
+            <label for="todo-progress-sort-select">Sortierung</label>
+            <select class="form-control" id="todo-progress-sort-select" onchange="todoProgressSortOldest = (this.value==='oldest'); renderMain()">
+              <option value="default"${!todoProgressSortOldest ? ' selected' : ''}>Standard (Fälligkeit)</option>
+              <option value="oldest"${todoProgressSortOldest ? ' selected' : ''}>Ältester Stand zuerst</option>
+            </select>
+          </div>
+          <div class="toggle-row">
+            <span style="font-size:.8125rem;color:var(--text-muted)">Länger nicht dokumentiert</span>
+            <label class="toggle"><input type="checkbox"${todoProgressFilterUndocumented ? ' checked' : ''} onchange="todoProgressFilterUndocumented = this.checked; renderMain()"><span class="toggle-slider"></span></label>
+          </div>
+        </div>` : ''}
+
         ${open.length === 0 && meetingTodosOpen.length === 0 && snoozedTodos.length === 0 && meetingTodosSnoozed.length === 0 ? `
           <div class="empty-topics" style="padding:3rem">
             Keine offenen Todos — alles erledigt! 🎉
-          </div>` : ''}
+          </div>` : (todoProgressFilterUndocumented && open.length === 0 && meetingTodosOpen.length === 0 && openBeforeProgressFilter > 0 ? `
+          <div class="empty-topics" style="padding:3rem">
+            ✅ Alles aktuell dokumentiert — kein offenes Todo ohne Zwischenstand.
+          </div>` : '')}
 
         ${open.length > 0 ? `
           <div class="topic-group-header">
@@ -5124,6 +5400,16 @@ function renderTodosView(el) {
   ]);
 }
 
+// ── Fortschrittsverlauf: Badge für Todo-/Themen-Karten (Arbeitspaket W1) ──
+//    Badge-Markup liefert ausschließlich TSProgress (public/progress.js),
+//    hier nur defensiv abgesichert für den Fall, dass das Modul (noch) nicht
+//    geladen ist (z. B. sehr frühes render() vor dem "defer"-Laden des
+//    Scripts). Der Zeitstrahl selbst ist fest in die Bearbeiten-Ansicht
+//    eingebettet (kein Panel-Button mehr, siehe Arbeitspaket W2).
+function progressBadgeHtml(progress) {
+  return (window.TSProgress && typeof TSProgress.badgeHtml === 'function') ? TSProgress.badgeHtml(progress) : '';
+}
+
 function renderPersonalTodoCard(t, isDone, themeMap) {
   const sleeping = !isDone && isSnoozed(t);
   const grp = isDone ? 'done' : 'open';
@@ -5142,6 +5428,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           ${!isDone ? `<span class="drag-handle" title="Verschieben">⠿</span>` : ''}
           <span class="topic-status-icon ${grp}">${isDone ? '✓' : ''}</span>
           <h4 class="topic-title ${isDone ? 'done-text' : ''}">${escHtml(t.title)}${t.isPrivate ? ' <span class="private-badge" title="Privat">🔒</span>' : ''}</h4>
+          ${progressBadgeHtml(t.progress)}
         </div>
         <div class="topic-actions">
           ${!isDone ? `
@@ -5216,6 +5503,7 @@ function renderMeetingTopicTodo(m, t, themeMap) {
         <div class="topic-info">
           <span class="topic-status-icon open"></span>
           <h4 class="topic-title">${escHtml(t.title)}</h4>
+          ${progressBadgeHtml(t.progress)}
         </div>
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${m.id}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
@@ -5266,27 +5554,36 @@ function renderMeetingTopicTodo(m, t, themeMap) {
     </div>`;
 }
 
-function renderTopicCard(mid, t, groupMap, themeMap) {
+function renderTopicCard(mid, t, groupMap, themeMap, readOnly) {
   const sleeping = isSnoozed(t);
   const grp = t.done ? 'done' : 'open';
   const groupMembers = (t.groupId && groupMap) ? (groupMap[t.groupId] || []).filter(x => x.meeting.id !== mid) : [];
   const themeEntries = themeMap ? (themeMap[t.id] || []) : [];
   const drifted     = !t.done && driftTopics.has(t.id);
   const suggestionsHtml = themeSuggestionsCache[refKey('topic', t.id)] || null;
-  return `
-    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}" data-tid="${t.id}"
+  // readOnly (Arbeitspaket W1, Archiv-Detail): keine Drag-Handles, keine
+  // schreibenden Aktionen (Bearbeiten/Erledigen/Verschieben/Teilen/Snooze-
+  // Aufwecken/Overflow/Löschen/"+ Thema") — vollständig aus dem Markup
+  // entfernt statt nur deaktiviert, damit sie auch aus dem Tab-Fokus
+  // verschwinden. Fortschrittsverlauf bleibt sichtbar (siehe
+  // renderReadOnlyTopicExtras), Anhänge sind als Downloads eingebettet.
+  const dragAttrs = readOnly ? '' : `
          draggable="true"
          ondragstart="topicDragStart(event,'${mid}','${t.id}','${grp}')"
          ondragend="topicDragEnd(event)"
          ondragover="topicDragOver(event,'${mid}','${t.id}','${grp}')"
          ondragleave="topicDragLeave(event)"
-         ondrop="topicDrop(event,'${mid}','${t.id}','${grp}')">
+         ondrop="topicDrop(event,'${mid}','${t.id}','${grp}')"`;
+  return `
+    <div class="topic-card ${grp}${sleeping ? ' snoozed' : ''}" data-tid="${t.id}"${dragAttrs}>
       <div class="topic-card-header">
         <div class="topic-info">
-          <span class="drag-handle" title="Reihenfolge ändern">⠿</span>
+          ${readOnly ? '' : `<span class="drag-handle" title="Reihenfolge ändern">⠿</span>`}
           <span class="topic-status-icon ${grp}">${t.done ? '✓' : ''}</span>
           <h4 class="topic-title ${t.done ? 'done-text' : ''}">${escHtml(t.title)}</h4>
+          ${progressBadgeHtml(t.progress)}
         </div>
+        ${readOnly ? '' : `
         <div class="topic-actions">
           <button class="btn btn-secondary btn-sm btn-icon" onclick="openTopicModal('${mid}','${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
           ${!t.done
@@ -5319,13 +5616,13 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
               </button>
             </div>
           </details>
-        </div>
+        </div>`}
       </div>
       ${t.description ? `<div class="topic-description rt-display">${displayHtml(t.description)}</div>` : ''}
       ${sleeping ? `
         <div class="snooze-info">
           ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
-          <button class="snooze-wake-btn" onclick="wakeUpTopic('${mid}','${t.id}')">🔔 Jetzt wecken</button>
+          ${readOnly ? '' : `<button class="snooze-wake-btn" onclick="wakeUpTopic('${mid}','${t.id}')">🔔 Jetzt wecken</button>`}
         </div>` : ''}
       ${groupMembers.length > 0 ? `
         <div class="topic-group-chips">
@@ -5353,11 +5650,24 @@ function renderTopicCard(mid, t, groupMap, themeMap) {
             ? `<div class="result-text rt-display">${displayHtml(t.result)}</div>`
             : `<p class="result-empty">Kein Ergebnis eingetragen</p>`}
         </div>` : ''}
+      ${readOnly ? renderReadOnlyTopicExtras(t) : `
       ${(() => { const c = (attachCache['topic/'+t.id]||[]).length; return c > 0 ? `<span class="attach-badge" data-attach-ref="topic/${t.id}">📎 ${c}</span>` : `<span class="attach-badge" data-attach-ref="topic/${t.id}" style="display:none">📎 0</span>`; })()}
       ${!t.done && suggestionsHtml ? `
         <div id="theme-suggest-topic-${t.id}">${renderThemeSuggestionMarkup(suggestionsHtml, 'topic', t.id)}</div>
-      ` : ''}
+      ` : ''}`}
     </div>`;
+}
+
+// readOnly-Zusatzbereiche einer Themenkarte (Archiv-Detail): Fortschritts-
+// verlauf (nur wenn bereits Zwischenstände existieren — sonst kein Mount,
+// um nicht für jede Themenkarte unnötig einen Leerzustand nachzuladen) und
+// Anhänge als reine Download-Liste (Wiederverwendung von attachSectionHtml/
+// loadAttachments, siehe dortiger readOnly-Parameter).
+function renderReadOnlyTopicExtras(t) {
+  const hasProgress = !!(t.progress && t.progress.entryCount > 0);
+  return `
+      ${hasProgress ? `<div class="progress-readonly" id="ro-progress-topic-${t.id}"></div>` : ''}
+      ${attachSectionHtml('topic', t.id, true)}`;
 }
 
 function renderThemeSuggestionMarkup(suggestions, refType, refId) {
@@ -5542,7 +5852,7 @@ async function saveMoveModal() {
 // ── Attachments ──────────────────────────────────────────────
 const attachCache = {};   // key: "refType/refId" → attachment[]
 
-async function loadAttachments(refType, refId) {
+async function loadAttachments(refType, refId, readOnly) {
   const key = `${refType}/${refId}`;
   try {
     const list = await api('GET', `/attachments/${refType}/${refId}`);
@@ -5550,7 +5860,7 @@ async function loadAttachments(refType, refId) {
   } catch(e) {
     attachCache[key] = [];
   }
-  renderAttachSection(refType, refId);
+  renderAttachSection(refType, refId, readOnly);
 }
 
 async function uploadAttachment(refType, refId, file) {
@@ -5590,7 +5900,7 @@ async function deleteAttachment(id, refType, refId) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-function renderAttachSection(refType, refId) {
+function renderAttachSection(refType, refId, readOnly) {
   const key = `${refType}/${refId}`;
   const list = attachCache[key] || [];
   const listEl = document.getElementById(`attach-list-${refType}-${refId}`);
@@ -5602,7 +5912,7 @@ function renderAttachSection(refType, refId) {
       <span class="attach-icon">${icon}</span>
       <a class="attach-name" href="${base}/api/attachments/download/${a.id}" target="_blank" download="${escHtml(a.filename)}">${escHtml(a.filename)}</a>
       <span class="attach-size">${fmtFileSize(a.size)}</span>
-      <button class="attach-del" title="Löschen" onclick="deleteAttachment('${a.id}','${refType}','${refId}')">✕</button>
+      ${readOnly ? '' : `<button class="attach-del" title="Löschen" onclick="deleteAttachment('${a.id}','${refType}','${refId}')">✕</button>`}
     </div>`;
   }).join('');
 }
@@ -5637,18 +5947,18 @@ function fmtFileSize(bytes) {
   return `${(bytes/(1024*1024)).toFixed(1)} MB`;
 }
 
-function attachSectionHtml(refType, refId) {
+function attachSectionHtml(refType, refId, readOnly) {
   return `
     <div class="attach-section" id="attach-section-${refType}-${refId}">
       <div class="attach-section-title">📎 Anhänge</div>
-      <label class="attach-drop-zone" id="attach-drop-${refType}-${refId}"
+      ${readOnly ? '' : `<label class="attach-drop-zone" id="attach-drop-${refType}-${refId}"
         ondragover="event.preventDefault();this.classList.add('drag-over')"
         ondragleave="this.classList.remove('drag-over')"
         ondrop="this.classList.remove('drag-over');event.preventDefault();[...event.dataTransfer.files].forEach(f=>uploadAttachment('${refType}','${refId}',f))">
         <input type="file" multiple
           onchange="[...this.files].forEach(f=>uploadAttachment('${refType}','${refId}',f));this.value=''">
         <span>Dateien hierher ziehen oder <u>auswählen</u></span>
-      </label>
+      </label>`}
       <div class="attach-list" id="attach-list-${refType}-${refId}"></div>
     </div>`;
 }
@@ -5747,6 +6057,10 @@ async function saveTodoModal() {
     } : {}) };
   setBusy('todo-save-btn', true);
   let savedTodoId = null;
+  // Vor dem Speichern merken, ob dies ein Anlegen- oder Bearbeiten-Vorgang
+  // ist — für die Erfolgsmeldung, da editTodoId weiter unten ggf. schon vor
+  // dem Ende der Funktion auf die neu vergebene Id gesetzt wird (Fund 2).
+  const wasNewTodo = !editTodoId;
   try {
     if (editTodoId) {
       await api('PUT', `/todos/${editTodoId}`, data);
@@ -5756,6 +6070,12 @@ async function saveTodoModal() {
       const t = await api('POST', '/todos', data);
       todos.push(t);
       savedTodoId = t.id;
+      // Sicherheitsfix (Security Review, Mittel, Fund 2): editTodoId SOFORT
+      // nach erfolgreichem Anlegen auf die neu vergebene Id setzen. Läuft ein
+      // erneuter Klick auf "Speichern" (z.B. nach einem zwischenzeitlichen
+      // Fehler) dadurch in den Update-Zweig (PUT) statt erneut ein Todo
+      // anzulegen — verhindert ein doppelt angelegtes Todo.
+      editTodoId = savedTodoId;
       if (todoModalPresetThemeId) {
         try {
           const link = await api('POST', `/themes/${todoModalPresetThemeId}/links`, {
@@ -5767,9 +6087,15 @@ async function saveTodoModal() {
       }
     }
     todoModalPresetThemeId = null;
+    // Der Fortschritts-Composer ist seit dem Redesign "Übersichtlichere Todos
+    // und Tasks" ein eigenständiger, selbst-speichernder Baustein
+    // (TSProgress.mountInlineComposer, siehe mountTodoProgressArea) - er hat
+    // seine eigene "Speichern"-Aktion und muss beim Speichern des Todos
+    // selbst nicht mehr committet werden (kein commitProgressComposer mehr
+    // für Todos; Topics nutzen das alte Muster weiterhin unverändert, siehe
+    // Abschlussbericht W2: #topic-modal nicht Teil dieses Redesigns).
     closeTodoModal(true); render();
     await loadThemeDetail(); render();
-    toast(editTodoId ? 'Todo aktualisiert' : 'Todo erstellt');
     if (savedTodoId && !data.done) triggerThemeSuggestions('todo', savedTodoId);
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('todo-save-btn', false); }
@@ -5816,7 +6142,7 @@ async function markMeetingTopicDone(mid, tid) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest', '__graph__':'Graph' };
+const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest', '__graph__':'Graph', '__archive__':'Archiv', '__archive_detail__':'Archiv' };
 function updateTopbar(title) {
   const el = document.getElementById('topbar-title');
   if (el) el.textContent = title || '—';
@@ -6111,10 +6437,50 @@ function openTopicModal(mid, tid) {
     attachSlot.innerHTML = '';
   }
   document.getElementById('topic-modal').style.display = 'flex';
-  setTimeout(() => document.getElementById('t-title').focus(), 50);
+  // Fortschrittsbereich erscheint nur beim Bearbeiten eines bestehenden
+  // Themas (Arbeitspaket W2) — Erst-Fokus bleibt auf dem Titelfeld, das
+  // Mounten des Fortschrittsbereichs erfolgt danach.
+  setTimeout(() => {
+    document.getElementById('t-title').focus();
+    if (tid) openProgressEmbed('topic', 'topic', tid); else closeProgressEmbed('topic');
+  }, 50);
 }
 
-function closeTopicModal() { document.getElementById('topic-modal').style.display = 'none'; }
+function closeTopicModal() {
+  document.getElementById('topic-modal').style.display = 'none';
+  closeProgressEmbed('topic');
+}
+
+// Datenverlustschutz (Arbeitspaket W2): ersetzt ALLE direkten Schließ-
+// Aufrufe für das Topic-Modal (×, Abbrechen, Overlay-Klick, Escape).
+function requestCloseTopicModal() {
+  const html = getRT('t-progress-note');
+  if (window.TSProgress && !TSProgress.isEffectivelyEmptyHtml(html)) {
+    genericConfirm(
+      'Zwischenstand verwerfen?',
+      'Dein eingetippter Zwischenstand-Text ist noch nicht gespeichert und geht verloren, wenn du fortfährst.',
+      'Verwerfen', 'Weiterbearbeiten'
+    ).then((confirmed) => {
+      if (confirmed) { setRT('t-progress-note', ''); closeTopicModal(); }
+    });
+    return;
+  }
+  closeTopicModal();
+}
+
+function topicModalOverlayClick(e) {
+  if (e.target.id !== 'topic-modal') return;
+  const modal = document.getElementById('topic-modal');
+  const progressSection = document.getElementById('t-progress-section');
+  const hasText =
+    [...modal.querySelectorAll('input[type="text"], input[type="email"], textarea')]
+      .some(el => el.value.trim() !== '') ||
+    [...modal.querySelectorAll('.rt-content')]
+      .filter(el => !(progressSection && progressSection.contains(el)))
+      .some(el => (el.textContent || '').trim() !== '');
+  if (hasText) return;
+  requestCloseTopicModal();
+}
 
 async function saveTopicModal() {
   const title = document.getElementById('t-title').value.trim();
@@ -6141,6 +6507,10 @@ async function saveTopicModal() {
   };
   setBusy('tm-save-btn', true);
   let savedTopicId = null;
+  // Vor dem Speichern merken, ob dies ein Anlegen- oder Bearbeiten-Vorgang
+  // ist — für die Erfolgsmeldung, da editTopicId weiter unten ggf. schon vor
+  // dem Ende der Funktion auf die neu vergebene Id gesetzt wird (Fund 2).
+  const wasNewTopic = !editTopicId;
   try {
     if (editTopicId) {
       const t = getTopic(editTopicMid, editTopicId);
@@ -6155,9 +6525,26 @@ async function saveTopicModal() {
       const t = await api('POST', `/meetings/${editTopicMid}/topics`, data);
       getMeeting(editTopicMid).topics.push(t);
       savedTopicId = t.id;
+      // Sicherheitsfix (Security Review, Mittel, Fund 2): editTopicId SOFORT
+      // nach erfolgreichem Anlegen auf die neu vergebene Id setzen, BEVOR
+      // der Fortschritts-Composer committet wird — analog zu saveTodoModal()
+      // (siehe dortiger Kommentar für die ausführliche Begründung inkl. der
+      // bewussten Entscheidung gegen einen erneuten openProgressEmbed(...)).
+      editTopicId = savedTopicId;
     }
-    closeTopicModal(); render();
-    toast(editTopicId ? 'Thema aktualisiert' : 'Thema hinzugefügt');
+
+    // Fortschritts-Composer NACH erfolgreichem Speichern des Themas, VOR dem
+    // Schließen des Modals committen (Arbeitspaket W2). Schlägt das fehl,
+    // bleibt das Modal offen und der Text im Composer erhalten.
+    const progressResult = await commitProgressComposer('topic', 'topic', savedTopicId, data.snoozedUntil);
+
+    if (progressResult === 'failed') {
+      toast('Thema gespeichert — der Zwischenstand konnte noch nicht gespeichert werden.', 'error');
+    } else {
+      closeTopicModal();
+      toast(wasNewTopic ? 'Thema hinzugefügt' : 'Thema aktualisiert');
+    }
+    render();
     if (savedTopicId && !data.done) triggerThemeSuggestions('topic', savedTopicId);
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('tm-save-btn', false); }
@@ -7506,48 +7893,60 @@ function confirmDeleteUser(id, name) {
 }
 
 // ── Confirm ──────────────────────────────────────────────────
+// Hinweis (Arbeitspaket W1, Archiv-Feature): confirmDelete() behandelt seit
+// der Umstellung auf "Meetings archivieren statt löschen" ausschließlich noch
+// den Themen-Zweig ('topic'). Der frühere 'meeting'-Zweig (DELETE
+// /api/meetings/:id, echtes/sofortiges Löschen) ist ersatzlos entfernt — der
+// Papierkorb-Button in der Meeting-Kopfzeile ruft jetzt confirmArchiveMeeting()
+// auf. Der Server-Endpunkt DELETE /api/meetings/:id bleibt laut Vertrag
+// unverändert bestehen, wird von der Web-UI aber nicht mehr aufgerufen.
 function confirmDelete(type, ...args) {
-  if (type === 'meeting') {
-    const m = getMeeting(args[0]);
-    confirmCallback = async () => {
-      try {
-        await api('DELETE', `/meetings/${args[0]}`);
-        meetings = meetings.filter(x => x.id !== args[0]);
-        if (selectedId === args[0]) selectedId = null;
-        render(); toast('Meeting gelöscht');
-      } catch(e) { toast(e.message, 'error'); }
-    };
-    document.getElementById('confirm-title').textContent   = 'Meeting löschen?';
-    document.getElementById('confirm-message').textContent = `„${m?.title}" und alle zugehörigen Themen werden unwiderruflich gelöscht.`;
-  } else {
-    const t = getTopic(args[0], args[1]);
-    const isShared = !!t?.groupId;
-    confirmCallback = async () => {
-      try {
-        await api('DELETE', `/meetings/${args[0]}/topics/${args[1]}`);
-        if (isShared) {
-          await loadMeetings();
-        } else {
-          const m = getMeeting(args[0]);
-          if (m) m.topics = m.topics.filter(x => x.id !== args[1]);
-        }
-        render(); toast('Thema gelöscht');
-      } catch(e) { toast(e.message, 'error'); }
-    };
-    document.getElementById('confirm-title').textContent   = 'Thema löschen?';
-    document.getElementById('confirm-message').textContent = isShared
-      ? `„${t?.title}" wird aus diesem Meeting entfernt. In anderen Meetings bleibt das Thema erhalten.`
-      : `„${t?.title}" wird unwiderruflich gelöscht.`;
-  }
+  if (type !== 'topic') return; // defensiv: unbekannter/entfallener Typ, keine Aktion
+  const t = getTopic(args[0], args[1]);
+  const isShared = !!t?.groupId;
+  confirmCallback = async () => {
+    try {
+      await api('DELETE', `/meetings/${args[0]}/topics/${args[1]}`);
+      if (isShared) {
+        await loadMeetings();
+      } else {
+        const m = getMeeting(args[0]);
+        if (m) m.topics = m.topics.filter(x => x.id !== args[1]);
+      }
+      render(); toast('Thema gelöscht');
+    } catch(e) { toast(e.message, 'error'); }
+  };
+  document.getElementById('confirm-title').textContent   = 'Thema löschen?';
+  document.getElementById('confirm-message').textContent = isShared
+    ? `„${t?.title}" wird aus diesem Meeting entfernt. In anderen Meetings bleibt das Thema erhalten.`
+    : `„${t?.title}" wird unwiderruflich gelöscht.`;
   document.getElementById('confirm-dialog').style.display = 'flex';
 }
 
-function closeConfirm() { document.getElementById('confirm-dialog').style.display = 'none'; confirmCallback = null; }
+function closeConfirm() {
+  document.getElementById('confirm-dialog').style.display = 'none';
+  confirmCallback = null;
+  // Sicherheitsfix (Security Review, Mittel, Fund 3): Label-/Klassen-Cleanup
+  // von genericConfirm() bei JEDEM Schließen des Dialogs ausführen (Button-
+  // Klick, Escape, oder ein sonstiger Programmaufruf) — nicht nur, wenn einer
+  // der beiden Dialog-Buttons selbst geklickt wurde. Sonst behält der geteilte
+  // #confirm-dialog dauerhaft die zuletzt von genericConfirm() gesetzten
+  // Labels/Klasse, und ein späterer, tatsächlich destruktiver Aufruf (z. B.
+  // confirmDeleteTodo) zeigt falsch beschriftete/gestylte Buttons.
+  if (confirmCleanup) { const fn = confirmCleanup; confirmCleanup = null; fn(); }
+}
 async function executeConfirm() { const cb = confirmCallback; closeConfirm(); if (cb) await cb(); }
 
 // Generische Promise-basierte Bestätigung mit anpassbaren Button-Labels (nutzt
 // den bestehenden confirm-dialog, stellt Standard-Labels/-Klassen danach wieder her).
-function genericConfirm(title, message, confirmLabel, cancelLabel) {
+// `opts` (Arbeitspaket W1, Archiv-Feature, Punkt 6): optionales Objekt
+// { danger?: boolean, focus?: 'cancel'|'confirm' } — Default unverändert
+// (Bestätigen-Button ist "btn-primary" und erhält den Fokus). Damit bleibt
+// EIN gemeinsamer Dialog-Mechanismus statt eines zweiten für den
+// "Endgültig löschen"-Sonderfall (Fokus auf Abbrechen, danger-Styling).
+function genericConfirm(title, message, confirmLabel, cancelLabel, opts) {
+  const danger = !!(opts && opts.danger);
+  const focusTarget = (opts && opts.focus === 'cancel') ? 'cancel' : 'confirm';
   return new Promise(resolve => {
     document.getElementById('confirm-title').textContent = title;
     document.getElementById('confirm-message').textContent = message;
@@ -7558,17 +7957,19 @@ function genericConfirm(title, message, confirmLabel, cancelLabel) {
     const origConfirmClass = confirmBtn.className;
     cancelBtn.textContent = cancelLabel || 'Abbrechen';
     confirmBtn.textContent = confirmLabel || 'Bestätigen';
-    confirmBtn.className = 'btn btn-primary';
-    const cleanup = () => {
+    confirmBtn.className = danger ? 'btn btn-danger' : 'btn btn-primary';
+    // Läuft jetzt zentral in closeConfirm() (Fund 3), damit Labels/Klasse
+    // auch bei einem Schließen von außen (z. B. Escape) zuverlässig
+    // zurückgesetzt werden statt dauerhaft "hängen zu bleiben".
+    confirmCleanup = () => {
       cancelBtn.textContent = origCancelText;
       confirmBtn.textContent = origConfirmText;
       confirmBtn.className = origConfirmClass;
-      confirmCallback = null;
     };
-    confirmCallback = async () => { cleanup(); resolve(true); };
-    cancelBtn.onclick = () => { closeConfirm(); cleanup(); resolve(false); cancelBtn.onclick = () => closeConfirm(); };
+    confirmCallback = async () => { resolve(true); };
+    cancelBtn.onclick = () => { closeConfirm(); resolve(false); cancelBtn.onclick = () => closeConfirm(); };
     document.getElementById('confirm-dialog').style.display = 'flex';
-    confirmBtn.focus();
+    (focusTarget === 'cancel' ? cancelBtn : confirmBtn).focus();
   });
 }
 
@@ -8101,6 +8502,13 @@ function openStackPushModal(refType, refId) {
     document.getElementById('sp-target').textContent = `${refType === 'topic' ? '💬' : '✓'} ${title}`;
     document.getElementById('sp-target').style.display = '';
     document.getElementById('sp-target-pick-wrap').style.display = 'none';
+    // Notizfeld mit dem aktuellen "Nächster Schritt" des Vorhabens vorbelegen
+    // (Fortschrittsverlauf, Arbeitspaket S2 liefert diesen bereits eingebettet).
+    const nextStep = progressNextStepFor(refType, refId);
+    if (nextStep) {
+      document.getElementById('sp-note').value = nextStep;
+      document.getElementById('sp-count').textContent = String(nextStep.length);
+    }
   } else {
     // Quick-Pick: list open topics + todos
     document.getElementById('sp-target').style.display = 'none';
@@ -8131,6 +8539,34 @@ function openStackPushModal(refType, refId) {
 
   document.getElementById('stack-push-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('sp-note').focus(), 50);
+}
+
+// Liefert den zuletzt hinterlegten "Nächster Schritt" des Fortschrittsverlaufs
+// (Arbeitspaket S1/S2 betten dieses Feld bereits in /todos bzw. /meetings ein) —
+// leerer String, wenn kein Vorhaben gefunden wird oder noch nichts hinterlegt ist.
+function progressNextStepFor(refType, refId) {
+  if (refType === 'topic') {
+    for (const m of meetings) for (const t of (m.topics || [])) if (t.id === refId) return t.progress?.nextStep || '';
+  }
+  if (refType === 'todo') {
+    const t = todos.find(x => x.id === refId);
+    return t?.progress?.nextStep || '';
+  }
+  return '';
+}
+
+// Beim Quick-Pick (Push ohne festes Ziel) wird das Notizfeld erst nach Auswahl
+// vorbelegt — nur wenn der Nutzer noch nichts eingetippt hat.
+function onStackPushTargetPick() {
+  const v = document.getElementById('sp-target-pick').value;
+  if (!v) return;
+  const [refType, refId] = v.split(':');
+  const nextStep = progressNextStepFor(refType, refId);
+  const noteEl = document.getElementById('sp-note');
+  if (nextStep && !noteEl.value.trim()) {
+    noteEl.value = nextStep;
+    document.getElementById('sp-count').textContent = String(nextStep.length);
+  }
 }
 
 function ensurePushCtx() {
@@ -8234,6 +8670,7 @@ function openStackPopModalFor(frameId) {
   // Reset to "done" default
   document.querySelectorAll('input[name=pop-res]').forEach(r => r.checked = r.value === 'done');
   setRT('pop-result', '');
+  setRT('pop-progress-note', '');
   document.getElementById('pop-result-date').value = new Date().toISOString().slice(0, 10);
   // Default snooze: tomorrow 09:00 local
   const t = new Date(); t.setDate(t.getDate() + 1); t.setHours(9, 0, 0, 0);
@@ -8250,6 +8687,10 @@ function onTodoSnoozeChange() {
   cb.disabled = !hasDate;
   if (!hasDate) cb.checked = false;
   document.getElementById('todo-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
+  // Hinweis im Fortschritts-Composer ein-/ausblenden (Arbeitspaket W2) — kein
+  // Seiteneffekt auf den Composer-Text selbst.
+  const snoozeHint = document.getElementById('todo-progress-snooze-hint');
+  if (snoozeHint) snoozeHint.style.display = hasDate ? '' : 'none';
 }
 function onTopicSnoozeChange() {
   const hasDate = !!document.getElementById('t-snooze').value;
@@ -8257,12 +8698,15 @@ function onTopicSnoozeChange() {
   cb.disabled = !hasDate;
   if (!hasDate) cb.checked = false;
   document.getElementById('t-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
+  const snoozeHint = document.getElementById('t-progress-snooze-hint');
+  if (snoozeHint) snoozeHint.style.display = hasDate ? '' : 'none';
 }
 
 function onPopResolutionChange() {
   const v = document.querySelector('input[name=pop-res]:checked')?.value || 'done';
   document.getElementById('pop-result-fields').style.display = (v === 'done')    ? '' : 'none';
   document.getElementById('pop-snooze-fields').style.display = (v === 'snoozed') ? '' : 'none';
+  document.getElementById('pop-progress-fields').style.display = (v === 'snoozed' || v === 'dropped') ? '' : 'none';
 }
 
 async function submitStackPop() {
@@ -8277,10 +8721,16 @@ async function submitStackPop() {
     const local = document.getElementById('pop-snooze-until').value;
     if (local) body.snoozedUntil = new Date(local).toISOString();
   }
+  // Vorab erfassen: "Wo stehe ich gerade?" wird NACH erfolgreichem Pop separat
+  // als Fortschritts-Zwischenstand gespeichert (Story 6) — vor dem Request
+  // sichern, da das Feld nach Schließen des Dialogs zurückgesetzt wird.
+  const progressNoteHtml = (resolution === 'snoozed' || resolution === 'dropped') ? getRT('pop-progress-note') : '';
+  const progressSource = resolution === 'snoozed' ? 'pop_snoozed' : 'pop_dropped';
   try {
     const r = await api('POST', `/stack/pop/${f.id}`, body);
     document.getElementById('stack-pop-modal').style.display = 'none';
     toast(resolution === 'resumed' ? 'Frame wieder aktiv — weiter bearbeiten' : 'Frame geschlossen');
+    if (progressNoteHtml) submitProgressEntryBackground(f.ref_type, f.ref_id, progressNoteHtml, progressSource);
     await Promise.all([loadStack(), loadMeetings(), loadTodos()]);
     render();
     if (resolution === 'resumed') navigateToRef(f.ref_type, f.ref_id);
@@ -8412,6 +8862,335 @@ async function runReentryFor(frameId) {
   } catch (e) {
     if (e.cancelled) banner.innerHTML = '';
     else banner.innerHTML = `<div class="stack-reentry-banner" style="border-left-color:var(--red); color:var(--red)">Fehler: ${escHtml(e.message || '')}</div>`;
+  }
+}
+
+// ── Fortschrittsverlauf — Host-Integration (Arbeitspaket W1/W2) ────────
+// Implementiert window.TSHost.progress (siehe Zuweisung weiter oben) sowie
+// den umgebenden Modal-/Formular-Rahmen. Anzeige-Bausteine (Zeitstrahl,
+// Wiedereinstiegskarte, Badge, Sortier-Comparator) liefert ausschließlich
+// window.TSProgress (public/progress.js) — hier wird NICHTS davon dupliziert.
+// Der Fortschrittsverlauf ist fest in die Todo-/Themen-Bearbeiten-Ansicht
+// eingebettet (kein separates Panel mehr, siehe Arbeitspaket W2).
+
+let progressNextStepDialogCtx = null;  // { refType, refId, resolve }
+
+function isValidProgressRefType(t) { return t === 'todo' || t === 'topic'; }
+
+function makeProgressClientToken() {
+  // Muss ^[A-Za-z0-9_-]{1,64}$ erfüllen (siehe lib/progress/routes.js) — dient
+  // ausschließlich der serverseitigen Idempotenz bei Netzwerk-Retries.
+  if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+}
+
+// ── Nächster Schritt bearbeiten (dauerhaft am Vorhaben, Story 5) ──
+// Eigenständiger Dialog, dauerhaft im Verlaufs-Panel sichtbar/editierbar,
+// unabhaengig vom Stack-Zustand
+// (Tester-Fund: bislang nur transient im Push-Dialog vorbelegt).
+function openProgressNextStepDialog(ctx) {
+  return new Promise((resolve) => {
+    const refType = ctx && ctx.refType, refId = ctx && ctx.refId;
+    if (!isValidProgressRefType(refType) || !refId) { resolve('cancelled'); return; }
+    progressNextStepDialogCtx = { refType, refId, resolve };
+    const ta = document.getElementById('progress-nextstep-input');
+    ta.value = (ctx && ctx.nextStep) || '';
+    document.getElementById('progress-nextstep-char-hint').textContent = `${ta.value.length} / 1.000 Zeichen`;
+    document.getElementById('progress-nextstep-error').style.display = 'none';
+    document.getElementById('progress-nextstep-modal').style.display = 'flex';
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 50);
+  });
+}
+
+function closeProgressNextStepDialog(result) {
+  document.getElementById('progress-nextstep-modal').style.display = 'none';
+  const ctx = progressNextStepDialogCtx;
+  progressNextStepDialogCtx = null;
+  if (ctx && typeof ctx.resolve === 'function') ctx.resolve(result);
+}
+
+function progressNextStepOverlayClick(e) {
+  if (e.target.id !== 'progress-nextstep-modal') return;
+  if (document.getElementById('progress-nextstep-input').value.trim() !== '') return;
+  closeProgressNextStepDialog('cancelled');
+}
+
+async function submitProgressNextStepDialog() {
+  const ctx = progressNextStepDialogCtx;
+  if (!ctx) return;
+  const nextStep = document.getElementById('progress-nextstep-input').value;
+  const errEl = document.getElementById('progress-nextstep-error');
+  errEl.style.display = 'none';
+  if (nextStep.length > 1000) {
+    errEl.textContent = 'Der nächste Schritt darf maximal 1.000 Zeichen haben.';
+    errEl.style.display = '';
+    return;
+  }
+  setBusy('progress-nextstep-save-btn', true);
+  try {
+    await TSHost.api('PUT', `/api/progress/${encodeURIComponent(ctx.refType)}/${encodeURIComponent(ctx.refId)}/next-step`, { nextStep });
+    closeProgressNextStepDialog('saved');
+  } catch (e) {
+    errEl.textContent = e.message || 'Speichern fehlgeschlagen. Bitte erneut versuchen.';
+    errEl.style.display = '';
+  } finally {
+    setBusy('progress-nextstep-save-btn', false);
+  }
+}
+
+// ── KI-Re-Entry-Zusammenfassung für die Wiedereinstiegskarte ──
+// Eigenständige Variante von runReentryFor() oben: liefert das Ergebnis als
+// String zurück statt es in ein Banner zu schreiben (TSProgress rendert die
+// Ausgabe selbst) — siehe Vertrag TSHost.progress.aiReentry. Nutzt bewusst
+// denselben aiCall()-Helper wie runReentryFor(), keine zweite Implementierung
+// des Kosten-/Bestätigungs-Handlings.
+async function runProgressAiReentry(frameId) {
+  const r = await aiCall('POST', `/ai/stack/${frameId}/reentry`);
+  return (r && r.content && typeof r.content.summary === 'string') ? r.content.summary : '';
+}
+
+// ── Listen nach Fortschrittsänderung aktualisieren (TSHost.progress.onProgressChanged) ──
+async function onProgressChangedHost(refType, refId) {
+  if (window.TSProgress && typeof TSProgress.invalidate === 'function') TSProgress.invalidate(refType, refId);
+  try {
+    if (refType === 'todo') await loadTodos();
+    else if (refType === 'topic') await loadMeetings();
+  } catch (_) { /* Liste bleibt ggf. veraltet — kein Blocker, kein Datenverlust */ }
+  render();
+}
+
+// ── Zwischenstand im Hintergrund speichern (Snooze-/Pop-Dialoge, Story 6) ──
+// Wird NACH einem bereits erfolgreichen Snooze/Pop aufgerufen. Schlägt dieser
+// zweite Request fehl, bleibt der bereits erfolgreiche Snooze/Pop unberührt —
+// stattdessen erscheint ein nicht-blockierender Hinweis mit Retry-Aktion; der
+// Text bleibt dafür im Funktions-Closure erhalten.
+function submitProgressEntryBackground(refType, refId, bodyHtml, source) {
+  if (!bodyHtml) return;
+  const clientToken = makeProgressClientToken();
+  function attempt() {
+    TSHost.api('POST', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}/entries`, {
+      body: bodyHtml, source, clientToken,
+    }).then(() => {
+      onProgressChangedHost(refType, refId);
+    }).catch(() => {
+      showProgressRetryToast('Zwischenstand konnte nicht gespeichert werden.', attempt);
+    });
+  }
+  attempt();
+}
+
+function showProgressRetryToast(msg, retryFn) {
+  const el = document.createElement('div');
+  el.className = 'toast toast-error';
+  const retryId = 'ts-progress-retry-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+  el.innerHTML = `<div class="ts-progress-retry-toast"><span>${escHtml(msg)}</span>` +
+    `<button type="button" id="${escHtml(retryId)}">Erneut versuchen</button></div>`;
+  document.getElementById('toast-container').appendChild(el);
+  const btn = document.getElementById(retryId);
+  if (btn) btn.addEventListener('click', () => { el.remove(); retryFn(); });
+  setTimeout(() => el.remove(), 9000);
+}
+
+// ── Fortschrittsbereich eingebettet in Todo-/Themen-Modal (Arbeitspaket W2) ──
+// Ersetzt das frühere separate Verlaufs-Panel: der Zeitstrahl (inkl. Composer
+// für einen neuen Zwischenstand, Nächster-Schritt-Kopf und
+// Wiedereinstiegskarte) ist fest unterhalb der Beschreibung im jeweiligen
+// Bearbeiten-Modal eingebettet und nur beim Bearbeiten eines bestehenden
+// Todos/Themas sichtbar.
+
+// Sicherheitsfix (Security Review, Mittel, Fund 1): der pending clientToken
+// eines Composer-Commits wird an das konkrete Vorhaben (refType/refId)
+// gebunden, nicht nur an den UI-Slot ('todo'|'topic'). Ohne diese Bindung
+// würde ein Token, der für ein Vorhaben erzeugt, aber wegen eines Netzwerk-
+// fehlers nie zugestellt wurde, bei einem nachfolgenden Speichern-Versuch
+// für ein ANDERES Vorhaben (z. B. ein zwischenzeitlich neu angelegtes Todo)
+// wiederverwendet — der Zwischenstand würde serverseitig (Idempotenz über
+// user_id + client_token) am falschen Vorhaben landen. Schlüsselformat
+// analog zur bestehenden nativen App-Lösung (ProgressStore.pendingEntryTokens,
+// dort `refType:refId`), hier zusätzlich um den UI-Slot ergänzt.
+const progressComposerToken = {}; // `${key}:${refType}:${refId}` -> pending clientToken des Composers
+function progressComposerTokenKey(key, refType, refId) { return `${key}:${refType}:${refId}`; }
+// Verwirft alle für einen UI-Slot ('todo'|'topic') gemerkten Tokens, unabhängig
+// vom zuletzt referenzierten Vorhaben — wird beim Öffnen/Schließen des
+// eingebetteten Fortschrittsbereichs aufgerufen, da closeProgressEmbed(key)
+// selbst kein refType/refId kennt (siehe Vertrag von openProgressEmbed/
+// closeProgressEmbed weiter unten).
+function clearProgressComposerTokensForSlot(key) {
+  const prefix = `${key}:`;
+  Object.keys(progressComposerToken).forEach(k => { if (k.startsWith(prefix)) delete progressComposerToken[k]; });
+}
+const timelineHandles = {};       // key -> Handle von TSProgress.mountTimeline
+const reentryHandles  = {};       // key -> Handle von TSProgress.mountReentryCard
+
+// Die Feld-Ids im Topic-Modal folgen der bestehenden Namenskonvention dieses
+// Modals (z. B. "t-title" statt "todo-title") — deshalb hier eine Zuordnung
+// von "key" auf den tatsächlichen Id-Präfix, statt den Key direkt als
+// Präfix zu verwenden.
+const PROGRESS_EMBED_ID_PREFIX = { todo: 'todo', topic: 't' };
+
+function progressEmbedIds(key) {
+  const p = PROGRESS_EMBED_ID_PREFIX[key] || key;
+  return {
+    section: `${p}-progress-section`,
+    timelineMount: `${p}-progress-timeline-mount`,
+    composerSlot: `${p}-progress-composer-slot`,
+    note: `${p}-progress-note`,
+    noteHint: `${p}-progress-note-hint`,
+    noteError: `${p}-progress-note-error`,
+    noteSaveBtn: `${p}-progress-note-save-btn`,
+    reentryMount: `${p}-progress-reentry-mount`,
+  };
+}
+
+// Bettet den Fortschrittsverlauf für ein bestehendes Vorhaben ein. `key`
+// identifiziert die Composer-/Handle-Instanz ('todo'|'topic'), `refType`/
+// `refId` das Vorhaben selbst (siehe TSProgress.mountTimeline-Vertrag).
+function openProgressEmbed(key, refType, refId) {
+  if (!isValidProgressRefType(refType) || !refId) return;
+  closeProgressEmbed(key); // vorherigen Mount-Zustand (anderes Vorhaben) sicher aufräumen
+  const ids = progressEmbedIds(key);
+  const section = document.getElementById(ids.section);
+  const composerSlotEl = document.getElementById(ids.composerSlot);
+  const reentryMountEl = document.getElementById(ids.reentryMount);
+  const timelineMountEl = document.getElementById(ids.timelineMount);
+  if (!section || !composerSlotEl || !reentryMountEl || !timelineMountEl) return;
+
+  section.style.display = '';
+  setRT(ids.note, '');
+  const errEl = document.getElementById(ids.noteError);
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  const hintEl = document.getElementById(ids.noteHint);
+  if (hintEl) hintEl.style.display = 'none';
+  clearProgressComposerTokensForSlot(key);
+
+  if (!window.TSProgress) { toast('Fortschrittsmodul ist noch nicht geladen — bitte kurz warten.', 'error'); return; }
+
+  // Reihenfolge gemäß mountTimeline-Vertrag: mountReentryCard zuerst separat
+  // mounten, den befüllten Container danach unverändert als reentrySlot an
+  // mountTimeline übergeben (siehe progress-dev.html).
+  reentryHandles[key] = TSProgress.mountReentryCard(reentryMountEl, {
+    refType, refId,
+    onRequestCompose: () => {
+      const noteEl = document.getElementById(ids.note);
+      if (noteEl) {
+        noteEl.focus();
+        if (typeof noteEl.scrollIntoView === 'function') noteEl.scrollIntoView({ block: 'nearest' });
+      }
+    },
+  });
+  timelineHandles[key] = TSProgress.mountTimeline(timelineMountEl, {
+    refType, refId,
+    composerSlot: composerSlotEl,
+    reentrySlot: reentryMountEl,
+  });
+}
+
+// Hängt beide Handles aus (Reentry zuerst, dann Timeline, siehe W1-Hinweis)
+// und blendet den Fortschrittsbereich wieder aus. Sicher mehrfach aufrufbar.
+function closeProgressEmbed(key) {
+  const ids = progressEmbedIds(key);
+  if (reentryHandles[key]) { reentryHandles[key].destroy(); delete reentryHandles[key]; }
+  if (timelineHandles[key]) { timelineHandles[key].destroy(); delete timelineHandles[key]; }
+  clearProgressComposerTokensForSlot(key);
+  // Sicherheitsfix (Security Review, Niedrig, Fund 4): Notiz-Feld und
+  // Hinweis-/Fehleranzeigen beim Ausblenden genauso zurücksetzen wie beim
+  // Öffnen (siehe openProgressEmbed) — sonst bleibt beim nächsten Anlegen
+  // eines NEUEN Todos/Themas (Section erscheint erst gar nicht) Text aus
+  // einer vorherigen Bearbeiten-Sitzung im ausgeblendeten Composer-Feld
+  // stehen und könnte fälschlich am neuen Vorhaben committet werden.
+  setRT(ids.note, '');
+  const errEl = document.getElementById(ids.noteError);
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  const hintEl = document.getElementById(ids.noteHint);
+  if (hintEl) hintEl.style.display = 'none';
+  const section = document.getElementById(ids.section);
+  if (section) section.style.display = 'none';
+}
+
+function updateProgressComposerCharHint(key) {
+  const ids = progressEmbedIds(key);
+  const el = document.getElementById(ids.note);
+  const hintEl = document.getElementById(ids.noteHint);
+  if (!el || !hintEl) return;
+  const len = (el.textContent || '').length;
+  if (len > 0) {
+    hintEl.textContent = `${len} / 5.000 Zeichen (ungefähr)`;
+    hintEl.style.display = '';
+  } else {
+    hintEl.style.display = 'none';
+  }
+}
+
+// Committet den Inhalt des Composers als neuen Zwischenstand. Liefert
+// 'noop' (kein Inhalt, kein Request), 'saved' oder 'failed'. Wird sowohl vom
+// eigenständigen "Zwischenstand speichern"-Button als auch nach erfolgreichem
+// Todo-/Themen-Speichern aufgerufen — nach einem erfolgreichen Commit ist der
+// Composer leer, ein zweiter Aufruf ist daher automatisch ein no-op (kein
+// doppelter Eintrag bei Composer-Save gefolgt von Formular-Speichern).
+async function commitProgressComposer(key, refType, refId, snoozedUntilValue) {
+  const ids = progressEmbedIds(key);
+  if (!isValidProgressRefType(refType) || !refId) return 'noop';
+  // Sicherheitsfix (Security Review, Niedrig, Fund 4): ist der eingebettete
+  // Fortschrittsbereich für diesen Slot gerade ausgeblendet, wird NIE
+  // committet — ein sichtbarer Composer ist Voraussetzung dafür, dass der
+  // Inhalt tatsächlich vom Nutzer für DIESES Vorhaben eingegeben wurde
+  // (verhindert defensiv, dass Restinhalt aus einer anderen Sitzung an ein
+  // frisch angelegtes Todo/Thema committet wird, siehe auch closeProgressEmbed).
+  const section = document.getElementById(ids.section);
+  if (!section || section.style.display === 'none') return 'noop';
+  const html = getRT(ids.note);
+  if (!window.TSProgress || TSProgress.isEffectivelyEmptyHtml(html)) return 'noop';
+  const errEl = document.getElementById(ids.noteError);
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  const source = TSProgress.deriveEntrySource({ snoozedUntil: snoozedUntilValue });
+  // Sicherheitsfix (Security Review, Mittel, Fund 1): Token an refType/refId
+  // binden (siehe Deklaration von progressComposerToken oben) statt nur an
+  // den UI-Slot, damit ein Retry nie den Token eines anderen Vorhabens nutzt.
+  const tokenKey = progressComposerTokenKey(key, refType, refId);
+  if (!progressComposerToken[tokenKey]) progressComposerToken[tokenKey] = makeProgressClientToken();
+  try {
+    await TSHost.api('POST', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}/entries`, {
+      body: html, source, clientToken: progressComposerToken[tokenKey],
+    });
+    setRT(ids.note, '');
+    updateProgressComposerCharHint(key);
+    delete progressComposerToken[tokenKey];
+    if (timelineHandles[key]) timelineHandles[key].reload();
+    if (reentryHandles[key]) reentryHandles[key].reload();
+    onProgressChangedHost(refType, refId);
+    return 'saved';
+  } catch (e) {
+    if (errEl) {
+      errEl.textContent = e.message || 'Zwischenstand konnte nicht gespeichert werden.';
+      errEl.style.display = '';
+    }
+    return 'failed';
+  }
+}
+
+// Eigenständiger Composer-Speichern-Button: speichert NUR den Zwischenstand,
+// ohne das gesamte Todo/Thema-Formular zu speichern.
+async function saveTodoProgressComposerBtn() {
+  if (!editTodoId) return;
+  const ids = progressEmbedIds('todo');
+  setBusy(ids.noteSaveBtn, true);
+  try {
+    const r = await commitProgressComposer('todo', 'todo', editTodoId, document.getElementById('todo-snooze').value);
+    if (r === 'saved') toast('Zwischenstand gespeichert');
+  } finally {
+    setBusy(ids.noteSaveBtn, false);
+  }
+}
+
+async function saveTopicProgressComposerBtn() {
+  if (!editTopicId) return;
+  const ids = progressEmbedIds('topic');
+  setBusy(ids.noteSaveBtn, true);
+  try {
+    const r = await commitProgressComposer('topic', 'topic', editTopicId, document.getElementById('t-snooze').value);
+    if (r === 'saved') toast('Zwischenstand gespeichert');
+  } finally {
+    setBusy(ids.noteSaveBtn, false);
   }
 }
 
@@ -8737,6 +9516,336 @@ function pickDigest(artifactId) {
   if (a) { digestState.current = { artifact_id: a.artifact_id, content: a.content, week: a.week, cached: true }; render(); }
 }
 
+// ── Archiv: "Meetings archivieren statt löschen" (Arbeitspaket W1) ──────
+// Server-Grundlage (bereits gemergt): lib/archive/*, Server-Integration in
+// server.js (Pakete B1-B3). Diese Sektion implementiert ausschließlich den
+// Web-Client (index.html) gegen den dort festgelegten Schnittstellenvertrag.
+//
+// ---- ARCHIVE_PURE_HELPERS_START -----------------------------------------
+// Reine, DOM-/Netzwerk-freie Formatierungsfunktionen. Werden von
+// test/archive_web_helpers.test.js per Regex aus dieser Datei extrahiert und
+// in einer Sandbox ausgeführt (index.html ist kein eigenständiges CommonJS-
+// Modul wie public/progress.js). Diese Funktionen dürfen daher AUSSCHLIESSLICH
+// mit ihren Argumenten arbeiten — keine Referenzen auf window/document/fetch/
+// beliebige äußere Variablen dieser Datei.
+
+// Chip-Text einer Archiv-Karte: "{N} Themen · {N} erledigt".
+function archiveTopicChipText(topicCount, openTopicCount) {
+  const total = Number.isFinite(topicCount) ? Math.max(0, topicCount) : 0;
+  const open  = Number.isFinite(openTopicCount) ? Math.max(0, Math.min(openTopicCount, total)) : 0;
+  const done  = total - open;
+  return `${total} Themen · ${done} erledigt`;
+}
+
+// Text des Archiv-Badges (Icon + Text, niemals nur Farbe). `dateLabel` ist
+// bereits fertig formatiert (siehe fmtDateOnly) — diese Funktion fügt nur
+// Icon/Label zusammen und bleibt damit unabhängig von Locale-/Datumslogik.
+function archiveBadgeText(dateLabel) {
+  const label = (typeof dateLabel === 'string' && dateLabel.trim()) ? dateLabel.trim() : '—';
+  return `🗃 Archiviert am ${label}`;
+}
+
+// Zahlen-Text für den "Endgültig löschen"-Dialog aus dem preflight-`impact`.
+function archiveImpactText(impact) {
+  const i = impact || {};
+  const num = (v) => Number.isFinite(v) ? Math.max(0, v) : 0;
+  const topics    = num(i.topics);
+  const entries   = num(i.progressEntries);
+  const files     = num(i.attachments);
+  const parts = [
+    topics  === 1 ? '1 Thema'                : `${topics} Themen`,
+    entries === 1 ? '1 Fortschrittseintrag'  : `${entries} Fortschrittseinträge`,
+    files   === 1 ? '1 Anhang'               : `${files} Anhänge`,
+  ];
+  return parts.join(', ');
+}
+
+// Kommagetrennte Themen-Titel aus conflicts.openFrames für die Stack-
+// Konflikt-Warnung. Ungültige/fehlende Einträge werden defensiv übersprungen.
+function archiveStackConflictText(openFrames) {
+  const list = Array.isArray(openFrames) ? openFrames : [];
+  return list
+    .map(f => (f && typeof f.topicTitle === 'string') ? f.topicTitle.trim() : '')
+    .filter(Boolean)
+    .join(', ');
+}
+// ---- ARCHIVE_PURE_HELPERS_END -------------------------------------------
+
+if (typeof window !== 'undefined') {
+  window.TSArchive = { archiveTopicChipText, archiveBadgeText, archiveImpactText, archiveStackConflictText };
+}
+
+// ---- State ----------------------------------------------------------------
+let archiveState = { items: [], total: 0, q: '', offset: 0, loaded: false, loading: false, error: null };
+const ARCHIVE_PAGE_SIZE = 50;
+let _archiveSearchTimer = null;
+
+let archiveDetailState = { id: null, data: null, loading: false, error: null };
+const archiveDetailTimelineHandles = {}; // topicId -> Handle von TSProgress.mountTimeline
+let archiveDetailMountedForId = null;    // verhindert Remount bei jedem renderMain() (z. B. Themen-Suche)
+
+function destroyArchiveDetailTimelines() {
+  Object.keys(archiveDetailTimelineHandles).forEach(k => {
+    try { archiveDetailTimelineHandles[k].destroy(); } catch (_) { /* best effort */ }
+    delete archiveDetailTimelineHandles[k];
+  });
+}
+
+// ---- Archiv-Liste -----------------------------------------------------
+
+async function loadArchiveList(reset) {
+  if (reset) { archiveState.offset = 0; archiveState.items = []; }
+  archiveState.loading = true;
+  archiveState.error = null;
+  if (selectedId === '__archive__') render();
+  try {
+    const qParam = archiveState.q ? `&q=${encodeURIComponent(archiveState.q)}` : '';
+    const r = await api('GET', `/archive/meetings?limit=${ARCHIVE_PAGE_SIZE}&offset=${archiveState.offset}${qParam}`);
+    archiveState.items = Array.isArray(r.items) ? r.items : [];
+    archiveState.total = Number.isFinite(r.total) ? r.total : archiveState.items.length;
+    archiveState.loaded = true;
+  } catch (e) {
+    archiveState.error = 'Archiv konnte nicht geladen werden.';
+  } finally {
+    archiveState.loading = false;
+    if (selectedId === '__archive__') render();
+  }
+}
+
+function onArchiveSearch(val) {
+  archiveState.q = val;
+  clearTimeout(_archiveSearchTimer);
+  _archiveSearchTimer = setTimeout(() => loadArchiveList(true), 200);
+}
+
+function renderArchiveView(el) {
+  if (!archiveState.loaded && !archiveState.loading && !archiveState.error) loadArchiveList(true);
+  el.innerHTML = `
+    <div class="full-width-view">
+      <div class="meeting-header">
+        <div class="meeting-header-accent" style="background:var(--primary)"></div>
+        <div class="meeting-header-body">
+          <div class="meeting-header-info">
+            <h1 class="meeting-title">Archiv</h1>
+            <p class="meeting-description" style="color:var(--text-muted)">Archivierte Meetings</p>
+          </div>
+        </div>
+      </div>
+      <div class="topics-section">
+        <div class="topics-header">
+          <div class="topics-header-left"><h2>Meetings</h2>
+            <span class="topic-count-badge">${archiveState.total}</span>
+          </div>
+          <input type="search" class="topic-search" id="archive-search-input"
+            aria-label="Archiv nach Titel durchsuchen" placeholder="Suchen …"
+            value="${escHtml(archiveState.q)}" oninput="onArchiveSearch(this.value)">
+        </div>
+        ${renderArchiveListBody()}
+      </div>
+    </div>`;
+}
+
+function renderArchiveListBody() {
+  if (archiveState.loading && !archiveState.loaded) {
+    return `<div class="empty-topics"><span class="ai-spinner"></span></div>`;
+  }
+  if (archiveState.error) {
+    return `<div class="empty-topics">
+      🗃 ${escHtml(archiveState.error)}
+      <div style="margin-top:.75rem"><button class="btn btn-secondary btn-sm" onclick="loadArchiveList(true)">Erneut versuchen</button></div>
+    </div>`;
+  }
+  if (archiveState.items.length === 0) {
+    return archiveState.q
+      ? `<div class="empty-topics">Keine Treffer im Archiv.</div>`
+      : `<div class="empty-topics">
+          <div style="font-size:1.75rem;margin-bottom:.5rem">🗃</div>
+          Noch keine archivierten Meetings.<br>
+          <span style="font-size:.8125rem;color:var(--text-light)">Archivierte Meetings landen hier — du kannst sie jederzeit wiederherstellen oder endgültig löschen.</span>
+        </div>`;
+  }
+  return archiveState.items.map(m => renderArchiveCard(m)).join('');
+}
+
+function renderArchiveCard(m) {
+  return `
+    <div class="topic-card archive-card">
+      <button type="button" class="archive-card-body" onclick="selectArchiveDetail('${m.id}')">
+        <span class="meeting-color-dot" style="background:${m.color||'#1D6FE8'}"></span>
+        <span class="archive-card-main">
+          <span class="archive-card-title">${escHtml(m.title)}</span>
+          <span class="archive-card-meta">
+            <span class="pill pill-open">${escHtml(archiveTopicChipText(m.topicCount, m.openTopicCount))}</span>
+            <span class="archive-badge">${escHtml(archiveBadgeText(fmtDateOnly(m.archivedAt)))}</span>
+          </span>
+        </span>
+      </button>
+      <div class="archive-card-actions">
+        <button class="btn btn-secondary btn-sm" onclick="restoreArchivedMeeting('${m.id}', false)">↺ Wiederherstellen</button>
+        <details class="topic-overflow" onclick="event.stopPropagation()">
+          <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
+          <div class="topic-overflow-menu">
+            <button class="danger" onclick="closeAllOverflow(); confirmPermanentlyDeleteMeeting('${m.id}','${escJsAttr(m.title)}', false)">
+              <span class="icon">🗑️</span><span>Endgültig löschen</span>
+            </button>
+          </div>
+        </details>
+      </div>
+    </div>`;
+}
+
+// ---- Archiv-Detail (Nur-Lesen) ------------------------------------------
+
+async function selectArchiveDetail(id) {
+  archiveDetailState = { id, data: null, loading: true, error: null };
+  selectedId = '__archive_detail__';
+  topicFilter = '';
+  closeMobileSidebar();
+  updateTopbar('Archiv');
+  render();
+  try {
+    const m = await api('GET', `/archive/meetings/${id}`);
+    if (archiveDetailState.id !== id) return; // zwischenzeitlich weiternavigiert
+    archiveDetailState.data = m;
+  } catch (e) {
+    if (archiveDetailState.id !== id) return;
+    archiveDetailState.error = 'Archiv konnte nicht geladen werden.';
+  } finally {
+    if (archiveDetailState.id === id) archiveDetailState.loading = false;
+    if (selectedId === '__archive_detail__') render();
+  }
+}
+
+function renderArchiveDetailView(el) {
+  const st = archiveDetailState;
+  if (st.loading && !st.data) {
+    el.innerHTML = `<div class="full-width-view"><div class="empty-topics"><span class="ai-spinner"></span></div></div>`;
+    return;
+  }
+  if (st.error) {
+    el.innerHTML = `<div class="full-width-view"><div class="empty-topics">
+      🗃 ${escHtml(st.error)}
+      <div style="margin-top:.75rem"><button class="btn btn-secondary btn-sm" onclick="selectArchiveDetail('${st.id}')">Erneut versuchen</button></div>
+    </div></div>`;
+    return;
+  }
+  if (!st.data) { el.innerHTML = ''; return; }
+  el.innerHTML = renderMeetingDetailHtml(st.data, { readOnly: true });
+  mountArchiveDetailExtras(st.data);
+}
+
+// Bindet Anhänge (Downloads) und Fortschrittsverlauf (falls vorhanden) in die
+// bereits gerenderten Themenkarten ein — Wiederverwendung der bestehenden
+// Mechanismen (loadAttachments/attachSectionHtml mit readOnly=true,
+// TSProgress.mountTimeline ohne composerSlot/reentrySlot). Läuft nur einmal
+// pro geladenem Meeting (siehe archiveDetailMountedForId), damit z. B. die
+// Themen-Suche im readOnly-Modus nicht bei jedem Tastendruck neu mountet.
+function mountArchiveDetailExtras(m) {
+  if (archiveDetailMountedForId === m.id) return;
+  destroyArchiveDetailTimelines();
+  archiveDetailMountedForId = m.id;
+  (m.topics || []).forEach(t => {
+    loadAttachments('topic', t.id, true);
+    if (t.progress && t.progress.entryCount > 0 && window.TSProgress) {
+      const mountEl = document.getElementById(`ro-progress-topic-${t.id}`);
+      if (mountEl) archiveDetailTimelineHandles[t.id] = TSProgress.mountTimeline(mountEl, { refType: 'topic', refId: t.id });
+    }
+  });
+}
+
+// ---- Aktionen: Archivieren / Wiederherstellen / Endgültig löschen -------
+
+async function confirmArchiveMeeting(id) {
+  const m = getMeeting(id);
+  if (!m) return;
+  const ok = await genericConfirm(
+    'Meeting archivieren?',
+    `„${m.title}" wird archiviert und ist danach im Archiv-Bereich zu finden. Alle Themen, Ergebnisse und Anhänge bleiben erhalten.`,
+    'Archivieren', 'Abbrechen'
+  );
+  if (!ok) return;
+  await runArchiveMeeting(id);
+}
+
+async function confirmArchiveStackConflict(conflicts) {
+  const openFrames = (conflicts && Array.isArray(conflicts.openFrames)) ? conflicts.openFrames : [];
+  const names = archiveStackConflictText(openFrames);
+  return genericConfirm(
+    'Offenes Stack-Frame im Meeting',
+    `${names ? `Betroffene Themen: „${names}". ` : ''}Das offene Stack-Frame wird beim Archivieren NICHT automatisch geschlossen.`,
+    'Trotzdem archivieren', 'Abbrechen'
+  );
+}
+
+async function runArchiveMeeting(id, acknowledgeStackConflict) {
+  let res;
+  try {
+    res = await api('POST', `/archive/meeting/${id}`, acknowledgeStackConflict ? { acknowledgeStackConflict: true } : {});
+  } catch (e) {
+    if (e.status === 409 && e.body && e.body.code === 'ARCHIVE_STACK_CONFLICT') {
+      const proceed = await confirmArchiveStackConflict(e.body.conflicts);
+      if (proceed) await runArchiveMeeting(id, true);
+      return;
+    }
+    toast('Meeting konnte nicht archiviert werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  meetings = meetings.filter(x => x.id !== id);
+  if (selectedId === id) selectedId = null;
+  archiveState.loaded = false; // nächster Archiv-Besuch lädt frische Liste
+  render();
+  toast('Meeting archiviert — im Archiv wiederzufinden.');
+  document.querySelector('.sidebar-new-btn')?.focus?.();
+}
+
+async function restoreArchivedMeeting(id, fromDetail) {
+  try {
+    await api('DELETE', `/archive/meeting/${id}`);
+  } catch (e) {
+    toast('Meeting konnte nicht wiederhergestellt werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  archiveState.items = archiveState.items.filter(x => x.id !== id);
+  archiveState.total = Math.max(0, archiveState.total - 1);
+  if (_archiveSearchDetailCache[id]) delete _archiveSearchDetailCache[id];
+  await loadMeetings();
+  // Aus der Nur-Lese-Detailansicht führt Wiederherstellen direkt in die
+  // jetzt wieder normal bearbeitbare Meeting-Ansicht (nicht zurück ins
+  // Archiv) — aus der Archiv-Liste bleibt man in der Liste.
+  if (fromDetail) { selectMeeting(id); }
+  else { render(); }
+  toast('Meeting wiederhergestellt.');
+}
+
+async function confirmPermanentlyDeleteMeeting(id, title, fromDetail) {
+  let preflight;
+  try {
+    preflight = await api('GET', `/archive/meeting/${id}/preflight`);
+  } catch (e) {
+    toast('Löschumfang konnte nicht ermittelt werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  const ok = await genericConfirm(
+    'Meeting endgültig löschen?',
+    `„${title}" wird unwiderruflich gelöscht: ${archiveImpactText(preflight.impact)}.`,
+    'Endgültig löschen', 'Abbrechen',
+    { danger: true, focus: 'cancel' }
+  );
+  if (!ok) return;
+  try {
+    await api('DELETE', `/archive/meeting/${id}/permanent`);
+  } catch (e) {
+    toast('Meeting konnte nicht endgültig gelöscht werden. Bitte versuche es erneut.', 'error');
+    return;
+  }
+  archiveState.items = archiveState.items.filter(x => x.id !== id);
+  archiveState.total = Math.max(0, archiveState.total - 1);
+  if (_archiveSearchDetailCache[id]) delete _archiveSearchDetailCache[id];
+  if (fromDetail) { selectView('__archive__'); }
+  else { render(); }
+  toast(`„${title}" endgültig gelöscht.`);
+}
+
 // ── Keyboard shortcut matcher ────────────────────────────────
 function eventMatchesShortcut(e, combo) {
   const parts = combo.toLowerCase().split('+').map(s => s.trim());
@@ -8767,17 +9876,40 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'Escape') {
+    // Sicherheitsfix (Security Review, Mittel, Fund 3): #confirm-dialog ist
+    // ein global geteilter Dialog, den u. a. genericConfirm() nutzt (z. B. der
+    // Composer-Datenverlustschutz beim Schließen von Todo-/Topic-Modal, siehe
+    // closeTodoModal()/requestCloseTopicModal()). Ist er gerade
+    // sichtbar, schließt Escape NUR ihn — über denselben Pfad wie ein Klick
+    // auf "Abbrechen" (inkl. Promise-Resolve + Label-/Klassen-Cleanup über
+    // closeConfirm(), siehe genericConfirm()) — und bricht danach sofort ab.
+    // Andernfalls würde ein im selben Tastendruck weiter unten zusätzlich
+    // aufgerufenes closeTodoModal()/requestCloseTopicModal() (das bei
+    // ungesichertem Composer-Text seinerseits den Dialog erst öffnet) durch
+    // das anschließende blinde closeConfirm() sofort wieder zugeklappt werden,
+    // ohne dass Labels/Klasse zurückgesetzt oder die Promise aufgelöst wird.
+    const confirmDialogEl = document.getElementById('confirm-dialog');
+    if (confirmDialogEl && confirmDialogEl.style.display !== 'none') {
+      const actions = confirmDialogEl.querySelector('.confirm-actions');
+      const cancelBtn = actions && actions.children[0];
+      if (cancelBtn && typeof cancelBtn.onclick === 'function') cancelBtn.onclick();
+      else closeConfirm();
+      return;
+    }
     if (document.getElementById('search-overlay').classList.contains('open')) { closeSearch(); return; }
     closeMobileSidebar();
     closeHelp();
-    // todo-modal nimmt an der Verwerfen-Rückfrage teil (ungespeicherte
-    // Änderungen) und wird daher NICHT blind ausgeblendet, sondern über
-    // closeTodoModal() geschlossen.
-    ['meeting-modal','topic-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal','progress-entry-modal']
+    // todo-modal/topic-modal nehmen an der Verwerfen-Rückfrage teil
+    // (ungespeicherte Änderungen) und werden daher NICHT blind ausgeblendet,
+    // sondern über die Request-Funktionen geschlossen (Datenverlustschutz
+    // für den Fortschritts-Composer). progress-entry-modal wird separat mit
+    // 'cancelled' geschlossen (siehe unten).
+    ['meeting-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     if (document.getElementById('todo-modal').style.display !== 'none') closeTodoModal();
+    if (document.getElementById('topic-modal').style.display !== 'none') requestCloseTopicModal();
     if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
-    closeConfirm();
+    if (document.getElementById('progress-entry-modal').style.display !== 'none') closeProgressEntryDialog('cancelled');
     return;
   }
   // '?' öffnet Hilfe (nur wenn kein Eingabefeld fokussiert)
@@ -8812,7 +9944,13 @@ document.getElementById('login-pw').addEventListener('keydown',   e => { if (e.k
 document.getElementById('login-user').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('login-pw').focus(); });
 
 // ── Init ─────────────────────────────────────────────────────
-['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc','progress-entry-body'].forEach(id => initRtToolbar(id+'-tb', id));
+// todo-progress-note entfällt (Redesign "Übersichtlichere Todos und Tasks":
+// der Fortschritts-Composer im Todo-Modal ist jetzt TSProgress.mountInline-
+// Composer, kein eigenes rt-content-Feld mehr). t-progress-note/pop-progress-
+// note bleiben unverändert (Themen-/Pop-Dialog nicht Teil dieses Redesigns).
+['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc',
+  'progress-entry-body','t-progress-note','pop-progress-note']
+  .forEach(id => initRtToolbar(id+'-tb', id));
 initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });
 initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });
 
@@ -8893,6 +10031,20 @@ function _hl(text, tokens) {
 // überholten Anfrage das Ergebnis einer neueren nicht mehr überschreiben kann.
 let _searchRequestSeq = 0;
 
+// Cache für archivierte Meeting-Details, die für Suchtreffer nachgeladen
+// werden müssen (GET /api/meetings enthält seit dem Archiv-Feature keine
+// archivierten Meetings mehr — Treffer mit archived:true sind daher NICHT
+// im lokalen `meetings`-Array auffindbar, siehe Schnittstellenvertrag).
+const _archiveSearchDetailCache = {}; // meetingId -> Ergebnis von GET /api/archive/meetings/:id
+async function _fetchArchivedMeetingForSearch(id) {
+  if (_archiveSearchDetailCache[id]) return _archiveSearchDetailCache[id];
+  try {
+    const m = await api('GET', `/archive/meetings/${id}`);
+    _archiveSearchDetailCache[id] = m;
+    return m;
+  } catch { return null; }
+}
+
 async function _runSearch(raw) {
   const tokens = _parseSearchQuery(raw);
   if (!tokens.length) { _renderSearchEmpty(); return; }
@@ -8904,15 +10056,19 @@ async function _runSearch(raw) {
   if (seq !== _searchRequestSeq) return; // veraltete Antwort verwerfen
 
   const byType = {};
+  const pendingArchived = [];
   for (const h of hits) {
     if (h.type === 'meeting') {
       const m = meetings.find(x => x.id === h.id);
       if (m) (byType.meeting ??= []).push(m);
+      else if (h.archived) pendingArchived.push(h);
     } else if (h.type === 'topic') {
+      let found = false;
       for (const m of meetings) {
         const t = (m.topics || []).find(x => x.id === h.id);
-        if (t) { (byType.topic ??= []).push({ topic: t, meeting: m }); break; }
+        if (t) { (byType.topic ??= []).push({ topic: t, meeting: m }); found = true; break; }
       }
+      if (!found && h.archived && h.meetingId) pendingArchived.push(h);
     } else if (h.type === 'todo') {
       const t = todos.find(x => x.id === h.id);
       if (t) (byType.todo ??= []).push(t);
@@ -8925,6 +10081,25 @@ async function _runSearch(raw) {
     } else if (h.type === 'contact') {
       const c = contacts.find(x => x.id === h.id);
       if (c) (byType.contact ??= []).push(c);
+    }
+  }
+
+  // Archivierte Treffer werden laut Vertrag NICHT gefiltert — daher hier per
+  // GET /api/archive/meetings/:id nachladen (dedupliziert je Meeting-Id).
+  if (pendingArchived.length) {
+    const meetingIds = [...new Set(pendingArchived.map(h => h.type === 'meeting' ? h.id : h.meetingId).filter(Boolean))];
+    const details = await Promise.all(meetingIds.map(id => _fetchArchivedMeetingForSearch(id)));
+    if (seq !== _searchRequestSeq) return; // veraltete Antwort verwerfen
+    const detailMap = new Map(meetingIds.map((id, i) => [id, details[i]]));
+    for (const h of pendingArchived) {
+      if (h.type === 'meeting') {
+        const m = detailMap.get(h.id);
+        if (m) (byType.meeting ??= []).push(m);
+      } else {
+        const m = detailMap.get(h.meetingId);
+        const t = m && (m.topics || []).find(x => x.id === h.id);
+        if (t) (byType.topic ??= []).push({ topic: t, meeting: m });
+      }
     }
   }
 
@@ -8989,14 +10164,15 @@ function _renderSearchResults(groups, tokens) {
       const idx = _searchItems.length;
       let title = '', context = '', snippet = '', nav = '';
 
-      let srType = g.type, srId = '', srMid = '';
+      let srType = g.type, srId = '', srMid = '', srArchived = false;
       if (g.type === 'meeting') {
         const m = item;
         title   = _hl(m.title, tokens);
         context = (m.participants||[]).length ? escHtml(m.participants.join(', ')) : '';
         snippet = _hl(_snippet(m.description, tokens), tokens);
         srId = m.id;
-        nav  = `navigateSearchResult('meeting','${m.id}')`;
+        srArchived = m.archived === true;
+        nav  = srArchived ? `navigateSearchResult('meeting','${m.id}','',true)` : `navigateSearchResult('meeting','${m.id}')`;
       } else if (g.type === 'topic') {
         const { topic: t, meeting: m } = item;
         title   = _hl(t.title, tokens);
@@ -9007,7 +10183,8 @@ function _renderSearchResults(groups, tokens) {
         }) || t.description;
         snippet = _hl(_snippet(snipSrc, tokens), tokens);
         srId = t.id; srMid = m.id;
-        nav  = `navigateSearchResult('topic','${t.id}','${m.id}')`;
+        srArchived = m.archived === true;
+        nav  = `navigateSearchResult('topic','${t.id}','${m.id}',${srArchived})`;
       } else if (g.type === 'todo') {
         const t = item;
         title   = _hl(t.title, tokens);
@@ -9042,11 +10219,11 @@ function _renderSearchResults(groups, tokens) {
         nav  = `navigateSearchResult('knowledge','${k.id}')`;
       }
 
-      _searchItems.push({ type: srType, id: srId, meetingId: srMid });
+      _searchItems.push({ type: srType, id: srId, meetingId: srMid, archived: srArchived });
       html += `<div class="search-result-item" data-sr-idx="${idx}" onclick="${nav}; closeSearch()">
         ${_searchIcon(g.type)}
         <div class="search-result-body">
-          <div class="search-result-title">${title}</div>
+          <div class="search-result-title">${title}${srArchived ? ` <span class="archive-badge archive-badge-inline">🗃 Archiviert</span>` : ''}</div>
           ${context ? `<div class="search-result-context">${context}</div>` : ''}
           ${snippet  ? `<div class="search-result-snippet">${snippet}</div>`  : ''}
         </div>
@@ -9065,9 +10242,16 @@ function _setSearchFocus(idx) {
   _searchFocusIdx = idx;
 }
 
-function navigateSearchResult(type, id, meetingId) {
-  if (type === 'meeting') {
+function navigateSearchResult(type, id, meetingId, archived) {
+  if (type === 'meeting' && archived) {
+    selectArchiveDetail(id);
+  } else if (type === 'meeting') {
     selectMeeting(id);
+  } else if (type === 'topic' && archived) {
+    // Archivierte Themen führen laut Vertrag NICHT in den normalen
+    // Bearbeiten-Modal, sondern in die Archiv-Detail-Nur-Lese-Ansicht des
+    // zugehörigen Meetings (über meetingId).
+    selectArchiveDetail(meetingId);
   } else if (type === 'topic') {
     selectMeeting(meetingId);
     setTimeout(() => openTopicModal(meetingId, id), 120);
@@ -9103,7 +10287,7 @@ function onSearchKey(e) {
   } else if (e.key === 'Enter' && _searchFocusIdx >= 0) {
     e.preventDefault();
     const sr = _searchItems[_searchFocusIdx];
-    if (sr) { navigateSearchResult(sr.type, sr.id, sr.meetingId); closeSearch(); }
+    if (sr) { navigateSearchResult(sr.type, sr.id, sr.meetingId, sr.archived); closeSearch(); }
   }
 }
 

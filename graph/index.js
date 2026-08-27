@@ -2,6 +2,11 @@
 
 const crypto = require('crypto');
 const { NODE_TYPES, edgeKindFor, compatibilityList, EDGE_KINDS } = require('./schema');
+// Archiv-Kernmodul (Paket B1): Batch-Lookup für den Archiv-Status von
+// Meetings, um Topic-Knoten archivierter Meetings zu kennzeichnen (Paket B3).
+// Anders als im KI-Modul werden Topic-Knoten HIER NICHT gefiltert - das ist
+// eine bewusste Architekturentscheidung (Wissensmanagement-Zweck des Graphen).
+const archive = require('../lib/archive');
 
 // Harte Obergrenze für die Anzahl der im Graphen zurückgegebenen Knoten.
 // Darüber wird deterministisch abgeschnitten (Priorität: themes, dann
@@ -65,6 +70,16 @@ module.exports = function graphRoutes(app, ctx) {
         JOIN themes th ON th.id=tl.theme_id
         WHERE m.user_id=? AND th.user_id=?
       `).all(userId, userId);
+
+      // Archiv-Kennzeichnung für Topic-Knoten (Paket B3, "Meetings archivieren
+      // statt löschen"): Batch-Lookup über die Menge der beteiligten
+      // Meeting-IDs statt N+1-Einzelabfragen pro Topic - `topicLinkRows`
+      // kennt bereits jede `meeting_id`, also genügt eine zusätzliche Query
+      // unabhängig von der Anzahl der Topics.
+      const topicMeetingIds = new Set(topicLinkRows.map(row => row.meeting_id));
+      const meetingArchivedFlags = topicMeetingIds.size
+        ? archive.archivedFlags(db, [...topicMeetingIds].map(id => ({ refType: 'meeting', refId: id })))
+        : new Map();
 
       const contactLinkRows = db.prepare(`
         SELECT c.id, c.name AS title, c.role, c.created_at,
@@ -153,7 +168,11 @@ module.exports = function graphRoutes(app, ctx) {
             title: row.title,
             done: !!row.done,
             _createdAt: row.created_at,
-            meta: { meetingId: row.meeting_id, meetingTitle: row.meeting_title },
+            meta: {
+              meetingId: row.meeting_id,
+              meetingTitle: row.meeting_title,
+              archived: meetingArchivedFlags.get(`meeting:${row.meeting_id}`) === true,
+            },
           });
         }
       }

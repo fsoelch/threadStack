@@ -174,6 +174,12 @@ struct ContentView: View {
             #else
             GraphView()
             #endif
+        case .archive:
+            #if os(iOS)
+            NavigationStack { MeetingArchiveView() }
+            #else
+            MeetingArchiveView()
+            #endif
         }
     }
 
@@ -255,4 +261,4 @@ struct ContentView: View {
     }
 }
 
-enum SidebarItem: Hashable { case meetings, todos, themes, knowledge, contacts, digest, graph }
+enum SidebarItem: Hashable { case meetings, todos, themes, knowledge, contacts, digest, graph, archive }
