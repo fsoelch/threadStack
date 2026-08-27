@@ -2,8 +2,11 @@
 //  ProgressTimelineView.swift
 //  ThreadStack
 //
-//  Arbeitspaket A2 ("App-UI-Bausteine Progress"): zeigt Zielbild, nächsten
-//  Schritt und den chronologischen Zwischenstand-Verlauf eines Vorhabens.
+//  Arbeitspaket A2 ("App-UI-Bausteine Progress"): zeigt den nächsten Schritt
+//  und den chronologischen Zwischenstand-Verlauf eines Vorhabens. Das frühere
+//  "Zielbild" entfällt laut Produktentscheidung vollständig, ersatzlos, aus
+//  der App-UI (`ProgressDetail.goal` ist DEPRECATED) — dieser Baustein zeigt/
+//  editiert es nirgends mehr.
 //  Reiner Inhaltsbaustein (kein eigener `NavigationStack`/Titel) — wird von
 //  Paket A3 in bestehende Detail-Screens eingebettet (`TodosView`,
 //  `TodoFormView`, `MeetingDetailView`, `StackViews`).
@@ -22,10 +25,10 @@
 //  statt sie selbst zu instanziieren — der einbettende Aufrufer (Paket A2)
 //  entscheidet, WIE der Composer angebunden wird (Fokus-State etc.), diese
 //  View bestimmt nur noch die verbindliche REIHENFOLGE:
-//  Composer → Zielbild → Nächster Schritt → Wiedereinstiegskarte → Verlauf.
+//  Composer → Nächster Schritt → Wiedereinstiegskarte → Verlauf.
 //  `composer()`/`reentry()` werden dabei UNABHÄNGIG vom Ladezustand des
-//  restlichen Bereichs gerendert (siehe `body` unten) — nur Zielbild/
-//  Nächster-Schritt/Trenner/Verlauf schalten auf Lade-/Fehleranzeige um.
+//  restlichen Bereichs gerendert (siehe `body` unten) — nur Nächster-
+//  Schritt/Trenner/Verlauf schalten auf Lade-/Fehleranzeige um.
 //
 //  Der bisherige interne "+ Zwischenstand erfassen"-Einstieg (Kopfzeile UND
 //  Empty-State) entfällt ersatzlos, da das Erfassen jetzt ausschließlich
@@ -113,28 +116,53 @@ enum ProgressDormancyFormatting {
     }
 }
 
+/// Konfigurationskonstanten für den in `TodoFormView`/`TopicFormView`
+/// eingebetteten Fortschrittsverlauf. Bewusst außerhalb der generischen
+/// `ProgressTimelineView` gehalten — Swift erlaubt keine gespeicherten
+/// `static`-Properties in generischen Typen ("static stored properties not
+/// supported in generic types").
+enum ProgressTimelineConfig {
+    /// Seitengröße ist laut UX-Vorgabe bewusst auf 3 reduziert (statt des
+    /// sonst üblichen Defaults von 20) — der Nutzer lädt bei Bedarf über
+    /// "Weitere laden" nach.
+    static let embeddedPageSize = 3
+
+    /// Bewusst ein generischer, gleichbleibender Text statt der spezifischen
+    /// `ProgressError.errorDescription` — UX-Vorgabe für den eingebetteten
+    /// Fortschrittsverlauf-Bereich. Der Rest des Formulars bleibt
+    /// währenddessen unverändert bedienbar, da dieser Fehlerzustand nur den
+    /// Verlaufsbereich selbst betrifft.
+    static let embeddedLoadErrorText = "Das hat leider nicht geklappt. Bitte später erneut versuchen."
+}
+
 // MARK: - View
 
 struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     let refType: String
     let refId: String
     @ObservedObject var store: ProgressStore
+    /// Rohes HTML der Beschreibung des zugehörigen Todos/Themas — wird
+    /// unverändert an `ProgressEntryEditorSheet` durchgereicht (Kontextzeile
+    /// beim Bearbeiten eines Zwischenstands, siehe dortige Doku). `nil`
+    /// (Default) erhält das bisherige Verhalten für Aufrufer ohne
+    /// Beschreibungs-Kontext.
+    var descriptionHTML: String? = nil
     private let composerContent: () -> Composer
     private let reentryContent: () -> Reentry
 
-    @State private var showGoalEditor = false
     @State private var showNextStepEditor = false
     @State private var entrySheetTarget: EntrySheetTarget?
     @State private var deleteCandidate: ProgressEntry?
     @State private var deleteErrorText: String?
     @State private var expandedEntryIds: Set<String> = []
 
-    init(refType: String, refId: String, store: ProgressStore,
+    init(refType: String, refId: String, store: ProgressStore, descriptionHTML: String? = nil,
          @ViewBuilder composer: @escaping () -> Composer,
          @ViewBuilder reentry: @escaping () -> Reentry) {
         self.refType = refType
         self.refId = refId
         self.store = store
+        self.descriptionHTML = descriptionHTML
         self.composerContent = composer
         self.reentryContent = reentry
     }
@@ -148,7 +176,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             // (1) Composer — immer sichtbar, unabhängig vom Ladezustand.
             composerContent()
-            // (2)+(3) Zielbild/Nächster Schritt — nur im geladenen Zustand.
+            // (2) Nächster Schritt — nur im geladenen Zustand.
             headerSection
             // (4) Wiedereinstiegskarte — immer gemountet (verbirgt sich
             // selbst über store.shouldShowReentry, siehe Vertrag), NICHT vom
@@ -162,9 +190,6 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             historySection
         }
         .task { await loadIfNeeded() }
-        .sheet(isPresented: $showGoalEditor) {
-            ProgressGoalEditorSheet(refType: refType, refId: refId, store: store)
-        }
         .sheet(isPresented: $showNextStepEditor) {
             NextStepEditSheet(
                 refType: refType, refId: refId, store: store,
@@ -172,7 +197,8 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             )
         }
         .sheet(item: $entrySheetTarget) { target in
-            ProgressEntryEditorSheet(entry: target.entry, refType: refType, refId: refId, store: store)
+            ProgressEntryEditorSheet(entry: target.entry, refType: refType, refId: refId, store: store,
+                                      descriptionHTML: descriptionHTML)
         }
         .confirmationDialog(
             deleteDialogTitle,
@@ -197,7 +223,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
 
     private func loadIfNeeded() async {
         if store.state(refType: refType, refId: refId) == .idle {
-            await store.load(refType: refType, refId: refId)
+            await store.load(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize)
         }
     }
 
@@ -220,7 +246,6 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     private var headerSection: some View {
         if let detail = store.detail(refType: refType, refId: refId) {
             VStack(alignment: .leading, spacing: 16) {
-                goalSection(detail: detail)
                 nextStepSection(detail: detail)
             }
         }
@@ -246,11 +271,11 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
 
     private func errorState(_ error: ProgressError) -> some View {
         VStack(spacing: 8) {
-            Text(error.errorDescription ?? "Unbekannter Fehler.")
+            Text(ProgressTimelineConfig.embeddedLoadErrorText)
                 .scaledFont(.subheadline).foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
             Button("Erneut versuchen") {
-                Task { await store.retry(refType: refType, refId: refId) }
+                Task { await store.retry(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize) }
             }
             .buttonStyle(.bordered)
         }
@@ -263,27 +288,6 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
         let excerpt = entry.excerpt.isEmpty ? stripHTML(entry.bodyHtml) : entry.excerpt
         let short = excerpt.count > 80 ? String(excerpt.prefix(80)) + "…" : excerpt
         return "Diesen Zwischenstand löschen? \"\(short)\""
-    }
-
-    // MARK: - Zielbild
-
-    private func goalSection(detail: ProgressDetail) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Label("Zielbild", systemImage: "target")
-                    .scaledFont(.footnote).foregroundStyle(.secondary)
-                Spacer()
-                Button { showGoalEditor = true } label: {
-                    Image(systemName: "pencil")
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Zielbild bearbeiten")
-            }
-            let trimmed = detail.goal.trimmingCharacters(in: .whitespacesAndNewlines)
-            Text(trimmed.isEmpty ? "Noch kein Zielbild gesetzt." : trimmed)
-                .scaledFont(.subheadline)
-                .foregroundStyle(trimmed.isEmpty ? .secondary : .primary)
-        }
     }
 
     // MARK: - Nächster Schritt
@@ -426,7 +430,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
                     ProgressView()
                 } else {
                     Button("Weitere laden") {
-                        Task { await store.loadMoreEntries(refType: refType, refId: refId) }
+                        Task { await store.loadMoreEntries(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize) }
                     }
                     .buttonStyle(.bordered)
                     .accessibilityLabel("Weitere Einträge laden")

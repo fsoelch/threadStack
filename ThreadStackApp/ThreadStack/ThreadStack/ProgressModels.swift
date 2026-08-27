@@ -189,8 +189,7 @@ struct ProgressDetail: Codable, Equatable {
     /// Synthesized `Codable` nutzt für optionale Properties automatisch
     /// `decodeIfPresent`, das deckt sowohl "Schlüssel fehlt" als auch
     /// "Schlüssel ist explizit `null`" ab. Kein App-Code liest dieses Feld
-    /// noch aktiv (siehe Abschlussbericht: verbleibende Lesestellen in
-    /// anderen Paketen sind als Abhängigkeit vermerkt).
+    /// noch aktiv.
     let goal: String?
     let goalUpdatedAt: String?
     let nextStep: String

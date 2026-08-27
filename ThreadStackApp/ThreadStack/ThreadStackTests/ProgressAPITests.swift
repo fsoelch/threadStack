@@ -139,6 +139,18 @@ struct ProgressAPIErrorPathTests {
         }
     }
 
+    @Test func saveProgressNextStepThrowsTooLongWithLimitFromNextStepTooLong() async throws {
+        let state = makeProgressTestState { _ in
+            (400, jsonData(["error": "Nächster Schritt zu lang", "code": "next_step_too_long"]))
+        }
+        do {
+            _ = try await state.saveProgressNextStep(refType: "todo", refId: "a1", nextStep: String(repeating: "x", count: 1200))
+            Issue.record("expected ProgressError.tooLong")
+        } catch let e as ProgressError {
+            #expect(e == .tooLong(field: "Nächster Schritt", limit: 1000))
+        }
+    }
+
     @Test func addProgressEntryThrowsRefDoneOn409() async throws {
         let state = makeProgressTestState { _ in
             (409, jsonData(["error": "Vorhaben ist erledigt", "code": "ref_done"]))

@@ -19,6 +19,40 @@ enum TodoSaveTarget: Equatable {
     }
 }
 
+/// Reine Logik für die einklappbare "Weitere Details"-Gruppe (Fällig am +
+/// Erinnerung, Schlafen bis, Privat) — UX-Vorgabe: selten genutzte Felder
+/// werden gebündelt, klappen bei bereits befüllten Werten automatisch auf,
+/// und die Überschrift zeigt eine Kurzzusammenfassung der aktiven Werte
+/// (z.B. "Weitere Details – Fällig am 12.09., Privat"), damit man den
+/// Zustand nicht erst durch Aufklappen erfahren muss.
+enum TodoFormDetailsSummary {
+    /// `nil`, wenn keines der gruppierten Felder aktiv ist — dann zeigt die
+    /// Überschrift nur "Weitere Details" ohne Zusatz.
+    static func summaryText(hasDueDate: Bool, dueDateText: String, hasSnooze: Bool, snoozeDateText: String, isPrivate: Bool) -> String? {
+        var parts: [String] = []
+        if hasDueDate { parts.append("Fällig am \(dueDateText)") }
+        if hasSnooze { parts.append("Schlafen bis \(snoozeDateText)") }
+        if isPrivate { parts.append("Privat") }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    /// Die Gruppe startet automatisch aufgeklappt, sobald mindestens eines
+    /// der selten genutzten Felder bereits einen Wert hat (z.B. beim
+    /// Bearbeiten eines bestehenden Todos mit Fälligkeitsdatum) — beim
+    /// Neuanlegen (alle Werte leer/aus) bleibt sie eingeklappt.
+    static func isExpandedByDefault(hasDueDate: Bool, hasSnooze: Bool, isPrivate: Bool) -> Bool {
+        hasDueDate || hasSnooze || isPrivate
+    }
+
+    /// Kurzes, deutsches Datumsformat für die Zusammenfassung, z.B. "12.09.".
+    static func shortGermanDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "de_DE")
+        f.dateFormat = "d.M."
+        return f.string(from: date)
+    }
+}
+
 struct TodoFormView: View {
     var todo: TodoItem? = nil
     /// Nur im Anlegen-Modus wirksam: verknüpft das neu erstellte Todo nach
@@ -33,16 +67,27 @@ struct TodoFormView: View {
     @EnvironmentObject var progressStore: ProgressStore // Fortschrittsverlauf-Zugriff
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
+    /// Rich-Text-HTML der Beschreibung (siehe `DescriptionReadView`/
+    /// `DescriptionEditorSheet`) — bewusst NICHT mehr Klartext (siehe
+    /// zentrale Bug-Behebung dieses Pakets: der frühere `stripHTML`-
+    /// Klartextpfad zerstörte still vom Web erzeugte Formatierung).
     @State private var description = ""
+    @State private var showDescriptionEditor = false
+    /// Nur im Anlegen-Modus verwendet: die Beschreibung ist dort sofort
+    /// editierbar (kein Stift-Klick nötig, siehe UX-Vorgabe) — dafür wird
+    /// derselbe Editor-Kern wie im Bearbeiten-Sheet inline eingebettet
+    /// (`DescriptionRichTextEditor`, siehe `DescriptionEditorSheet.swift`).
+    @StateObject private var createDescriptionController = KnowledgeEditorController()
+    @State private var createDescriptionContentLoaded = false
     @State private var hasSnooze = false
     @State private var snoozeDate = Date()
     @State private var hasDueDate = false
     @State private var dueDate = Date()
     @State private var dueReminderEnabled = false
     @State private var isPrivate = false
+    @State private var detailsExpanded = false
     @State private var loading = false
     @State private var error: String?
-    @State private var showLinkSheet = false
     // Immer sichtbare Eingabe für einen neuen Zwischenstand (Paket A1),
     // direkt unter der Beschreibung eingebettet (Paket A2 dieser
     // Nachbesserung). Ersetzt den bisherigen "Wo stehe ich gerade?"-Block.
@@ -57,52 +102,38 @@ struct TodoFormView: View {
     // aufzurufen (das wuerde sonst ein Duplikat anlegen).
     @State private var createdId: String?
 
+    private var detailsSummaryText: String? {
+        TodoFormDetailsSummary.summaryText(
+            hasDueDate: hasDueDate, dueDateText: TodoFormDetailsSummary.shortGermanDate(dueDate),
+            hasSnooze: hasSnooze, snoozeDateText: TodoFormDetailsSummary.shortGermanDate(snoozeDate),
+            isPrivate: isPrivate
+        )
+    }
+
+    private var detailsHeaderText: String {
+        if let detailsSummaryText { return "Weitere Details – \(detailsSummaryText)" }
+        return "Weitere Details"
+    }
+
     var body: some View {
         NavigationStack {
             Form {
                 Section("Titel") {
                     TextField("Todo eingeben", text: $title)
                 }
-                Section("Beschreibung") {
-                    TextField("Optional", text: $description, axis: .vertical)
-                        .lineLimit(3...)
-                    Button {
-                        showLinkSheet = true
-                    } label: {
-                        Label("Link mit KI-Zusammenfassung einfügen", systemImage: "link")
-                    }
-                    .buttonStyle(.bordered)
-                    .accessibilityHint("Öffnet einen Dialog zum Einfügen eines Links, optional mit KI-Zusammenfassung.")
+                Section {
+                    descriptionSection
                 }
                 Section("Fortschritt") {
                     progressSection
                 }
                 Section {
-                    Toggle("📅 Fälligkeitsdatum", isOn: $hasDueDate)
-                    if hasDueDate {
-                        DatePicker("Fällig am", selection: $dueDate,
-                                    displayedComponents: dueReminderEnabled ? [.date, .hourAndMinute] : [.date])
-                        Toggle("🔔 Erinnerung", isOn: $dueReminderEnabled)
+                    DisclosureGroup(isExpanded: $detailsExpanded) {
+                        detailsGroupContent
+                    } label: {
+                        Text(detailsHeaderText)
+                            .accessibilityLabel(detailsHeaderText)
                     }
-                } footer: {
-                    Text(dueReminderEnabled
-                         ? "Erinnert dich per Benachrichtigung zu dieser Uhrzeit."
-                         : "Todos mit Fälligkeit werden zuerst angezeigt — frühestes oben.")
-                }
-                Section {
-                    Toggle("😴 Schlafen bis", isOn: $hasSnooze)
-                    if hasSnooze {
-                        DatePicker("Wacht auf am", selection: $snoozeDate, displayedComponents: .date)
-                    }
-                } footer: {
-                    Text("Bis zu diesem Datum ausblenden.")
-                }
-                Section {
-                    Toggle(isOn: $isPrivate) {
-                        Label("Privat", systemImage: "lock")
-                    }
-                } footer: {
-                    Text("Nur für dich — lässt sich in der Todos-Liste schnell ausblenden.")
                 }
                 if let error {
                     Section { Text(error).foregroundStyle(.red).font(.footnote) }
@@ -132,18 +163,65 @@ struct TodoFormView: View {
                 }
                 Button("Weiter bearbeiten", role: .cancel) {}
             }
-            .sheet(isPresented: $showLinkSheet) {
-                LinkInsertSheet(onInsert: { text in
-                    description += (description.isEmpty ? "" : "\n\n") + text
-                })
+            .sheet(isPresented: $showDescriptionEditor) {
+                DescriptionEditorSheet(initialHTML: description, title: "Beschreibung bearbeiten") { newHTML in
+                    description = newHTML
+                }
             }
         }
     }
 
     @ViewBuilder
+    private var descriptionSection: some View {
+        if todo == nil {
+            // Neuanlage: sofort editierbar, kein Stift-Klick nötig (UX-Vorgabe).
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Beschreibung").scaledFont(.footnote).foregroundStyle(.secondary)
+                DescriptionRichTextEditor(controller: createDescriptionController)
+            }
+            .onChange(of: createDescriptionController.isReady) { _, ready in
+                guard ready else { createDescriptionContentLoaded = false; return }
+                Task {
+                    await createDescriptionController.setContent("")
+                    createDescriptionContentLoaded = true
+                }
+            }
+        } else {
+            DescriptionReadView(html: description) {
+                showDescriptionEditor = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var detailsGroupContent: some View {
+        Toggle("📅 Fälligkeitsdatum", isOn: $hasDueDate)
+        if hasDueDate {
+            DatePicker("Fällig am", selection: $dueDate,
+                        displayedComponents: dueReminderEnabled ? [.date, .hourAndMinute] : [.date])
+            Toggle("🔔 Erinnerung", isOn: $dueReminderEnabled)
+            Text(dueReminderEnabled
+                 ? "Erinnert dich per Benachrichtigung zu dieser Uhrzeit."
+                 : "Todos mit Fälligkeit werden zuerst angezeigt — frühestes oben.")
+                .scaledFont(.caption).foregroundStyle(.secondary)
+        }
+        Toggle("😴 Schlafen bis", isOn: $hasSnooze)
+        if hasSnooze {
+            DatePicker("Wacht auf am", selection: $snoozeDate, displayedComponents: .date)
+            Text("Bis zu diesem Datum ausblenden.")
+                .scaledFont(.caption).foregroundStyle(.secondary)
+        }
+        Toggle(isOn: $isPrivate) {
+            Label("Privat", systemImage: "lock")
+        }
+        Text("Nur für dich — lässt sich in der Todos-Liste schnell ausblenden.")
+            .scaledFont(.caption).foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
     private var progressSection: some View {
         if let t = todo {
-            ProgressTimelineView(refType: "todo", refId: t.id, store: progressStore) {
+            ProgressTimelineView(refType: "todo", refId: t.id, store: progressStore, descriptionHTML: description) {
                 ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused) {
                     Task { await commitProgressComposer(refId: t.id) }
                 }
@@ -153,10 +231,10 @@ struct TodoFormView: View {
                 }
             }
         } else {
-            // Noch keine refId — nur der Composer, ohne Zielbild/Verlauf/
-            // Wiedereinstiegskarte (ergeben für ein noch nicht existierendes
-            // Todo keinen Sinn). Der eigentliche Commit erfolgt erst in
-            // save(), sobald die id feststeht.
+            // Noch keine refId — nur der Composer, ohne Nächster-Schritt/
+            // Verlauf/Wiedereinstiegskarte (ergeben für ein noch nicht
+            // existierendes Todo keinen Sinn). Der eigentliche Commit erfolgt
+            // erst in save(), sobald die id feststeht.
             ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused, onSave: {})
         }
     }
@@ -176,7 +254,7 @@ struct TodoFormView: View {
     private func populate() {
         guard let t = todo else { return }
         title = t.title
-        description = stripHTML(t.description)   // show plain text in editor
+        description = t.description
         isPrivate = t.isPrivate
         if let s = t.snoozedUntil, !s.isEmpty, let d = parseFlexDate(s) {
             hasSnooze = true; snoozeDate = d
@@ -188,6 +266,9 @@ struct TodoFormView: View {
                 hasDueDate = true; dueDate = d
             }
         }
+        detailsExpanded = TodoFormDetailsSummary.isExpandedByDefault(
+            hasDueDate: hasDueDate, hasSnooze: hasSnooze, isPrivate: isPrivate
+        )
     }
 
     private static func parseDate(_ s: String) -> Date? {
@@ -206,6 +287,17 @@ struct TodoFormView: View {
         return f.string(from: d)
     }
 
+    /// Liefert die zu speichernde Beschreibung als HTML. Im Anlegen-Modus
+    /// wird sie aus dem inline eingebetteten Editor gelesen (`description`
+    /// wird dort nie befüllt, da kein Sheet dafür existiert); im
+    /// Bearbeiten-Modus ist `description` bereits aktuell (wird nur über
+    /// `DescriptionEditorSheet.onSave` verändert).
+    private func resolveDescriptionHTML() async -> String {
+        guard todo == nil else { return description }
+        guard createDescriptionController.isReady, createDescriptionContentLoaded else { return "" }
+        return (try? await createDescriptionController.content()) ?? ""
+    }
+
     private func save() {
         loading = true
         let snooze: String? = hasSnooze ? Self.formatDate(snoozeDate) : nil
@@ -215,13 +307,14 @@ struct TodoFormView: View {
         let notificationTitle = title
         let fireAt: Date? = (hasDueDate && dueReminderEnabled) ? dueDate : nil
         Task {
+            let descriptionHTML = await resolveDescriptionHTML()
             do {
                 var savedId: String?
                 switch TodoSaveTarget.resolve(existingTodoId: todo?.id, createdId: createdId) {
                 case .update(let id) where todo?.id == id:
                     let t = todo! // sicher: id stammt hier nachweislich aus todo?.id
                     try await state.updateTodo(
-                        id: t.id, title: title, description: description,
+                        id: t.id, title: title, description: descriptionHTML,
                         done: t.done, result: t.result, resultDate: t.resultDate,
                         snoozedUntil: snooze, dueDate: due, isPrivate: isPrivate
                     )
@@ -232,14 +325,14 @@ struct TodoFormView: View {
                     // angelegt (nur der Zwischenstand-Commit ist danach
                     // fehlgeschlagen) — jetzt updaten statt erneut anlegen.
                     try await state.updateTodo(
-                        id: existingId, title: title, description: description,
+                        id: existingId, title: title, description: descriptionHTML,
                         done: false, result: "", resultDate: "",
                         snoozedUntil: snooze, dueDate: due, isPrivate: isPrivate
                     )
                     savedId = existingId
                     NotificationScheduler.shared.reschedule(id: "todo-\(existingId)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate, notificationTitle: "ThreadStack — Erinnerung")
                 case .create:
-                    let created = try await state.createTodoReturning(title: title, description: description,
+                    let created = try await state.createTodoReturning(title: title, description: descriptionHTML,
                                                snoozedUntil: snooze, dueDate: due,
                                                isPrivate: isPrivate)
                     savedId = created.id

@@ -176,8 +176,7 @@ final class ProgressStore: ObservableObject {
     // MARK: - Nächster Schritt
     // Zielbild entfällt vollständig aus der App-UI (bindende Menschen-
     // Entscheidung) — die frühere `saveGoal(refType:refId:goal:)`-Methode
-    // wurde deshalb entfernt (siehe Abschlussbericht: verbleibende Aufrufer
-    // in anderen Paketen als Abhängigkeit vermerkt, nicht selbst geändert).
+    // wurde deshalb entfernt.
 
     @discardableResult
     func saveNextStep(refType: String, refId: String, nextStep: String) async throws -> ProgressMeta {
