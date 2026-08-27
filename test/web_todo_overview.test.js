@@ -371,3 +371,74 @@ test('Assets: progress.css/progress.js werden wie graph.css/graph.js unter /asse
   assert.match(INDEX_HTML, /<link rel="stylesheet" href="\/assets\/progress\.css">/);
   assert.match(INDEX_HTML, /<script defer src="\/assets\/progress\.js"><\/script>/);
 });
+
+// ── Themen-Modal: gleiches Beschreibungs-/"Weitere Details"-Verhalten wie
+// das Todo-Modal (Story 10 verlangt identisches Verhalten fuer Themen und
+// Aufgaben; nach dem Redesign wurde das Themen-Modal zunaechst nicht
+// mitgezogen, siehe Tester-Bugbericht). Diese Tests spiegeln die Todo-Tests
+// oben bewusst 1:1, damit ein erneutes Auseinanderlaufen automatisch auffaellt.
+test('Themen-Modal: Beschreibung als Leseansicht mit Stift-Aktivierung (kein zweiter Editor)', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'meetings', [{ id: 'm1', topics: [
+    { id: 'top1', title: 'Test', description: '<p>Hallo <b>Welt</b></p>', done: false },
+  ] }]);
+  window.openTopicModal('m1', 'top1');
+
+  assert.equal(document.getElementById('t-desc-readview').style.display, '');
+  assert.equal(document.getElementById('t-desc-wrapper').style.display, 'none');
+  assert.match(document.getElementById('t-desc-display').innerHTML, /Hallo/);
+
+  window.enterTopicDescEditMode();
+  assert.equal(document.getElementById('t-desc-readview').style.display, 'none');
+  assert.equal(document.getElementById('t-desc-wrapper').style.display, '');
+  assert.equal(document.querySelectorAll('#topic-modal .rt-content[id^="t-desc"]').length, 1);
+});
+
+test('Themen-Modal: ohne Wert Platzhaltertext; Neuanlage sofort editierbar', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'meetings', [{ id: 'm1', topics: [
+    { id: 'top2', title: 'Leer', description: '', done: false },
+  ] }]);
+  window.openTopicModal('m1', 'top2');
+  const display = document.getElementById('t-desc-display');
+  assert.match(display.textContent, /Keine Beschreibung/);
+
+  window.openTopicModal('m1'); // Neuanlage
+  assert.equal(document.getElementById('t-desc-wrapper').style.display, '');
+  assert.equal(document.getElementById('t-desc-readview').style.display, 'none');
+});
+
+test('Themen-Modal: "Weitere Details" startet geschlossen bei Neuanlage, offen mit Kurzuebersicht bei befuellten Werten', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'meetings', [{ id: 'm1', topics: [] }]);
+  window.openTopicModal('m1');
+  assert.equal(document.getElementById('t-more-details').open, false);
+  assert.equal(document.getElementById('t-more-details-summary').textContent, 'Weitere Details');
+
+  setAppGlobal(window, 'meetings', [{ id: 'm1', topics: [
+    { id: 'top3', title: 'X', description: '', snoozedUntil: '2026-09-12', done: false },
+  ] }]);
+  window.openTopicModal('m1', 'top3');
+  assert.equal(document.getElementById('t-more-details').open, true);
+  assert.match(document.getElementById('t-more-details-summary').textContent, /Weitere Details –/);
+});
+
+test('Themen-Modal: Fortschrittsverlauf begrenzt auf die letzten 3 Eintraege wie im Todo-Modal', async () => {
+  const { window } = loadApp();
+  await tick();
+  setAppGlobal(window, 'meetings', [{ id: 'm1', topics: [
+    { id: 'top4', title: 'X', description: '', done: false },
+  ] }]);
+  const calls = [];
+  window.TSProgress = {
+    mountReentryCard: () => ({ destroy() {} }),
+    mountTimeline: (el, opts) => { calls.push(opts); return { destroy() {} }; },
+  };
+  window.openTopicModal('m1', 'top4');
+  await tick(100); // openTopicModal mountet den Fortschrittsbereich verzoegert (setTimeout)
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].limit, 3);
+});
