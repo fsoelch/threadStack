@@ -1257,8 +1257,9 @@
 
   var SUMMARY_KIND_LABEL = { progress: 'KI-Zusammenfassung', description: 'KI-Kurzfassung' };
 
-  function summaryRegenerateUrl(kind, refType, refId) {
-    return '/api/summaries/' + encodeURIComponent(kind) + '/' + encodeURIComponent(refType) + '/' + encodeURIComponent(refId) + '/regenerate?confirm=true';
+  function summaryRegenerateUrl(kind, refType, refId, confirmed) {
+    var url = '/api/summaries/' + encodeURIComponent(kind) + '/' + encodeURIComponent(refType) + '/' + encodeURIComponent(refId) + '/regenerate';
+    return confirmed ? url + '?confirm=true' : url;
   }
 
   function SummaryCardInstance(container, opts) {
@@ -1277,7 +1278,13 @@
     this.render();
   };
 
-  SummaryCardInstance.prototype.regenerate = function () {
+  // `confirmed` defaultet auf false: der Hintergrund-Job prüft die
+  // Kostenschwelle bei jedem automatischen Lauf mit confirmed:false. Ein
+  // hier fest verdrahtetes confirm=true würde diese Prüfung für JEDEN
+  // manuellen "Erneut versuchen"-Klick unbemerkt umgehen (Security Review,
+  // Mittel, A04). Erst der dedizierte "Trotzdem erstellen"-Button (siehe
+  // render(), Status confirmation_required) ruft mit confirmed:true auf.
+  SummaryCardInstance.prototype.regenerate = function (confirmed) {
     if (this.regenerating) return;
     var host = getHost();
     var self = this;
@@ -1285,9 +1292,9 @@
     this.render();
     var p;
     if (host && host.progress && typeof host.progress.regenerateSummary === 'function') {
-      p = host.progress.regenerateSummary(this.kind, this.refType, this.refId);
+      p = host.progress.regenerateSummary(this.kind, this.refType, this.refId, !!confirmed);
     } else if (host && typeof host.api === 'function') {
-      p = host.api('POST', summaryRegenerateUrl(this.kind, this.refType, this.refId), null);
+      p = host.api('POST', summaryRegenerateUrl(this.kind, this.refType, this.refId, !!confirmed), null);
     } else {
       p = Promise.reject(new Error('kein Host verfügbar'));
     }
@@ -1321,6 +1328,17 @@
 
     if (status === 'pending' && !this.summary.text) {
       box.appendChild(el('p', { class: 'progress-summary-loading' }, 'Wird erstellt …'));
+    } else if (status === 'error' && this.summary.errorCode === 'confirmation_required') {
+      // Eigener Zustand statt eines generischen Fehlers: ein einfacher
+      // "Erneut versuchen"-Klick darf die Kostenbestätigung nicht unbemerkt
+      // mit confirm=true umgehen (Security Review, Mittel, A04).
+      box.appendChild(el('p', { class: 'progress-summary-loading' }, 'Diese Zusammenfassung überschreitet dein Kosten-Limit für automatische Erstellung.'));
+      var confirmBtn = el('button', {
+        type: 'button', class: 'progress-btn progress-btn-secondary', 'data-action': 'confirm-summary',
+        'aria-busy': this.regenerating ? 'true' : 'false'
+      }, 'Trotzdem jetzt erstellen');
+      confirmBtn.disabled = this.regenerating;
+      box.appendChild(confirmBtn);
     } else if (status === 'error') {
       box.appendChild(el('p', { class: 'progress-error-text' }, 'Zusammenfassung momentan nicht verfügbar.'));
       var retryBtn = el('button', {
@@ -1349,7 +1367,8 @@
       var t = ev.target.closest ? ev.target.closest('[data-action]') : null;
       if (!t) return;
       var action = t.getAttribute('data-action');
-      if (action === 'retry-summary') self.regenerate();
+      if (action === 'retry-summary') self.regenerate(false);
+      else if (action === 'confirm-summary') self.regenerate(true);
       else if (action === 'open-timeline') {
         var host = getHost();
         if (host && typeof host.openObject === 'function') host.openObject(self.refType, self.refId, { focus: 'progress' });

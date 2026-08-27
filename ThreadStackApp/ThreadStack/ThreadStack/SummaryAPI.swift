@@ -139,13 +139,22 @@ extension AppState {
         return resp.summaries
     }
 
-    /// `POST /api/summaries/:kind/:refType/:refId/regenerate?confirm=true`.
+    /// `POST /api/summaries/:kind/:refType/:refId/regenerate[?confirm=true]`.
     /// Der Server antwortet bei Erfolg mit `202 {"status":"pending"}` — der
     /// Store/Aufrufer entscheidet, ob/wann danach gepollt wird (siehe
     /// `SummaryStore.poll(refs:)`), diese Methode selbst löst kein Polling
     /// aus.
-    func regenerateSummary(kind: String, refType: String, refId: String) async throws {
-        let path = "/summaries/\(kind.asSummaryURLPathSegment)/\(refType.asSummaryURLPathSegment)/\(refId.asSummaryURLPathSegment)/regenerate?confirm=true"
+    ///
+    /// `confirmed` defaultet auf `false` (Security Review, Mittel, A04): der
+    /// Hintergrund-Job prüft die Kostenschwelle bei jedem automatischen Lauf
+    /// mit `confirmed:false`. Ein hier fest verdrahtetes `confirm=true` würde
+    /// diese Prüfung für JEDEN manuellen Regenerate-Aufruf unbemerkt
+    /// umgehen. Erst wenn der Status als `confirmation_required`
+    /// zurückkommt (siehe `AISummaryStatus`), löst ein expliziter, vom
+    /// Nutzer bestätigter zweiter Aufruf mit `confirmed: true` erneut aus.
+    func regenerateSummary(kind: String, refType: String, refId: String, confirmed: Bool = false) async throws {
+        var path = "/summaries/\(kind.asSummaryURLPathSegment)/\(refType.asSummaryURLPathSegment)/\(refId.asSummaryURLPathSegment)/regenerate"
+        if confirmed { path += "?confirm=true" }
         let _: SummaryRegenerateResponse = try await summaryRequest("POST", path)
     }
 }

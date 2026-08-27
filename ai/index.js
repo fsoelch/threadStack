@@ -11,6 +11,10 @@ const usage     = require('./usage');
 // Ausschließlich das bestehende Modul nutzen, kein eigenes Prädikat
 // nachformulieren (Wiederverwendungsgebot, CLAUDE.md).
 const archive   = require('../lib/archive');
+// SSRF-Absicherung für den nutzerdefinierten Azure-Endpoint (Security Review,
+// Mittel, A10): dieselbe Blockliste/URL-Validierung wie beim Link-Fetch-
+// Feature wiederverwenden statt einer zweiten Prüfung (Wiederverwendungsgebot).
+const { assertUrlAllowed, SafeFetchError } = require('../lib/safe-fetch');
 
 // ── Provider registry ────────────────────────────────────────
 const PROVIDERS = {
@@ -68,7 +72,21 @@ function saveSettings(db, userId, patch, encryptionKey) {
 
   if (patch.provider != null)               set('provider', String(patch.provider));
   if (patch.model != null)                   set('model', String(patch.model));
-  if (patch.azure_endpoint != null)          set('azure_endpoint', String(patch.azure_endpoint));
+  if (patch.azure_endpoint != null) {
+    const endpoint = String(patch.azure_endpoint);
+    if (endpoint !== '') {
+      // Literale IP-Ziele (Loopback/Link-Local/Metadaten-Dienste/RFC1918 etc.)
+      // ablehnen; Hostname-basiertes DNS-Rebinding wird beim eigentlichen
+      // Request nicht zusätzlich geprüft (kein Lookup-Hook für den Azure-SDK-
+      // Client) - siehe Abschlussbericht.
+      try { assertUrlAllowed(endpoint); }
+      catch (e) {
+        if (e instanceof SafeFetchError) throw httpErr(400, 'Ungültiger oder nicht erlaubter Azure-Endpoint.');
+        throw e;
+      }
+    }
+    set('azure_endpoint', endpoint);
+  }
   if (patch.azure_api_version != null)       set('azure_api_version', String(patch.azure_api_version));
   if (patch.max_monthly_cost_cents != null)  set('max_monthly_cost_cents', patch.max_monthly_cost_cents | 0);
   if (patch.confirm_threshold_cents != null) set('confirm_threshold_cents', patch.confirm_threshold_cents | 0);

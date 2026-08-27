@@ -111,7 +111,7 @@ struct AISummaryCardView: View {
             case .pending:
                 pendingBody
             case .error:
-                errorBody
+                errorBody(summary)
             case .disabled, .notApplicable, .unknown:
                 EmptyView()
             }
@@ -164,29 +164,38 @@ struct AISummaryCardView: View {
         .accessibilityElement(children: .combine)
     }
 
+    // `confirmation_required` bekommt einen eigenen Zustand statt eines
+    // generischen Fehlers: ein einfacher "Erneut versuchen"-Klick darf die
+    // Kostenbestätigung nicht unbemerkt mit confirmed:true umgehen
+    // (Security Review, Mittel, A04).
     @ViewBuilder
-    private var errorBody: some View {
+    private func errorBody(_ summary: AISummaryView) -> some View {
+        let requiresConfirmation = summary.errorCode == "confirmation_required"
         VStack(alignment: .leading, spacing: 4) {
-            Text("Zusammenfassung momentan nicht verfügbar.")
+            Text(requiresConfirmation
+                 ? "Diese Zusammenfassung überschreitet dein Kosten-Limit für automatische Erstellung."
+                 : "Zusammenfassung momentan nicht verfügbar.")
                 .scaledFont(.caption)
                 .foregroundStyle(.secondary)
             if let regenerateError {
                 Text(regenerateError).scaledFont(.caption2).foregroundStyle(.red)
             }
             Button {
-                Task { await regenerate() }
+                Task { await regenerate(confirmed: requiresConfirmation) }
             } label: {
                 if isRegenerating {
                     ProgressView().controlSize(.small)
                 } else {
-                    Text("Erneut versuchen")
+                    Text(requiresConfirmation ? "Trotzdem jetzt erstellen" : "Erneut versuchen")
                 }
             }
             .buttonStyle(.plain)
             .scaledFont(.caption)
             .foregroundStyle(DS.accentDark)
             .disabled(isRegenerating)
-            .accessibilityLabel("\(kind.badgeLabel) erneut versuchen")
+            .accessibilityLabel(requiresConfirmation
+                ? "\(kind.badgeLabel) trotz Kosten-Limit jetzt erstellen"
+                : "\(kind.badgeLabel) erneut versuchen")
         }
     }
 
@@ -197,11 +206,11 @@ struct AISummaryCardView: View {
             .foregroundStyle(DS.accentDark)
     }
 
-    private func regenerate() async {
+    private func regenerate(confirmed: Bool = false) async {
         isRegenerating = true
         regenerateError = nil
         do {
-            try await store.regenerate(kind: kind.apiValue, refType: refType, refId: refId)
+            try await store.regenerate(kind: kind.apiValue, refType: refType, refId: refId, confirmed: confirmed)
         } catch {
             regenerateError = (error as? ProgressError)?.errorDescription
                 ?? "Erneut versuchen fehlgeschlagen. Bitte später erneut versuchen."

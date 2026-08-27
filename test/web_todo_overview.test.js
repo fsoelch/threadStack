@@ -123,15 +123,22 @@ test('TSHost.progress.regenerateSummary: validiert kind/refType/refId vor dem AP
   await assert.rejects(() => window.TSHost.progress.regenerateSummary('progress', 'todo', 'x'.repeat(201)));
   assert.equal(calls.length, 0, 'bei ungueltigen Eingaben darf kein Request ausgeloest werden');
 
+  // `confirmed` defaultet auf false (Security Review, Mittel, A04): ein
+  // Aufruf ohne explizite Bestätigung darf die Kostenschwelle NICHT über ein
+  // fest verdrahtetes confirm=true umgehen.
   const res = await window.TSHost.progress.regenerateSummary('progress', 'todo', 'abc-123');
   assert.equal(res.status, 'pending');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].method, 'POST');
-  assert.equal(calls[0].path, '/summaries/progress/todo/abc-123/regenerate?confirm=true');
+  assert.equal(calls[0].path, '/summaries/progress/todo/abc-123/regenerate');
 
   // refId wird URL-kodiert (Pfad-Injektion/Sonderzeichen abgefangen).
   await window.TSHost.progress.regenerateSummary('description', 'topic', 'a/b?c');
-  assert.equal(calls[1].path, '/summaries/description/topic/a%2Fb%3Fc/regenerate?confirm=true');
+  assert.equal(calls[1].path, '/summaries/description/topic/a%2Fb%3Fc/regenerate');
+
+  // Erst ein expliziter vierter Parameter confirmed=true haengt ?confirm=true an.
+  await window.TSHost.progress.regenerateSummary('progress', 'todo', 'abc-123', true);
+  assert.equal(calls[2].path, '/summaries/progress/todo/abc-123/regenerate?confirm=true');
 });
 
 test('TSHost.openObject: focus=progress scrollt zum Fortschrittsbereich, wenn vorhanden', async () => {

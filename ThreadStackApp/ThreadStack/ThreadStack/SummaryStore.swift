@@ -94,15 +94,18 @@ final class SummaryStore: ObservableObject {
 
     // MARK: - Regenerieren
 
-    /// `POST /api/summaries/:kind/:refType/:refId/regenerate?confirm=true`.
+    /// `POST /api/summaries/:kind/:refType/:refId/regenerate[?confirm=true]`.
+    /// `confirmed` defaultet auf `false` (siehe `AppState.regenerateSummary`-
+    /// Kommentar) — erst nach explizitem Nutzer-Opt-in bei einem Status
+    /// `confirmation_required` erneut mit `confirmed: true` aufrufen.
     /// Wirft einen normalisierten `SummaryError`, den Aufrufer direkt für
     /// die UI-Anzeige verwenden können (siehe `SummaryError.errorDescription`).
     /// Löst selbst KEIN Polling aus — Aufrufer rufen bei Bedarf anschließend
     /// `poll(refs:)` für dieselbe Ref auf.
-    func regenerate(kind: String, refType: String, refId: String) async throws {
+    func regenerate(kind: String, refType: String, refId: String, confirmed: Bool = false) async throws {
         let errorKey = "\(kind):\(refType):\(refId)"
         do {
-            try await appState.regenerateSummary(kind: kind, refType: refType, refId: refId)
+            try await appState.regenerateSummary(kind: kind, refType: refType, refId: refId, confirmed: confirmed)
             regenerateErrors[errorKey] = nil
         } catch {
             let mapped = Self.mapError(error)
