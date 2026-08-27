@@ -14,6 +14,16 @@
 //  UI) — der API-Zugriff lebt in `ProgressAPI.swift`, der Zustand in
 //  `ProgressStore.swift`.
 //
+//  Redesign-Update (Todo/Task-Übersicht, Arbeitspaket A1): Zielbild entfällt
+//  vollständig aus der App-UI (bindende Menschen-Entscheidung). `goal`/
+//  `goalUpdatedAt` bleiben als DEPRECATED, jetzt optionale Felder in
+//  `ProgressDetail` bestehen (Server liefert sie übergangsweise noch mit),
+//  Schreibzugriffe (`saveProgressGoal`/`ProgressStore.saveGoal`) wurden aus
+//  diesem Verantwortungsbereich entfernt — siehe Abschlussbericht für
+//  verbleibende Lesestellen in anderen Paketen (ProgressGoalEditorSheet,
+//  ProgressTimelineView, ProgressReentryCardView), die als Abhängigkeit an
+//  A2/A3 vermerkt sind.
+//
 
 import Foundation
 
@@ -170,7 +180,18 @@ struct ProgressPage: Codable, Equatable {
 
 struct ProgressDetail: Codable, Equatable {
     let ref: ProgressRef
-    let goal: String
+    /// DEPRECATED: Zielbild entfällt vollständig aus der App-UI (bindende
+    /// Menschen-Entscheidung). Der Server liefert `goal`/`goalUpdatedAt`
+    /// übergangsweise noch mit (aktuell immer leerer String bzw. `null`) —
+    /// bewusst optional dekodiert (Bugfix: war zuvor nicht-optional `String`,
+    /// wodurch ein künftiger vollständiger Wegfall des Schlüssels die
+    /// Dekodierung dieses gesamten Objekts zum Absturz gebracht hätte).
+    /// Synthesized `Codable` nutzt für optionale Properties automatisch
+    /// `decodeIfPresent`, das deckt sowohl "Schlüssel fehlt" als auch
+    /// "Schlüssel ist explizit `null`" ab. Kein App-Code liest dieses Feld
+    /// noch aktiv (siehe Abschlussbericht: verbleibende Lesestellen in
+    /// anderen Paketen sind als Abhängigkeit vermerkt).
+    let goal: String?
     let goalUpdatedAt: String?
     let nextStep: String
     let nextStepUpdatedAt: String?

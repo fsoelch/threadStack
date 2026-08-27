@@ -84,6 +84,14 @@ struct AISettingsView: View {
                         get: { features.linkSummaryOn },
                         set: { features.link_summary = $0 }
                     ))
+                    Toggle("Fortschritts-Zusammenfassung", isOn: Binding(
+                        get: { features.progressSummaryOn },
+                        set: { features.progress_summary = $0 }
+                    ))
+                    Toggle("Beschreibungs-Zusammenfassung", isOn: Binding(
+                        get: { features.descriptionSummaryOn },
+                        set: { features.description_summary = $0 }
+                    ))
                 }
 
                 Section("Budget & Bestätigung") {
@@ -180,6 +188,8 @@ struct AISettingsView: View {
                 "cross_meeting": features.cross_meeting,
                 "drift":         features.drift,
                 "link_summary":  features.linkSummaryOn,
+                "progress_summary":    features.progressSummaryOn,
+                "description_summary": features.descriptionSummaryOn,
             ],
             "drift_days": driftDays,
             "theme_tag_threshold": themeThreshold,
