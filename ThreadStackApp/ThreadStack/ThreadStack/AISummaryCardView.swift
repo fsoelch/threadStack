@@ -119,7 +119,7 @@ struct AISummaryCardView: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DS.accent.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusXS))
     }
 
     @ViewBuilder

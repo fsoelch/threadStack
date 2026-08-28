@@ -47,7 +47,7 @@ struct AIBriefSheet: View {
             Text(title).font(.subheadline).fontWeight(.semibold)
             ForEach(Array(items.enumerated()), id: \.offset) { _, t in
                 HStack(alignment: .top, spacing: 8) {
-                    Text("•").foregroundStyle(Color(hex: "#6366f1")).fontWeight(.bold)
+                    Text("•").foregroundStyle(DS.brandIndigo).fontWeight(.bold)
                     Text(t).font(.callout)
                 }
             }
@@ -223,7 +223,7 @@ struct AIResultDraftSheet: View {
                 else {
                     TextEditor(text: $draft)
                         .frame(minHeight: 120)
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.gray.opacity(0.3)))
+                        .overlay(RoundedRectangle(cornerRadius: DS.radiusS).stroke(.gray.opacity(0.3)))
                 }
                 if let error { Text(error).foregroundStyle(.red).font(.footnote) }
                 Spacer()

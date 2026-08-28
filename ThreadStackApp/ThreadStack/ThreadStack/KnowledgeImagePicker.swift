@@ -51,10 +51,6 @@ struct KnowledgeImagePicker: View {
     @State private var showCamera = false
     #endif
 
-    private var errorBinding: Binding<Bool> {
-        Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
-    }
-
     var body: some View {
         #if os(iOS)
         Menu {
@@ -95,11 +91,7 @@ struct KnowledgeImagePicker: View {
         .sheet(isPresented: $showAltSheet, onDismiss: resetPending) {
             altTextSheet
         }
-        .alert("Fehler", isPresented: errorBinding) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
-        }
+        .errorAlert($errorMessage)
         #elseif os(macOS)
         Button {
             openPanel()
@@ -109,11 +101,7 @@ struct KnowledgeImagePicker: View {
         .sheet(isPresented: $showAltSheet, onDismiss: resetPending) {
             altTextSheet
         }
-        .alert("Fehler", isPresented: errorBinding) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage ?? "")
-        }
+        .errorAlert($errorMessage)
         #endif
     }
 

@@ -1069,7 +1069,14 @@
     this.onSaved = typeof opts.onSaved === 'function' ? opts.onSaved : function () {};
     this.onError = typeof opts.onError === 'function' ? opts.onError : function () {};
     this.destroyed = false;
-    this.open = false;
+    // `openOnMount`: ueberspringt den sonst noetigen ersten Klick auf den
+    // 💬-Trigger und zeigt das Textfeld direkt beim Einhaengen (siehe
+    // `mountCardComposer` in index.html — dort ist das Einhaengen selbst
+    // bereits die bewusste Nutzer-Aktion "Zwischenstand erfassen", ein
+    // zusaetzlicher Klick auf einen Zwischen-Trigger waere redundant).
+    // Default `false` erhaelt das bisherige Verhalten fuer andere
+    // Einhaenge-Stellen (z.B. Bearbeiten-Ansicht) unveraendert.
+    this.open = !!opts.openOnMount;
     this.text = '';
     this.saving = false;
     this.errorMsg = null;
@@ -1081,6 +1088,10 @@
     this.rootEl.addEventListener('click', this._onClick);
     this._onInput = this.handleInput.bind(this);
     this.render();
+    if (this.open) {
+      var ta = this.rootEl.querySelector('[data-role="composer-text"]');
+      if (ta) ta.focus();
+    }
   }
 
   ComposerInstance.prototype.handleInput = function (ev) {

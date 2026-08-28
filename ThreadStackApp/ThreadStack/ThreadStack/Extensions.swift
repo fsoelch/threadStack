@@ -72,6 +72,46 @@ extension View {
     }
 }
 
+// MARK: - Server URL scheme validation
+//
+// Security-Nachbesserung: `serverURL` ist ein vom Nutzer frei editierbares
+// Feld (Einstellungen), dessen Wert Session-Cookie und (beim biometrischen
+// Unlock) das Klartext-Passwort trägt. Ungeprüft akzeptiertes `http://`
+// würde beides im Klartext übertragen. https:// ist immer erlaubt; http://
+// wird nur für lokale Entwicklung gegen localhost/127.0.0.1/::1 durchgelassen
+// (analog zur SSRF-Loopback-Ausnahme im Backend, lib/safe-fetch.js).
+func isAllowedServerURLScheme(_ url: URL) -> Bool {
+    guard let scheme = url.scheme?.lowercased() else { return false }
+    if scheme == "https" { return true }
+    if scheme == "http" {
+        let host = url.host?.lowercased() ?? ""
+        return host == "localhost" || host == "127.0.0.1" || host == "::1"
+    }
+    return false
+}
+
+/// Normiert eine vom Nutzer im Einstellungen-Formular eingegebene Server-URL
+/// (Whitespace + abschließende Schrägstriche entfernen) - reine Funktion,
+/// von `SettingsURLView` UND von Tests genutzt (Muster: `TodoOverviewLogic`
+/// in TodosView.swift - View-Logik wird als testbare freie Funktion/Enum
+/// ausgelagert statt in einer privaten computed property der View zu
+/// verstecken).
+func trimmedServerURLInput(_ raw: String) -> String {
+    raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+}
+
+/// Ob eine vom Nutzer eingegebene (bereits getrimmte) Server-URL gespeichert
+/// werden darf: muss ein gültiges URL + ein erlaubtes Scheme haben (siehe
+/// `isAllowedServerURLScheme`). Security-Nachbesserung: wird beim SPEICHERN
+/// in `SettingsURLView` angewendet, nicht erst beim nächsten Netzwerk-Request
+/// (`AppState.url(_:)` u.a. prüfen ohnehin nochmal, das hier ist zusätzliches,
+/// frühzeitiges Nutzer-Feedback).
+func isValidServerURLInput(_ trimmed: String) -> Bool {
+    guard !trimmed.isEmpty, let u = URL(string: trimmed) else { return false }
+    return isAllowedServerURLScheme(u)
+}
+
 // MARK: - Color from hex
 
 extension Color {
@@ -104,41 +144,32 @@ func stripHTML(_ s: String) -> String {
 
 // MARK: - HTML → AttributedString (preserves bold, italic, color, links)
 //
-// macOS: NSAttributedString/WebKit (reliable there).
-// iOS:   manual tag parser — avoids NSException crash from NSAttributedString(HTML)
-//        which try? does NOT catch (ObjC exceptions bypass Swift error handling).
+// Security-Nachbesserung: früher nutzte macOS `NSAttributedString(data:
+// options:[.documentType:.html])`, was intern WebKits HTML-Importer
+// verwendet - dieser lädt referenzierte Ressourcen (`<img src="https://…">`,
+// `<link rel="stylesheet">`, CSS `@import`) OHNE CSP/Sandboxing nach
+// (Tracking-Pixel-/SSRF-artiger Vektor bei serverseitig/fremd erzeugtem
+// HTML, z. B. Todo-/Topic-/Contact-Beschreibungen). Der eigenständige,
+// netzwerklose State-Machine-Parser (ursprünglich nur für iOS, da
+// `NSAttributedString(HTML)` dort undokumentierte ObjC-Exceptions werfen
+// konnte, die `try?` nicht abfängt) wird daher jetzt auf beiden Plattformen
+// verwendet - er unterstützt ausschließlich ein festes Set harmloser Tags
+// (b/strong/i/em/u/br/p/div/li/span mit color/a mit href) und kann prinzip-
+// bedingt nie einen Netzwerk-Request auslösen.
 
 func htmlAttributedString(_ html: String) -> AttributedString {
     guard html.contains("<") else { return AttributedString(html) }
-    #if os(macOS)
-    let wrapped = "<html><head><meta charset='utf-8'><style>"
-        + "body{font-family:-apple-system,Helvetica,sans-serif;font-size:13px;margin:0;padding:0}"
-        + "</style></head><body>\(html)</body></html>"
-    if let data = wrapped.data(using: .utf8),
-       let ns = try? NSAttributedString(
-           data: data,
-           options: [.documentType: NSAttributedString.DocumentType.html,
-                     .characterEncoding: String.Encoding.utf8.rawValue],
-           documentAttributes: nil),
-       let result = try? AttributedString(ns, including: \.appKit) {
-        return result
-    }
-    return AttributedString(stripHTML(html))
-    #else
-    return _parseHTMLiOS(html)
-    #endif
+    return _parseHTMLSafe(html)
 }
 
-#if os(iOS)
-import UIKit
-
 // Simple state-machine HTML parser for the tags the web editor produces.
-private func _parseHTMLiOS(_ html: String) -> AttributedString {
+// Cross-platform (SwiftUI `Color`), keine Abhängigkeit von UIKit/AppKit.
+private func _parseHTMLSafe(_ html: String) -> AttributedString {
     var result = AttributedString()
     var boldDepth = 0
     var italicDepth = 0
     var underlineDepth = 0
-    var colorStack: [UIColor] = []
+    var colorStack: [Color] = []
     var linkStack: [URL] = []
     var buf = ""
 
@@ -164,7 +195,7 @@ private func _parseHTMLiOS(_ html: String) -> AttributedString {
         // Underline
         if underlineDepth > 0 { container.underlineStyle = .single }
         // Color
-        if let c = colorStack.last { container.foregroundColor = Color(c) }
+        if let c = colorStack.last { container.foregroundColor = c }
         // Link
         if let u = linkStack.last { container.link = u }
         chunk.mergeAttributes(container)
@@ -197,8 +228,8 @@ private func _parseHTMLiOS(_ html: String) -> AttributedString {
         default:
             if tag.hasPrefix("span") {
                 // style="color: #rrggbb" or color: rgb(r,g,b)
-                let color = _extractCSS(raw, key: "color").flatMap { UIColor(cssHex: $0) }
-                colorStack.append(color ?? .label)
+                let color = _extractCSS(raw, key: "color").flatMap { Color(cssHex: $0) }
+                colorStack.append(color ?? .primary)
             } else if tag.hasPrefix("a ") {
                 // href="..." or href='...'
                 if let url = _extractHref(raw) { linkStack.append(url) }
@@ -231,32 +262,30 @@ private func _extractHref(_ tag: String) -> URL? {
     return URL(string: String(rest[rest.startIndex..<q2]))
 }
 
-extension UIColor {
-    convenience init?(cssHex: String) {
+extension Color {
+    init?(cssHex: String) {
         let s = cssHex.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("#") {
             let hex = String(s.dropFirst())
             guard let v = UInt64(hex, radix: 16) else { return nil }
             switch hex.count {
-            case 6: self.init(red:   CGFloat((v >> 16) & 0xFF) / 255,
-                              green: CGFloat((v >>  8) & 0xFF) / 255,
-                              blue:  CGFloat( v        & 0xFF) / 255, alpha: 1)
+            case 6: self.init(red:   Double((v >> 16) & 0xFF) / 255,
+                              green: Double((v >>  8) & 0xFF) / 255,
+                              blue:  Double( v        & 0xFF) / 255)
             case 3: let r = (v >> 8) & 0xF; let g = (v >> 4) & 0xF; let b = v & 0xF
-                    self.init(red:   CGFloat(r * 17) / 255,
-                              green: CGFloat(g * 17) / 255,
-                              blue:  CGFloat(b * 17) / 255, alpha: 1)
+                    self.init(red:   Double(r * 17) / 255,
+                              green: Double(g * 17) / 255,
+                              blue:  Double(b * 17) / 255)
             default: return nil
             }
         } else if s.hasPrefix("rgb(") {
             let nums = s.dropFirst(4).dropLast()
                 .split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
             guard nums.count == 3 else { return nil }
-            self.init(red: CGFloat(nums[0]) / 255, green: CGFloat(nums[1]) / 255,
-                      blue: CGFloat(nums[2]) / 255, alpha: 1)
+            self.init(red: nums[0] / 255, green: nums[1] / 255, blue: nums[2] / 255)
         } else { return nil }
     }
 }
-#endif
 
 // MARK: - Cross-platform modifiers
 
@@ -295,5 +324,29 @@ extension View {
         #else
         self
         #endif
+    }
+
+    /// Zeigt einen generischen "Fehler"-Alert, solange `error.wrappedValue`
+    /// nicht `nil` ist, und setzt ihn beim Schließen automatisch zurück.
+    ///
+    /// Arbeit zur Lesbarkeit/Wartbarkeit: ersetzt denselben, zuvor 12x fast
+    /// wortgleich kopierten `.alert("Fehler", isPresented: Binding(get: ...,
+    /// set: ...)) { Button("OK", role: .cancel) {} } message: { Text(...) }`-
+    /// Block in ContentView/GraphView/TodosView/ThemesView/
+    /// MeetingDetailView/ProgressTimelineView/MeetingArchiveView/
+    /// SidebarView/KnowledgeView/KnowledgeImagePicker/ContactsView/
+    /// AdminView. Nimmt bewusst eine `Binding<String?>` (nicht direkt das
+    /// `@State`), damit Aufrufer mit einem anderen Variablennamen (z. B.
+    /// `deleteErrorText`) oder einer abgeleiteten Fehlermeldung weiterhin
+    /// `$someVar` übergeben können, ohne diese Property umzubenennen.
+    func errorAlert(_ error: Binding<String?>) -> some View {
+        alert("Fehler", isPresented: Binding(
+            get: { error.wrappedValue != nil },
+            set: { if !$0 { error.wrappedValue = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(error.wrappedValue ?? "")
+        }
     }
 }

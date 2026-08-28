@@ -92,7 +92,8 @@ extension AppState {
     fileprivate func summaryAPIURL(_ path: String) throws -> URL {
         var base = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.hasSuffix("/") { base = String(base.dropLast()) }
-        guard !base.isEmpty, let u = URL(string: base + "/api" + path) else { throw APIError.invalidURL }
+        guard !base.isEmpty, let u = URL(string: base + "/api" + path),
+              isAllowedServerURLScheme(u) else { throw APIError.invalidURL }
         return u
     }
 

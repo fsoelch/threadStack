@@ -10,8 +10,16 @@
  *
  * Sicherheit:
  *  - Alle Eingaben, die per Bridge von nativ hereinkommen (setContent,
- *    insertHTML, insertLink, insertImage), laufen durch eine
- *    Tag-/Attribut-Allowlist (Defense-in-Depth; der Server sanitisiert final).
+ *    insertHTML, insertLink, insertImage), laufen durch einen
+ *    Tag-/Attribut-Filter (Defense-in-Depth; der Server sanitisiert final).
+ *    Konzeptionelle Klarstellung (Lesbarkeit/Wartbarkeit-Nachbesserung):
+ *    dies ist eine DENYLIST (gefährliche Tags/Attribute werden entfernt),
+ *    KEINE Allowlist — Tabellen/Überschriften/Bilder etc. bleiben für den
+ *    Rundreise-Erhalt bewusst erlaubt, auch wenn die Toolbar sie nicht
+ *    selbst erzeugen kann (siehe stripDangerous unten). Eine echte
+ *    Tag-Allowlist würde dieses Rundreise-Ziel verletzen; die Denylist wird
+ *    daher stattdessen so eng wie möglich gehalten (Case-insensitive, inkl.
+ *    fremder Namensräume wie SVG/MathML, siehe stripDangerous).
  *  - KI-Zusammenfassungstext (Fremdinhalt) wird bei insertLink IMMER über
  *    escHtml() escaped in <p>-Absätze eingesetzt, niemals als HTML interpretiert.
  *  - postMessage an nativ enthält bei "change" NIEMALS den Inhalt selbst,
@@ -36,11 +44,22 @@
 
   // ---------------------------------------------------------------------
   // Paste-/Insert-Bereinigung (analog cleanPastedHtml, index.html:3136)
-  // Entfernt ausschließlich gefährliche Tags/Attribute (Defense-in-Depth).
-  // Tabellen, Überschriften, Bilder etc. bleiben für den Rundreise-Erhalt
-  // erhalten, auch wenn die Toolbar sie nicht erzeugen kann.
+  // Entfernt ausschließlich gefährliche Tags/Attribute (Defense-in-Depth,
+  // DENYLIST — siehe Kopfkommentar). Tabellen, Überschriften, Bilder etc.
+  // bleiben für den Rundreise-Erhalt erhalten, auch wenn die Toolbar sie
+  // nicht erzeugen kann.
+  //
+  // Security-Nachbesserung (Lesbarkeit/Wartbarkeit-Review): der Vergleich
+  // gegen FORBIDDEN_TAGS erfolgt Case-insensitive und schließt fremde
+  // Namensräume (SVG/MathML) explizit ein/aus, statt sich auf die HTML-
+  // Groß-/Kleinschreibungs-Normalisierung von node.tagName zu verlassen -
+  // Elemente in einem Fremd-Namensraum (z. B. <svg><script>) behalten ihre
+  // ORIGINALE Klein-/Großschreibung und wurden vom reinen Uppercase-
+  // String-Vergleich zuvor nicht erfasst. SVG/MATH werden zusätzlich
+  // komplett verboten (kein Anwendungsfall im Editor, aber potenzieller
+  // Träger für weitere script-fähige Unterelemente).
   // ---------------------------------------------------------------------
-  var FORBIDDEN_TAGS = ['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'FORM'];
+  var FORBIDDEN_TAGS = ['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'LINK', 'META', 'BASE', 'SVG', 'MATH'];
   var URL_ATTRS = ['href', 'src', 'xlink:href', 'action', 'formaction'];
 
   function stripDangerous(root) {
@@ -48,7 +67,8 @@
     var toRemove = [];
     var node;
     while ((node = walker.nextNode())) {
-      if (FORBIDDEN_TAGS.indexOf(node.tagName) !== -1) {
+      var localName = String(node.tagName || node.nodeName || '').toUpperCase();
+      if (FORBIDDEN_TAGS.indexOf(localName) !== -1) {
         toRemove.push(node);
         continue;
       }

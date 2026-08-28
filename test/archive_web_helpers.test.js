@@ -2,16 +2,18 @@
 // Arbeitspaket W1 (Web-Client für "Meetings archivieren statt löschen").
 //
 // Deckt die reinen, DOM-/Netzwerk-freien Formatierungsfunktionen ab, die das
-// Archiv-Feature in index.html implementiert (Chip-/Badge-/Impact-/Konflikt-
-// Texte). Vorbild: test/progress_web_helpers.test.js — dort wird eine
-// eigenständige .js-Datei (public/progress.js) direkt per require() geladen,
-// weil sie ein UMD-artiges module.exports besitzt. index.html ist dagegen
-// kein eigenständiges CommonJS-Modul (HTML-Dokument mit eingebettetem
-// <script>), daher wird hier stattdessen der klar markierte Ausschnitt
-// zwischen den Kommentaren "ARCHIVE_PURE_HELPERS_START"/"_END" aus der Datei
-// extrahiert und in einer VM-Sandbox ausgeführt (kein Browser/DOM nötig, da
-// der Ausschnitt laut Konvention in index.html ausschließlich reine
-// Funktionen ohne window/document/fetch-Referenzen enthalten darf).
+// Archiv-Feature im App-Frontend implementiert (Chip-/Badge-/Impact-/Konflikt-
+// Texte). Die Funktionen lagen urspruenglich inline in index.html und wurden
+// seither nach public/app.js extrahiert (weiterhin ein klassisches Script
+// ohne eigenes module.exports, siehe Kopfkommentar dort) — Vorbild fuer den
+// hier verwendeten Extraktionsansatz war/ist test/progress_web_helpers.test.js
+// (dort: public/progress.js mit echtem UMD-artigem module.exports, direkt per
+// require() geladen). Da public/app.js kein CommonJS-Modul ist, wird hier
+// stattdessen der klar markierte Ausschnitt zwischen den Kommentaren
+// "ARCHIVE_PURE_HELPERS_START"/"_END" aus der Datei extrahiert und in einer
+// VM-Sandbox ausgeführt (kein Browser/DOM nötig, da der Ausschnitt laut
+// Konvention ausschließlich reine Funktionen ohne window/document/fetch-
+// Referenzen enthalten darf).
 //
 // Für public/graph.js (ebenfalls Teil dieses Arbeitspakets) existiert seit
 // diesem Paket ein echtes module.exports (siehe dortige Änderung) — das wird
@@ -23,19 +25,19 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 function loadArchiveWebHelpers() {
-  const htmlPath = path.join(__dirname, '..', 'index.html');
-  const html = fs.readFileSync(htmlPath, 'utf8');
+  const jsPath = path.join(__dirname, '..', 'public', 'app.js');
+  const src = fs.readFileSync(jsPath, 'utf8');
   const startMarker = '// ---- ARCHIVE_PURE_HELPERS_START';
   const endMarker = '// ---- ARCHIVE_PURE_HELPERS_END';
-  const startIdx = html.indexOf(startMarker);
-  const endIdx = html.indexOf(endMarker);
+  const startIdx = src.indexOf(startMarker);
+  const endIdx = src.indexOf(endMarker);
   if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
-    throw new Error('ARCHIVE_PURE_HELPERS_START/_END-Marker nicht (mehr) in index.html gefunden — Test kann die Funktionen nicht extrahieren.');
+    throw new Error('ARCHIVE_PURE_HELPERS_START/_END-Marker nicht (mehr) in public/app.js gefunden — Test kann die Funktionen nicht extrahieren.');
   }
-  const snippet = html.slice(startIdx, endIdx);
+  const snippet = src.slice(startIdx, endIdx);
   const sandbox = {};
   vm.createContext(sandbox);
-  vm.runInContext(snippet, sandbox, { filename: 'index.html#archive-pure-helpers' });
+  vm.runInContext(snippet, sandbox, { filename: 'public/app.js#archive-pure-helpers' });
   return sandbox;
 }
 

@@ -16,6 +16,7 @@ const aiUsage = require('./ai/usage');
 const progress = require('./lib/progress');
 const archive = require('./lib/archive');
 const summaries = require('./lib/summaries');
+const { runCoreMigrations } = require('./db/schema');
 let summaryScheduler; // wird nach dem Laden von ai/index.js weiter unten gesetzt
 
 const app      = express();
@@ -47,482 +48,8 @@ const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id           TEXT PRIMARY KEY,
-    username     TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    role         TEXT NOT NULL DEFAULT 'user',
-    created_at   TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS meetings (
-    id                 TEXT PRIMARY KEY,
-    user_id            TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title              TEXT NOT NULL,
-    description        TEXT NOT NULL DEFAULT '',
-    participants       TEXT NOT NULL DEFAULT '[]',
-    is_recurring       INTEGER NOT NULL DEFAULT 0,
-    recurrence_pattern TEXT NOT NULL DEFAULT '',
-    next_date          TEXT NOT NULL DEFAULT '',
-    color              TEXT NOT NULL DEFAULT '#4f46e5',
-    created_at         TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS topics (
-    id          TEXT PRIMARY KEY,
-    meeting_id  TEXT NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    done        INTEGER NOT NULL DEFAULT 0,
-    result      TEXT NOT NULL DEFAULT '',
-    result_date TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS todos (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    done        INTEGER NOT NULL DEFAULT 0,
-    result      TEXT NOT NULL DEFAULT '',
-    result_date TEXT NOT NULL DEFAULT '',
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS themes (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS theme_links (
-    id         TEXT PRIMARY KEY,
-    theme_id   TEXT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
-    ref_type   TEXT NOT NULL,
-    ref_id     TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(theme_id, ref_id)
-  );
-`);
+runCoreMigrations(db, { htmlToText });
 
-// Migration: add sort_order to meetings if missing
-{
-  const cols = db.prepare('PRAGMA table_info(meetings)').all();
-  if (!cols.find(c => c.name === 'sort_order')) {
-    db.exec('ALTER TABLE meetings ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
-    const users = db.prepare('SELECT id FROM users').all();
-    db.transaction(() => {
-      for (const u of users) {
-        const ms = db.prepare('SELECT id FROM meetings WHERE user_id=? ORDER BY next_date,created_at').all(u.id);
-        ms.forEach((m, i) => db.prepare('UPDATE meetings SET sort_order=? WHERE id=?').run(i, m.id));
-      }
-    })();
-  }
-}
-
-// Migration: add result/result_date to todos if missing
-{
-  const cols = db.prepare('PRAGMA table_info(todos)').all();
-  if (!cols.find(c => c.name === 'result')) {
-    db.exec("ALTER TABLE todos ADD COLUMN result TEXT NOT NULL DEFAULT ''");
-    db.exec("ALTER TABLE todos ADD COLUMN result_date TEXT NOT NULL DEFAULT ''");
-  }
-}
-
-// Migration: add group_id to topics if missing
-{
-  const cols = db.prepare('PRAGMA table_info(topics)').all();
-  if (!cols.find(c => c.name === 'group_id')) {
-    db.exec('ALTER TABLE topics ADD COLUMN group_id TEXT');
-  }
-}
-
-// Migration: add is_todo to topics if missing
-{
-  const cols = db.prepare('PRAGMA table_info(topics)').all();
-  if (!cols.find(c => c.name === 'is_todo')) {
-    db.exec('ALTER TABLE topics ADD COLUMN is_todo INTEGER NOT NULL DEFAULT 0');
-  }
-}
-
-// Migration: add snoozed_until to topics if missing
-{
-  const cols = db.prepare('PRAGMA table_info(topics)').all();
-  if (!cols.find(c => c.name === 'snoozed_until')) {
-    db.exec("ALTER TABLE topics ADD COLUMN snoozed_until TEXT NOT NULL DEFAULT ''");
-  }
-}
-
-// Migration: add snoozed_until to todos if missing
-{
-  const cols = db.prepare('PRAGMA table_info(todos)').all();
-  if (!cols.find(c => c.name === 'snoozed_until')) {
-    db.exec("ALTER TABLE todos ADD COLUMN snoozed_until TEXT NOT NULL DEFAULT ''");
-  }
-}
-
-// Migration: add due_date to todos if missing
-{
-  const cols = db.prepare('PRAGMA table_info(todos)').all();
-  if (!cols.find(c => c.name === 'due_date')) {
-    db.exec("ALTER TABLE todos ADD COLUMN due_date TEXT NOT NULL DEFAULT ''");
-  }
-}
-
-// Migration: add sort_order column if missing
-{
-  const cols = db.prepare('PRAGMA table_info(topics)').all();
-  if (!cols.find(c => c.name === 'sort_order')) {
-    db.exec('ALTER TABLE topics ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0');
-    const allMeetings = db.prepare('SELECT id FROM meetings').all();
-    const initOrder = db.transaction(() => {
-      for (const m of allMeetings) {
-        const ts = db.prepare('SELECT id FROM topics WHERE meeting_id=? ORDER BY created_at').all(m.id);
-        ts.forEach((t, i) => db.prepare('UPDATE topics SET sort_order=? WHERE id=?').run(i, t.id));
-      }
-    });
-    initOrder();
-  }
-}
-
-// ── Migration: AI tables (Erweiterung v1.1, Phase 1) ─────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS ai_settings (
-    id                       TEXT PRIMARY KEY,
-    user_id                  TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    provider                 TEXT NOT NULL DEFAULT '',
-    model                    TEXT NOT NULL DEFAULT '',
-    api_key_encrypted        TEXT NOT NULL DEFAULT '',
-    api_key_last4            TEXT NOT NULL DEFAULT '',
-    azure_endpoint           TEXT NOT NULL DEFAULT '',
-    azure_api_version        TEXT NOT NULL DEFAULT '',
-    features_enabled         TEXT NOT NULL DEFAULT '{}',
-    max_monthly_cost_cents   INTEGER NOT NULL DEFAULT 0,
-    confirm_threshold_cents  INTEGER NOT NULL DEFAULT 10,
-    globally_disabled        INTEGER NOT NULL DEFAULT 0,
-    created_at               TEXT NOT NULL,
-    updated_at               TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS ai_usage (
-    id                   TEXT PRIMARY KEY,
-    user_id              TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    feature              TEXT NOT NULL,
-    provider             TEXT NOT NULL,
-    model                TEXT NOT NULL,
-    input_tokens         INTEGER NOT NULL DEFAULT 0,
-    output_tokens        INTEGER NOT NULL DEFAULT 0,
-    cost_estimate_cents  INTEGER NOT NULL DEFAULT 0,
-    created_at           TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_ai_usage_user_time ON ai_usage(user_id, created_at);
-  CREATE TABLE IF NOT EXISTS ai_artifacts (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    ref_type    TEXT NOT NULL,
-    ref_id      TEXT NOT NULL,
-    feature     TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    model       TEXT NOT NULL DEFAULT '',
-    created_at  TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_ai_artifacts_ref ON ai_artifacts(ref_type, ref_id);
-`);
-
-// ── Migration: updated_at + AI settings extensions (v1.1, Phase 3) ──
-(function migratePhase3() {
-  function hasCol(table, name) {
-    return db.prepare(`PRAGMA table_info(${table})`).all().some(c => c.name === name);
-  }
-  if (!hasCol('topics', 'updated_at')) {
-    db.exec(`ALTER TABLE topics ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
-    db.exec(`UPDATE topics SET updated_at = created_at WHERE updated_at = ''`);
-  }
-  if (!hasCol('todos', 'updated_at')) {
-    db.exec(`ALTER TABLE todos ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''`);
-    db.exec(`UPDATE todos SET updated_at = created_at WHERE updated_at = ''`);
-  }
-  if (!hasCol('todos', 'is_private')) {
-    db.exec(`ALTER TABLE todos ADD COLUMN is_private INTEGER NOT NULL DEFAULT 0`);
-  }
-  const aiCols = db.prepare(`PRAGMA table_info(ai_settings)`).all().map(c => c.name);
-  const add = (name, sql) => { if (!aiCols.includes(name)) db.exec(`ALTER TABLE ai_settings ADD COLUMN ${sql}`); };
-  add('drift_days',            'drift_days INTEGER NOT NULL DEFAULT 21');
-  add('theme_tag_threshold',   'theme_tag_threshold REAL NOT NULL DEFAULT 0.7');
-  add('weekly_digest_enabled', 'weekly_digest_enabled INTEGER NOT NULL DEFAULT 0');
-  add('weekly_digest_dow',     'weekly_digest_dow INTEGER NOT NULL DEFAULT 0');
-  add('weekly_digest_hour',    'weekly_digest_hour INTEGER NOT NULL DEFAULT 18');
-})();
-
-// ── Attachments ───────────────────────────────────────────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS attachments (
-    id         TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    ref_type   TEXT NOT NULL,
-    ref_id     TEXT NOT NULL,
-    filename   TEXT NOT NULL,
-    stored_as  TEXT NOT NULL,
-    mime_type  TEXT NOT NULL DEFAULT '',
-    size       INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_attachments_ref ON attachments(ref_type, ref_id);
-`);
-
-// ── Migration: last_active_at für Users ──────────────────────
-{
-  const cols = db.prepare('PRAGMA table_info(users)').all();
-  if (!cols.find(c => c.name === 'last_active_at')) {
-    db.exec("ALTER TABLE users ADD COLUMN last_active_at TEXT NOT NULL DEFAULT ''");
-  }
-}
-
-// ── Migration: Stack-Layer (Erweiterung v1.1, Phase 2) ───────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS stack_frames (
-    id              TEXT PRIMARY KEY,
-    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    ref_type        TEXT NOT NULL,
-    ref_id          TEXT NOT NULL,
-    next_step_note  TEXT NOT NULL,
-    pushed_at       TEXT NOT NULL,
-    popped_at       TEXT,
-    parent_frame_id TEXT,
-    pop_resolution  TEXT
-  );
-  CREATE INDEX IF NOT EXISTS idx_stack_user_open ON stack_frames(user_id, popped_at);
-  CREATE INDEX IF NOT EXISTS idx_stack_ref       ON stack_frames(ref_type, ref_id);
-`);
-
-// ── Migration: Contacts (Ansprechpartner) ────────────────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS contacts (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name        TEXT NOT NULL,
-    role        TEXT NOT NULL DEFAULT '',
-    email       TEXT NOT NULL DEFAULT '',
-    description TEXT NOT NULL DEFAULT '',
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL DEFAULT ''
-  );
-  CREATE INDEX IF NOT EXISTS idx_contacts_user ON contacts(user_id, sort_order, created_at);
-`);
-
-// ── Migration: Topic-Hierarchie (Wissensmanagement v2) ───────
-{
-  const cols = db.prepare('PRAGMA table_info(themes)').all();
-  if (!cols.find(c => c.name === 'parent_id')) {
-    db.exec('ALTER TABLE themes ADD COLUMN parent_id TEXT REFERENCES themes(id) ON DELETE SET NULL');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_themes_parent ON themes(parent_id)');
-  }
-}
-
-// ── Migration: Wissensseiten (Wissensmanagement v2) ──────────
-db.exec(`
-  CREATE TABLE IF NOT EXISTS knowledge_pages (
-    id          TEXT PRIMARY KEY,
-    user_id     TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    title       TEXT NOT NULL,
-    content     TEXT NOT NULL DEFAULT '',
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_knowledge_pages_user ON knowledge_pages(user_id);
-  CREATE TABLE IF NOT EXISTS knowledge_topic_links (
-    id                 TEXT PRIMARY KEY,
-    knowledge_page_id  TEXT NOT NULL REFERENCES knowledge_pages(id) ON DELETE CASCADE,
-    theme_id           TEXT NOT NULL REFERENCES themes(id) ON DELETE CASCADE,
-    created_at         TEXT NOT NULL,
-    UNIQUE(knowledge_page_id, theme_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_knowledge_links_page  ON knowledge_topic_links(knowledge_page_id);
-  CREATE INDEX IF NOT EXISTS idx_knowledge_links_theme ON knowledge_topic_links(theme_id);
-`);
-
-// ── Migration: FTS5-Volltextindex (Wissensmanagement v2, Phase 4) ──
-// Ersetzt die frühere client-seitige LIKE-Suche durch einen echten Volltextindex
-// mit Relevanz-Ranking (bm25), der auch Wissensseiten mit abdeckt.
-{
-  const ftsExists = db.prepare(
-    "SELECT name FROM sqlite_master WHERE type='table' AND name='search_index'"
-  ).get();
-  if (!ftsExists) {
-    db.transaction(() => {
-      db.exec(`
-        CREATE VIRTUAL TABLE search_index USING fts5(
-          ref_type UNINDEXED, ref_id UNINDEXED, user_id UNINDEXED, title, body
-        );
-      `);
-      db.exec(`
-        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-          SELECT 'meeting', id, user_id, title, description FROM meetings;
-        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-          SELECT 'theme', id, user_id, title, description FROM themes;
-        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-          SELECT 'topic', t.id, m.user_id, t.title, t.description || ' ' || t.result
-          FROM topics t JOIN meetings m ON m.id = t.meeting_id;
-        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-          SELECT 'todo', id, user_id, title, description || ' ' || result FROM todos;
-        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-          SELECT 'contact', id, user_id, name,
-            COALESCE(role,'') || ' ' || COALESCE(email,'') || ' ' || COALESCE(description,'') FROM contacts;
-        INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-          SELECT 'knowledge', id, user_id, title, content FROM knowledge_pages;
-      `);
-      db.exec(`
-        CREATE TRIGGER trg_search_meetings_ai AFTER INSERT ON meetings BEGIN
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('meeting', new.id, new.user_id, new.title, new.description);
-        END;
-        CREATE TRIGGER trg_search_meetings_au AFTER UPDATE ON meetings BEGIN
-          DELETE FROM search_index WHERE ref_type='meeting' AND ref_id=old.id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('meeting', new.id, new.user_id, new.title, new.description);
-        END;
-        CREATE TRIGGER trg_search_meetings_ad AFTER DELETE ON meetings BEGIN
-          DELETE FROM search_index WHERE ref_type='meeting' AND ref_id=old.id;
-        END;
-
-        CREATE TRIGGER trg_search_themes_ai AFTER INSERT ON themes BEGIN
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('theme', new.id, new.user_id, new.title, new.description);
-        END;
-        CREATE TRIGGER trg_search_themes_au AFTER UPDATE ON themes BEGIN
-          DELETE FROM search_index WHERE ref_type='theme' AND ref_id=old.id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('theme', new.id, new.user_id, new.title, new.description);
-        END;
-        CREATE TRIGGER trg_search_themes_ad AFTER DELETE ON themes BEGIN
-          DELETE FROM search_index WHERE ref_type='theme' AND ref_id=old.id;
-        END;
-
-        CREATE TRIGGER trg_search_topics_ai AFTER INSERT ON topics BEGIN
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'topic', new.id, m.user_id, new.title, new.description || ' ' || new.result FROM meetings m WHERE m.id = new.meeting_id;
-        END;
-        CREATE TRIGGER trg_search_topics_au AFTER UPDATE ON topics BEGIN
-          DELETE FROM search_index WHERE ref_type='topic' AND ref_id=old.id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'topic', new.id, m.user_id, new.title, new.description || ' ' || new.result FROM meetings m WHERE m.id = new.meeting_id;
-        END;
-        CREATE TRIGGER trg_search_topics_ad AFTER DELETE ON topics BEGIN
-          DELETE FROM search_index WHERE ref_type='topic' AND ref_id=old.id;
-        END;
-
-        CREATE TRIGGER trg_search_todos_ai AFTER INSERT ON todos BEGIN
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('todo', new.id, new.user_id, new.title, new.description || ' ' || new.result);
-        END;
-        CREATE TRIGGER trg_search_todos_au AFTER UPDATE ON todos BEGIN
-          DELETE FROM search_index WHERE ref_type='todo' AND ref_id=old.id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('todo', new.id, new.user_id, new.title, new.description || ' ' || new.result);
-        END;
-        CREATE TRIGGER trg_search_todos_ad AFTER DELETE ON todos BEGIN
-          DELETE FROM search_index WHERE ref_type='todo' AND ref_id=old.id;
-        END;
-
-        CREATE TRIGGER trg_search_contacts_ai AFTER INSERT ON contacts BEGIN
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('contact', new.id, new.user_id, new.name,
-            COALESCE(new.role,'') || ' ' || COALESCE(new.email,'') || ' ' || COALESCE(new.description,''));
-        END;
-        CREATE TRIGGER trg_search_contacts_au AFTER UPDATE ON contacts BEGIN
-          DELETE FROM search_index WHERE ref_type='contact' AND ref_id=old.id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('contact', new.id, new.user_id, new.name,
-            COALESCE(new.role,'') || ' ' || COALESCE(new.email,'') || ' ' || COALESCE(new.description,''));
-        END;
-        CREATE TRIGGER trg_search_contacts_ad AFTER DELETE ON contacts BEGIN
-          DELETE FROM search_index WHERE ref_type='contact' AND ref_id=old.id;
-        END;
-
-        CREATE TRIGGER trg_search_knowledge_ai AFTER INSERT ON knowledge_pages BEGIN
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content);
-        END;
-        CREATE TRIGGER trg_search_knowledge_au AFTER UPDATE ON knowledge_pages BEGIN
-          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content);
-        END;
-        CREATE TRIGGER trg_search_knowledge_ad AFTER DELETE ON knowledge_pages BEGIN
-          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
-        END;
-      `);
-    })();
-  }
-}
-
-// ── Migration: Wissensseiten-Verknüpfungen (Wissensmanagement v2.1, Block A) ──
-// Ungerichtete Verknüpfung zwischen zwei Wissensseiten. Ungerichtetheit wird
-// strukturell erzwungen: vor jedem Insert werden die beiden IDs lexikografisch
-// sortiert (a < b), das CHECK verhindert Selbstverweise, UNIQUE liefert Idempotenz.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS knowledge_links (
-    id         TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL REFERENCES users(id)            ON DELETE CASCADE,
-    page_a_id  TEXT NOT NULL REFERENCES knowledge_pages(id)  ON DELETE CASCADE,
-    page_b_id  TEXT NOT NULL REFERENCES knowledge_pages(id)  ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    UNIQUE(page_a_id, page_b_id),
-    CHECK(page_a_id < page_b_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_klinks_a ON knowledge_links(page_a_id);
-  CREATE INDEX IF NOT EXISTS idx_klinks_b ON knowledge_links(page_b_id);
-`);
-
-// ── Migration: Graph-Knoten-Positionen (Wissensmanagement v2.1, Paket 1b) ──
-// Nur das Schema wird hier angelegt; Routen dafür gehören zu einem separaten
-// Arbeitspaket (Graph-Modul).
-db.exec(`
-  CREATE TABLE IF NOT EXISTS graph_node_positions (
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    node_type  TEXT NOT NULL,
-    node_id    TEXT NOT NULL,
-    x          REAL NOT NULL,
-    y          REAL NOT NULL,
-    updated_at TEXT NOT NULL,
-    PRIMARY KEY (user_id, node_type, node_id)
-  ) WITHOUT ROWID;
-`);
-
-// ── Migration: knowledge_pages.content_text + FTS-Neuaufbau (Wissensmanagement v2.1, Block A) ──
-// content_text hält den auf reinen Text reduzierten Inhalt (via htmlToText) für
-// FTS/Snippets; content bleibt das sanitized HTML für die Anzeige.
-{
-  const hasContentText = db.prepare('PRAGMA table_info(knowledge_pages)').all().some(c => c.name === 'content_text');
-  if (!hasContentText) {
-    db.transaction(() => {
-      db.exec(`ALTER TABLE knowledge_pages ADD COLUMN content_text TEXT NOT NULL DEFAULT ''`);
-
-      const pages = db.prepare('SELECT id, content FROM knowledge_pages').all();
-      const updText = db.prepare('UPDATE knowledge_pages SET content_text=? WHERE id=?');
-      for (const p of pages) updText.run(htmlToText(p.content || ''), p.id);
-
-      // Drop + recreate the three FTS triggers so they index content_text instead of raw content.
-      db.exec(`
-        DROP TRIGGER IF EXISTS trg_search_knowledge_ai;
-        DROP TRIGGER IF EXISTS trg_search_knowledge_au;
-        DROP TRIGGER IF EXISTS trg_search_knowledge_ad;
-
-        CREATE TRIGGER trg_search_knowledge_ai AFTER INSERT ON knowledge_pages BEGIN
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content_text);
-        END;
-        CREATE TRIGGER trg_search_knowledge_au AFTER UPDATE ON knowledge_pages BEGIN
-          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', new.id, new.user_id, new.title, new.content_text);
-        END;
-        CREATE TRIGGER trg_search_knowledge_ad AFTER DELETE ON knowledge_pages BEGIN
-          DELETE FROM search_index WHERE ref_type='knowledge' AND ref_id=old.id;
-        END;
-      `);
-
-      // Reindex all existing knowledge rows in search_index with the new body.
-      db.exec(`DELETE FROM search_index WHERE ref_type='knowledge'`);
-      const reindex = db.prepare(
-        `INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('knowledge', ?, ?, ?, ?)`
-      );
-      for (const p of db.prepare('SELECT id, user_id, title, content_text FROM knowledge_pages').all()) {
-        reindex.run(p.id, p.user_id, p.title, p.content_text);
-      }
-    })();
-  }
-}
 
 // ── Migration: Zielbild/Fortschrittsverlauf (Arbeitspaket S1/S2) ────
 // Additive CREATE TABLE/INDEX IF NOT EXISTS für progress_entries/progress_meta.
@@ -848,10 +375,11 @@ app.post(`${A}/meetings`, requireAuth, (req, res) => {
   if (title.length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (!isValidHexColor(color)) return res.status(400).json({ error: 'Ungültige Farbe' });
+  const cleanDesc = stripUnsafeHtml(description);
   const id = uid();
   const mxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM meetings WHERE user_id=?').get(req.session.uid).m;
   db.prepare('INSERT INTO meetings(id,user_id,title,description,participants,is_recurring,recurrence_pattern,next_date,color,created_at,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
-    id, req.session.uid, title.trim(), description, JSON.stringify(participants),
+    id, req.session.uid, title.trim(), cleanDesc, JSON.stringify(participants),
     isRecurring?1:0, recurrencePattern, nextDate, color, new Date().toISOString(), mxOrder + 1
   );
   res.status(201).json(parseMeeting(db.prepare('SELECT * FROM meetings WHERE id=?').get(id)));
@@ -878,8 +406,9 @@ app.put(`${A}/meetings/:id`, requireAuth, (req, res) => {
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (!isValidHexColor(color)) return res.status(400).json({ error: 'Ungültige Farbe' });
+  const cleanDesc = stripUnsafeHtml(description);
   db.prepare('UPDATE meetings SET title=?,description=?,participants=?,is_recurring=?,recurrence_pattern=?,next_date=?,color=? WHERE id=?').run(
-    title, description,
+    title, cleanDesc,
     JSON.stringify(participants ?? JSON.parse(m.participants)),
     isRecurring !== undefined ? (isRecurring?1:0) : m.is_recurring,
     recurrencePattern ?? m.recurrence_pattern,
@@ -1850,20 +1379,9 @@ summaryScheduler = summaries.createSummaryScheduler({
 });
 summaries.configure({ scheduler: summaryScheduler });
 
-// Schreibschutz für archivierte Themen (lib/archive, Paket B-Serie). lib/archive
-// existiert in diesem Arbeitsstand (Paket S3) noch nicht — lazy + defensiv
-// geladen, damit die Integration beim Merge ohne weitere Codeänderung greift.
-// Bis dahin: Themen gelten nie als schreibgeschützt (konservativer Fallback,
-// siehe Abschlussbericht).
+// Schreibschutz für archivierte Themen (lib/archive, Paket B-Serie).
 function isRefReadOnly(refType, refId) {
-  if (refType !== 'topic') return false;
-  try {
-    const archiveMod = require('./lib/archive');
-    if (archiveMod && typeof archiveMod.isTopicArchived === 'function') {
-      return !!archiveMod.isTopicArchived(db, refId);
-    }
-  } catch (_) { /* lib/archive noch nicht vorhanden */ }
-  return false;
+  return refType === 'topic' && !!archive.isTopicArchived(db, refId);
 }
 
 // `ownsRef` wird weiter unten (Stack-Layer, Paket "Erweiterung v1.1 Phase 2")
@@ -1880,9 +1398,19 @@ app.use(A, summaries.createSummaryRouter({
 
 function aiErr(res, e) {
   const status = e.httpStatus || 500;
-  const body   = { error: e.message || 'AI-Fehler' };
+  // Sicherheits-Nachbesserung: nur bei kontrollierten Anwendungsfehlern
+  // (< 500, bewusst per httpErr() in ai/index.js bzw. den Providern mit
+  // festem, deutschem Klartext erzeugt) wird e.message an den Client
+  // durchgereicht. Bei >= 500 (Provider-Timeout oder ungefilterter
+  // Passthrough eines rohen SDK-Fehlers, siehe ai/providers/*.js) kann
+  // e.message interne Details (Endpoints, Request-IDs, SDK-Fehlertexte)
+  // enthalten - diese werden serverseitig geloggt statt an den Client
+  // weitergegeben.
+  const trusted = status < 500;
+  if (!trusted) console.error('[ai]', e && e.stack ? e.stack : e);
+  const body = { error: (trusted && e.message) || 'KI-Anfrage fehlgeschlagen' };
   if (e.code)   body.code   = e.code;
-  if (e.detail) body.detail = e.detail;
+  if (trusted && e.detail) body.detail = e.detail;
   res.status(status).json(body);
 }
 
@@ -2400,6 +1928,73 @@ app.post(`${A}/stack/push`, requireAuth, (req, res) => {
   });
 });
 
+// Resolution 'resumed': der Frame bleibt offen und wird an die Spitze des
+// offenen Stacks befördert (kein Topic/Todo wird mutiert).
+//
+// Pre-state: someChain → oldTop → ... → f → ... → bottom
+// Post-state: f → oldTop → ... (f's alter Platz wird geschlossen, indem sein
+// Kind umgehängt wird).
+function resumeFrame(db, userId, f) {
+  // 1) Aktuelle Spitze anhand der unveränderten Kette bestimmen.
+  const allOpen = db.prepare(
+    'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
+  ).all(userId);
+  const ordered = orderActiveFirst(allOpen);
+  const oldTopId = ordered[0]?.id || null;
+
+  if (oldTopId !== f.id) {
+    // 2) Umhängen: wer f als parent hatte, übernimmt f's alten parent (f wird ausgeschnitten).
+    db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE user_id=? AND popped_at IS NULL AND parent_frame_id=?')
+      .run(f.parent_frame_id, userId, f.id);
+    // 3) f wird die neue Spitze — sein parent ist die alte Spitze.
+    db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE id=?').run(oldTopId, f.id);
+  }
+
+  return db.prepare('SELECT * FROM stack_frames WHERE id=?').get(f.id);
+}
+
+// Resolution 'done': markiert das referenzierte Topic/Todo als erledigt und
+// übernimmt optional ein Ergebnis. Liefert die `applied`-Teilmenge, die der
+// Pop-Handler unverändert in seine Response übernimmt.
+function applyDoneResolution(db, userId, f, { result, resultDate }) {
+  const applied = {};
+  const date = resultDate || new Date().toISOString().slice(0, 10);
+  const nowIso = new Date().toISOString();
+  if (f.ref_type === 'topic') {
+    const upd = db.prepare('UPDATE topics SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date), updated_at=? WHERE id=?')
+      .run(result != null ? stripUnsafeHtml(String(result)) : null,
+           result != null ? date : null,
+           nowIso,
+           f.ref_id);
+    applied.topicDone = upd.changes === 1;
+    if (result != null) applied.resultSaved = true;
+  } else if (f.ref_type === 'todo') {
+    const upd = db.prepare('UPDATE todos SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date), updated_at=? WHERE id=? AND user_id=?')
+      .run(result != null ? stripUnsafeHtml(String(result)) : null,
+           result != null ? date : null,
+           nowIso,
+           f.ref_id, userId);
+    applied.todoDone = upd.changes === 1;
+    if (result != null) applied.resultSaved = true;
+  }
+  return applied;
+}
+
+// Resolution 'snoozed': verschiebt das referenzierte Topic/Todo auf ein
+// Schlafen-bis-Datum. Liefert die `applied`-Teilmenge.
+function applySnoozedResolution(db, userId, f, { snoozedUntil }) {
+  const applied = {};
+  const until = snoozedUntil || defaultSnoozeUntilTomorrow();
+  if (f.ref_type === 'topic') {
+    const upd = db.prepare('UPDATE topics SET snoozed_until=? WHERE id=?').run(until, f.ref_id);
+    if (upd.changes === 1) applied.snoozedUntil = until;
+  } else if (f.ref_type === 'todo') {
+    const upd = db.prepare('UPDATE todos SET snoozed_until=? WHERE id=? AND user_id=?').run(until, f.ref_id, userId);
+    if (upd.changes === 1) applied.snoozedUntil = until;
+  }
+  return applied;
+}
+
 app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
   const { resolution, result, resultDate, snoozedUntil } = req.body || {};
   if (!VALID_RESOLUTIONS.has(resolution)) return res.status(400).json({ error: 'Ungültige resolution' });
@@ -2418,71 +2013,21 @@ app.post(`${A}/stack/pop/:frameId`, requireAuth, (req, res) => {
     return;
   }
 
-  const now = new Date().toISOString();
-  const applied = {};
-
   if (resolution === 'resumed') {
-    // Frame stays open; promote it to the top of the open stack.
-    //
-    // Pre-state: someChain → oldTop → ... → f → ... → bottom
-    // Post-state: f → oldTop → ... (f's old slot is closed by re-linking its child).
-
-    // 1) Determine the current top (using the unmodified chain).
-    const allOpen = db.prepare(
-      'SELECT * FROM stack_frames WHERE user_id=? AND popped_at IS NULL'
-    ).all(req.session.uid);
-    const ordered = orderActiveFirst(allOpen);
-    const oldTopId = ordered[0]?.id || null;
-
-    if (oldTopId !== f.id) {
-      // 2) Re-link: whoever had f as parent now takes f's old parent (cut f out).
-      db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE user_id=? AND popped_at IS NULL AND parent_frame_id=?')
-        .run(f.parent_frame_id, req.session.uid, f.id);
-      // 3) f becomes the new top — its parent is the old top.
-      db.prepare('UPDATE stack_frames SET parent_frame_id=? WHERE id=?').run(oldTopId, f.id);
-    }
-
-    const updated = db.prepare('SELECT * FROM stack_frames WHERE id=?').get(f.id);
+    const updated = resumeFrame(db, req.session.uid, f);
     return res.json({
       frame: frameToJson(updated),
       next_active: frameToJson(updated),
-      applied,
+      applied: {},
       drift_warning: false,
     });
   }
 
-  // Apply side effects on referenced topic/todo
-  if (resolution === 'done') {
-    const date = resultDate || new Date().toISOString().slice(0, 10);
-    const nowIso = new Date().toISOString();
-    if (f.ref_type === 'topic') {
-      const upd = db.prepare('UPDATE topics SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date), updated_at=? WHERE id=?')
-        .run(result != null ? stripUnsafeHtml(String(result)) : null,
-             result != null ? date : null,
-             nowIso,
-             f.ref_id);
-      applied.topicDone = upd.changes === 1;
-      if (result != null) applied.resultSaved = true;
-    } else if (f.ref_type === 'todo') {
-      const upd = db.prepare('UPDATE todos SET done=1, result=COALESCE(?, result), result_date=COALESCE(?, result_date), updated_at=? WHERE id=? AND user_id=?')
-        .run(result != null ? stripUnsafeHtml(String(result)) : null,
-             result != null ? date : null,
-             nowIso,
-             f.ref_id, req.session.uid);
-      applied.todoDone = upd.changes === 1;
-      if (result != null) applied.resultSaved = true;
-    }
-  } else if (resolution === 'snoozed') {
-    const until = snoozedUntil || defaultSnoozeUntilTomorrow();
-    if (f.ref_type === 'topic') {
-      const upd = db.prepare('UPDATE topics SET snoozed_until=? WHERE id=?').run(until, f.ref_id);
-      if (upd.changes === 1) applied.snoozedUntil = until;
-    } else if (f.ref_type === 'todo') {
-      const upd = db.prepare('UPDATE todos SET snoozed_until=? WHERE id=? AND user_id=?').run(until, f.ref_id, req.session.uid);
-      if (upd.changes === 1) applied.snoozedUntil = until;
-    }
-  }
-  // 'dropped': no side effect.
+  const now = new Date().toISOString();
+  // Apply side effects on referenced topic/todo ('dropped': no side effect).
+  const applied = resolution === 'done'    ? applyDoneResolution(db, req.session.uid, f, { result, resultDate })
+                 : resolution === 'snoozed' ? applySnoozedResolution(db, req.session.uid, f, { snoozedUntil })
+                 : {};
 
   // Close the frame
   db.prepare('UPDATE stack_frames SET popped_at=?, pop_resolution=? WHERE id=?').run(now, resolution, f.id);
@@ -2773,16 +2318,18 @@ if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
 app.get(BASE || '/', (req, res) => {
   const fs = require('fs');
   let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-  // Graph-Assets sind im Quelltext auf "/assets/..." verlinkt (funktioniert direkt
-  // gegen den Node-Prozess). Hinter einem Reverse-Proxy, der nur BASE_PATH an die
-  // App weiterleitet (siehe deploy.sh-Beispielkonfiguration), muss der ausgelieferte
-  // Pfad das BASE-Präfix tragen, sonst laedt /assets/graph.js/.css nie.
+  // Graph-/Progress-/App-Assets sind im Quelltext auf "/assets/..." verlinkt
+  // (funktioniert direkt gegen den Node-Prozess). Hinter einem Reverse-Proxy,
+  // der nur BASE_PATH an die App weiterleitet (siehe deploy.sh-Beispiel-
+  // konfiguration), muss der ausgelieferte Pfad das BASE-Präfix tragen, sonst
+  // laden /assets/graph.js/.css, progress.js/.css und app.js nie.
   if (BASE) {
     html = html
       .replace('href="/assets/graph.css"', `href="${BASE}/assets/graph.css"`)
       .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`)
       .replace('href="/assets/progress.css"', `href="${BASE}/assets/progress.css"`)
-      .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`);
+      .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`)
+      .replace('src="/assets/app.js"', `src="${BASE}/assets/app.js"`);
   }
   html = html.replace('</head>',
     `<script>window.__TS_BASE__ = ${JSON.stringify(BASE).replace(/</g, '\\u003c')};</script>\n</head>`);
@@ -2885,7 +2432,7 @@ app.use(`${A}/progress`, progress.createProgressRouter({
   requireAuth,
   ownsRef,
   getLatestFrameId,
-  isRefReadOnly: (refType, refId) => refType === 'topic' && archive.isTopicArchived(db, refId),
+  isRefReadOnly,
   now: () => new Date(),
   // Paket S3: löst die ereignisgetriebene KI-Fortschritts-Zusammenfassung aus,
   // synchron/wurffrei, niemals awaited (siehe lib/summaries/service.js).

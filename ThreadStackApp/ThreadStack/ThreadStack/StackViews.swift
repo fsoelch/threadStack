@@ -39,12 +39,12 @@ struct StackPanelView: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: collapsed ? 100 : 12)
+            RoundedRectangle(cornerRadius: collapsed ? 100 : DS.radiusL)
                 .fill(.background)
                 .shadow(color: .black.opacity(0.14), radius: 8, x: 0, y: 4)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: collapsed ? 100 : 12)
+            RoundedRectangle(cornerRadius: collapsed ? 100 : DS.radiusL)
                 .strokeBorder(.gray.opacity(0.15))
         )
         .frame(width: collapsed ? nil : 320)
@@ -169,18 +169,18 @@ struct StackPanelView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(DS.accent.opacity(0.10))
                         .foregroundStyle(DS.accentDark)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .clipShape(RoundedRectangle(cornerRadius: DS.radiusXS))
                 }
             }
         }
         .padding(8)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: DS.radiusS)
                 .fill(isActive ? DS.accent.opacity(0.10) : DS.cardBg)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(isActive ? DS.accent : Color(hex: "#e2e8f0"),
+            RoundedRectangle(cornerRadius: DS.radiusS)
+                .strokeBorder(isActive ? DS.accent : DS.borderMuted,
                               lineWidth: isActive ? 1.5 : 1)
         )
         .opacity(isActive ? 1 : 0.8)

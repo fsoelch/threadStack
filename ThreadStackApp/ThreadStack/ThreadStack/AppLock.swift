@@ -16,7 +16,7 @@ struct LockScreenView: View {
 
             Image(systemName: "lock.shield.fill")
                 .font(.system(size: 80))
-                .foregroundStyle(Color(hex: "#6366f1"))
+                .foregroundStyle(DS.brandIndigo)
 
             VStack(spacing: 6) {
                 Text("ThreadStack").font(.title).fontWeight(.bold)

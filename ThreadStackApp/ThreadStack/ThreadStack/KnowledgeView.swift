@@ -271,9 +271,7 @@ struct KnowledgeTopicScopedListView: View {
                 Text("„\(c.title)\u{201C} wird endgültig gelöscht. Das kann nicht rückgängig gemacht werden.")
             }
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
     }
 
     private func performDelete() {
@@ -385,9 +383,7 @@ struct KnowledgeAllListView: View {
                 Text("„\(c.title)\u{201C} wird endgültig gelöscht. Das kann nicht rückgängig gemacht werden.")
             }
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
     }
 
     private func performDelete() {

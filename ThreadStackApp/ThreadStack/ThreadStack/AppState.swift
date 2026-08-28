@@ -73,35 +73,13 @@ final class AppState: ObservableObject {
     private var refreshTimer: Timer?
     private let autoRefreshInterval: TimeInterval = 60   // Sekunden
 
-    // MARK: - Graph (Story B9)
-
-    @Published var graphNodes: [GraphNode] = []
-    @Published var graphEdges: [GraphEdge] = []
-    @Published var graphSchema: GraphSchema = GraphSchema()
-    @Published var graphStats: GraphStats = GraphStats()
-    @Published var graphIsLoading = false
-    /// Set when the last load failed but a cached snapshot could be shown instead.
-    @Published var graphIsOffline = false
-    /// User-facing error text when neither a live load nor a cache was available.
-    @Published var graphError: String?
-    @Published var graphLastLoadedAt: Date?
-
-    private lazy var graphPositionSync: GraphPositionSync = {
-        let sync = GraphPositionSync()
-        sync.onFlush = { [weak self] moves in
-            try await self?.savePositions(moves)
-        }
-        sync.onError = { [weak self] error in
-            self?.graphPositionSaveError = error.localizedDescription
-        }
-        return sync
-    }()
-    /// Dezenter Hinweis, dass die letzte Positions-Speicherung fehlgeschlagen ist
-    /// (Position bleibt lokal sichtbar, Wiederholung folgt automatisch).
-    @Published var graphPositionSaveError: String?
-    /// Set by the Graph view's node "Öffnen" action, consumed by `ContentView`
-    /// to switch to the matching existing detail view.
-    @Published var graphNavigationRequest: GraphNavigationTarget?
+    // Graph-Zustand lebt seit der Lesbarkeits-/Wartbarkeits-Aufteilung in
+    // `GraphStore` (analog zu `ProgressStore`/`SummaryStore`). `AppState`
+    // haelt nur noch diese schwache Rueckreferenz, damit `logout()` weiterhin
+    // garantieren kann, dass der Graph-Cache jeden Logout NICHT ueberlebt
+    // (Security-Anforderung, siehe `GraphStore.clearOnLogout()`) - gesetzt
+    // von der Kompositionswurzel (`ThreadStackApp.swift`).
+    weak var graphStore: GraphStore?
 
     var aiIsActive: Bool { aiSettings?.isActive ?? false }
     func aiFeatureEnabled(_ keyPath: KeyPath<AIFeatures, Bool>) -> Bool {
@@ -141,12 +119,21 @@ final class AppState: ObservableObject {
     private func url(_ path: String) throws -> URL {
         var base = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if base.hasSuffix("/") { base = String(base.dropLast()) }
-        guard !base.isEmpty, let u = URL(string: base + "/api" + path) else { throw APIError.invalidURL }
+        guard !base.isEmpty, let u = URL(string: base + "/api" + path),
+              isAllowedServerURLScheme(u) else { throw APIError.invalidURL }
         return u
     }
 
-    func request<T: Decodable>(_ method: String, _ path: String,
-                               body: [String: Any]? = nil) async throws -> T {
+    /// Gemeinsamer Kern von `request`/`aiRequest`/`archiveRequest`/
+    /// `knowledgeRequest` (Arbeit zur Lesbarkeit/Wartbarkeit - aus 4 fast
+    /// identischen Kopien extrahiert): baut die `URLRequest`, sendet sie und
+    /// prüft Netzwerk-/401-Fehler EINHEITLICH. Die vier öffentlichen
+    /// Methoden unterscheiden sich nur noch in ihrer jeweiligen ≥400-
+    /// Fehler-Zuordnung (structured error body je Feature-Bereich) - dafür
+    /// bekommen sie hier Rohdaten + HTTP-Status zurück, statt die
+    /// Entscheidung selbst zu treffen.
+    private func performRequest(_ method: String, _ path: String,
+                                 body: [String: Any]? = nil) async throws -> (data: Data, http: HTTPURLResponse) {
         var req = URLRequest(url: try url(path))
         req.httpMethod = method
         if let body, !body.isEmpty {
@@ -156,11 +143,22 @@ final class AppState: ObservableObject {
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw APIError.network }
         if http.statusCode == 401 { throw APIError.unauthorized }
-        if http.statusCode >= 400 {
-            let msg = (try? decoder.decode([String: String].self, from: data))?["error"]
-                      ?? "HTTP \(http.statusCode)"
-            throw APIError.server(msg)
-        }
+        return (data, http)
+    }
+
+    /// Fallback-Fehlerzuordnung für ≥400-Antworten, die kein feature-
+    /// spezifisches structured Error-Body liefern (oder deren Decodierung
+    /// scheitert): versucht `{"error": "..."}`, sonst generischer HTTP-Text.
+    private func mapGenericError(data: Data, status: Int) -> APIError {
+        let msg = (try? decoder.decode([String: String].self, from: data))?["error"]
+                  ?? "HTTP \(status)"
+        return .server(msg)
+    }
+
+    func request<T: Decodable>(_ method: String, _ path: String,
+                               body: [String: Any]? = nil) async throws -> T {
+        let (data, http) = try await performRequest(method, path, body: body)
+        if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
         return try decoder.decode(T.self, from: data)
     }
 
@@ -172,23 +170,13 @@ final class AppState: ObservableObject {
     // v1.1: AI-aware request that surfaces 402/409/422/428/503 via APIAIError.
     func aiRequest<T: Decodable>(_ method: String, _ path: String,
                                  body: [String: Any]? = nil) async throws -> T {
-        var req = URLRequest(url: try url(path))
-        req.httpMethod = method
-        if let body, !body.isEmpty {
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        let (data, response) = try await session.data(for: req)
-        guard let http = response as? HTTPURLResponse else { throw APIError.network }
-        if http.statusCode == 401 { throw APIError.unauthorized }
+        let (data, http) = try await performRequest(method, path, body: body)
         if http.statusCode >= 400 {
-            if let body = try? decoder.decode(AIErrorBody.self, from: data) {
-                throw APIAIError(status: http.statusCode, message: body.error,
-                                 code: body.code, detail: body.detail)
+            if let errBody = try? decoder.decode(AIErrorBody.self, from: data) {
+                throw APIAIError(status: http.statusCode, message: errBody.error,
+                                 code: errBody.code, detail: errBody.detail)
             }
-            let msg = (try? decoder.decode([String: String].self, from: data))?["error"]
-                      ?? "HTTP \(http.statusCode)"
-            throw APIError.server(msg)
+            throw mapGenericError(data: data, status: http.statusCode)
         }
         return try decoder.decode(T.self, from: data)
     }
@@ -225,27 +213,17 @@ final class AppState: ObservableObject {
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]
         archivedMeetings = []; archiveTotal = 0
-        clearGraphStateOnLogout()
-        // Security requirement (analog zu clearGraphStateOnLogout): lokale
+        graphStore?.clearOnLogout()
+        // Security requirement (analog zu GraphStore.clearOnLogout): lokale
         // Wissens-Entwürfe (unsynced, ggf. sensible Notizinhalte) gehören dem
         // vorherigen Nutzer und dürfen den Logout nicht überleben.
         KnowledgeDraftStore.clearAll()
         // Geplante/zugestellte Notifications gehören dem vorherigen Nutzer und dürfen
-        // den Logout nicht überleben (gleiche Anforderung wie clearGraphStateOnLogout).
+        // den Logout nicht überleben (gleiche Anforderung wie GraphStore.clearOnLogout()).
         // resyncSnoozeNotifications() plant beim nächsten Login idempotent alles neu.
         NotificationScheduler.shared.cancelAll()
         // Beim manuellen Logout: stored credentials behalten wir bewusst — der nächste
         // App-Start fragt dann via Face ID nach.
-    }
-
-    /// Security requirement (Story B9 / offline cache): the on-disk graph
-    /// cache holds the previous user's content and must not survive logout.
-    private func clearGraphStateOnLogout() {
-        graphNodes = []; graphEdges = []
-        graphSchema = GraphSchema(); graphStats = GraphStats()
-        graphIsOffline = false; graphError = nil; graphPositionSaveError = nil
-        graphLastLoadedAt = nil
-        GraphCache.clear()
     }
 
     /// Entsperrt die App via Biometrie und meldet sich automatisch am Server an.
@@ -366,24 +344,14 @@ final class AppState: ObservableObject {
     /// 401 still surfaces as `APIError.unauthorized`, matching the shared contract.
     private func archiveRequest<T: Decodable>(_ method: String, _ path: String,
                                                body: [String: Any]? = nil) async throws -> T {
-        var req = URLRequest(url: try url(path))
-        req.httpMethod = method
-        if let body, !body.isEmpty {
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        let (data, response) = try await session.data(for: req)
-        guard let http = response as? HTTPURLResponse else { throw APIError.network }
-        if http.statusCode == 401 { throw APIError.unauthorized }
+        let (data, http) = try await performRequest(method, path, body: body)
         if http.statusCode >= 400 {
             if http.statusCode == 409,
                let errBody = try? decoder.decode(ArchiveErrorBody.self, from: data),
                let conflicts = errBody.conflicts {
                 throw ArchiveConflictError(openFrames: conflicts.openFrames)
             }
-            let msg = (try? decoder.decode([String: String].self, from: data))?["error"]
-                      ?? "HTTP \(http.statusCode)"
-            throw APIError.server(msg)
+            throw mapGenericError(data: data, status: http.statusCode)
         }
         return try decoder.decode(T.self, from: data)
     }
@@ -718,19 +686,11 @@ final class AppState: ObservableObject {
     /// shared session-expiry handling elsewhere in the app keeps working.
     private func knowledgeRequest<T: Decodable>(_ method: String, _ path: String,
                                                  body: [String: Any]? = nil) async throws -> T {
-        var req = URLRequest(url: try url(path))
-        req.httpMethod = method
-        if let body, !body.isEmpty {
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try JSONSerialization.data(withJSONObject: body)
-        }
-        let (data, response) = try await session.data(for: req)
-        guard let http = response as? HTTPURLResponse else { throw APIError.network }
-        if http.statusCode == 401 { throw APIError.unauthorized }
+        let (data, http) = try await performRequest(method, path, body: body)
         if http.statusCode >= 400 {
-            if let body = try? decoder.decode(KnowledgeErrorBody.self, from: data) {
-                throw KnowledgeAPIError(status: http.statusCode, code: body.code ?? "",
-                                        message: body.error, limit: body.limit)
+            if let errBody = try? decoder.decode(KnowledgeErrorBody.self, from: data) {
+                throw KnowledgeAPIError(status: http.statusCode, code: errBody.code ?? "",
+                                        message: errBody.error, limit: errBody.limit)
             }
             throw KnowledgeAPIError(status: http.statusCode, code: "",
                                     message: "HTTP \(http.statusCode)", limit: nil)
@@ -1115,68 +1075,6 @@ final class AppState: ObservableObject {
     func aiLinkSummarize(pageToken: String, length: String, confirm: Bool = false) async throws -> LinkSummaryResponse {
         try await aiRequest("POST", "/ai/link/summarize\(confirm ? "?confirm=true" : "")",
                             body: ["page_token": pageToken, "length": length])
-    }
-
-    // MARK: - Graph (Story B9)
-
-    /// Loads the full graph in a single round trip. Falls back to the last
-    /// cached snapshot (see `GraphCache`) if the request fails, so the view
-    /// still has something useful to show when offline.
-    func loadGraph() async {
-        graphIsLoading = true
-        defer { graphIsLoading = false }
-        do {
-            let resp: GraphResponse = try await request("GET", "/graph")
-            graphNodes = resp.nodes
-            graphEdges = resp.edges
-            graphSchema = resp.schema
-            graphStats = resp.stats
-            graphIsOffline = false
-            graphError = nil
-            graphLastLoadedAt = Date()
-            GraphCache.save(resp)
-            // A reconnect might have brought back moves queued while offline.
-            await graphPositionSync.flushNow()
-        } catch {
-            if let cached = GraphCache.load() {
-                graphNodes = cached.nodes
-                graphEdges = cached.edges
-                graphSchema = cached.schema
-                graphStats = cached.stats
-                graphIsOffline = true
-                graphError = nil
-            } else {
-                graphNodes = []; graphEdges = []
-                graphIsOffline = false
-                graphError = error.localizedDescription
-            }
-        }
-    }
-
-    /// Queues a single node's new position for debounced (500ms), serialized
-    /// persistence. Safe to call repeatedly during a drag; only the final
-    /// position per node key survives to be sent.
-    func enqueueGraphPositionSave(type: String, id: String, x: Double, y: Double) {
-        graphPositionSaveError = nil
-        graphPositionSync.enqueue(type: type, id: id, x: x, y: y)
-    }
-
-    /// Direct save of a batch of positions. Called by `GraphPositionSync`;
-    /// exposed for callers (e.g. tests) that want to bypass debouncing.
-    /// Contract: `PATCH /api/graph/positions`, body `{positions: [...]}`, max 500 per request.
-    func savePositions(_ moves: [GraphPositionSync.Move]) async throws {
-        guard !moves.isEmpty else { return }
-        var idx = 0
-        while idx < moves.count {
-            let end = min(idx + 500, moves.count)
-            let chunk = moves[idx..<end]
-            let payload: [[String: Any]] = chunk.map {
-                ["type": $0.type, "id": $0.id, "x": $0.x, "y": $0.y]
-            }
-            let _: GraphPositionsSaveResponse = try await request("PATCH", "/graph/positions",
-                                                                   body: ["positions": payload])
-            idx = end
-        }
     }
 
     // MARK: - Refresh (auto + manual)

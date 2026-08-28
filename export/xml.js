@@ -1,19 +1,29 @@
 'use strict';
 const { create } = require('xmlbuilder2');
+const { buildThemeTree } = require('./themeTree');
 
-function buildThemeTree(themes) {
-  const byId = new Map(themes.map(t => [t.id, { ...t, children: [] }]));
-  const roots = [];
-  for (const t of byId.values()) {
-    if (t.parent_id && byId.has(t.parent_id)) byId.get(t.parent_id).children.push(t);
-    else roots.push(t);
-  }
-  const sortRec = (list) => {
-    list.sort((a, b) => (a.sort_order - b.sort_order) || a.title.localeCompare(b.title, 'de'));
-    list.forEach(n => sortRec(n.children));
-  };
-  sortRec(roots);
-  return roots;
+// Bugfix (Export-Absturz bei "]]>" im Nutzertext): xmlbuilder2 delegiert
+// .dat() direkt an DOM Document.createCDATASection(), das PER SPEC (WHATWG
+// DOM) IMMER InvalidCharacterError wirft, wenn der Inhalt die Sequenz "]]>"
+// enthaelt - unabhaengig von der wellFormed-Option. Enthaelt eine
+// Beschreibung/ein Inhalt/ein Ergebnis diese Sequenz (z.B. copy-pasteter
+// Code-Schnipsel), wuerde der komplette XML-Export bisher mit einer
+// ungefangenen Exception abbrechen (500 EXPORT_FAILED).
+// Fix: den Text bei "]]>" in Teile splitten, jeden Teil als eigene
+// CDATA-Section anhaengen - UND das Trennzeichen "]]>" selbst als
+// escapten Text-Node ("]]&gt;") zwischen den Teilen wieder einfuegen,
+// da es sonst beim Splitten verloren ginge (die "]]>"-Zeichen sind kein
+// Teil der Daten irgendeiner der beiden Teil-Sections, sondern nur ihr
+// Trenner). CDATA- und Text-Nodes sind im XML-Infoset gleichwertige
+// Zeichendaten - beim Parsen ergibt sich wieder exakt der Originaltext.
+function writeCData(el, text) {
+  const s = String(text == null ? '' : text);
+  const parts = s.split(']]>');
+  parts.forEach((part, i) => {
+    el.dat(part);
+    if (i < parts.length - 1) el.txt(']]>');
+  });
+  return el;
 }
 
 function writeThemeNode(parentEl, theme) {
@@ -22,7 +32,7 @@ function writeThemeNode(parentEl, theme) {
     parentId: theme.parent_id || '',
     title: theme.title,
   });
-  if (theme.description) el.ele('description').dat(theme.description).up();
+  if (theme.description) writeCData(el.ele('description'), theme.description).up();
   for (const child of theme.children) writeThemeNode(el, child);
 }
 
@@ -57,7 +67,7 @@ function buildExportXml(data, { scope, includeGraph, openOnly }) {
         const relEl = pageEl.ele('relatedRefs');
         for (const relId of p.relatedIds) relEl.ele('relatedRef', { id: relId });
       }
-      pageEl.ele('content').dat(p.content || '').up();
+      writeCData(pageEl.ele('content'), p.content).up();
     }
   }
 
@@ -74,8 +84,8 @@ function buildExportXml(data, { scope, includeGraph, openOnly }) {
         updatedAt: t.updated_at || '',
         isPrivate: String(!!t.is_private),
       });
-      todoEl.ele('description').dat(t.description || '').up();
-      if (t.result) todoEl.ele('result', { date: t.result_date || '' }).dat(t.result).up();
+      writeCData(todoEl.ele('description'), t.description).up();
+      if (t.result) writeCData(todoEl.ele('result', { date: t.result_date || '' }), t.result).up();
       if ((t.themeRefs || []).length) {
         const refsEl = todoEl.ele('themeRefs');
         for (const r of t.themeRefs) refsEl.ele('themeRef', { id: r.theme_id, title: r.theme_title || '' });
@@ -83,7 +93,20 @@ function buildExportXml(data, { scope, includeGraph, openOnly }) {
     }
   }
 
-  return root.end({ prettyPrint: true });
+  // xmlbuilder2's prettyPrint fügt zwischen den durch writeCData()-Splitting
+  // entstehenden Geschwister-Nodes (CDATA, Trenner-Text "]]&gt;", CDATA)
+  // Zeilenumbruch+Einrückung ein - das würde den ursprünglichen Text an
+  // genau der gesplitteten Stelle um zusätzlichen Whitespace verändern.
+  // Der Trenner-Text "]]&gt;" wird ausschließlich von writeCData() erzeugt
+  // (kommt in keinem anderen Kontext in diesem Dokument vor, auch nicht als
+  // Teilstring - das ">"-Zeichen ist dort immer als "&gt;" escaped). Es wird
+  // gezielt nur auf "\n"+Einrückung geprüft (nie auf einzelne Leerzeichen),
+  // damit ein vom Nutzer tatsächlich eingegebenes Leerzeichen direkt vor/
+  // nach "]]>" NICHT verschluckt wird - nur die von prettyPrint eingefügte
+  // Formatierung wird entfernt, um den Originaltext exakt zu erhalten.
+  return root.end({ prettyPrint: true })
+    .replace(/\]\]>\r?\n[ \t]*(?=\]\]&gt;)/g, ']]>')
+    .replace(/\]\]&gt;\r?\n[ \t]*(?=\]\]&gt;|<!\[CDATA\[)/g, ']]&gt;');
 }
 
 module.exports = { buildExportXml };

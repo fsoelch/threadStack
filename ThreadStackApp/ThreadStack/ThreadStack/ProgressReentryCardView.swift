@@ -144,7 +144,7 @@ struct ProgressReentryCardView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(DS.accent.opacity(0.10))
                     .foregroundStyle(DS.accentDark)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusXS))
             }
             if let aiError {
                 Text(aiError).scaledFont(.caption2).foregroundStyle(.red)

@@ -68,3 +68,39 @@ test('AI Capture: apply_now legt Topics und Todos an', async (t) => {
   const todosAfter = await agent.get('/api/todos');
   assert.equal(todosAfter.body.length, 1);
 });
+
+test('AI Capture: apply_now IDOR — verknüpft KEIN fremdes Todo/Topic über theme_links', async (t) => {
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  const admin = ensureTestAdmin(db);
+  t.after(() => cleanup(dir));
+  const adminAgent = await login(request, app, admin.username, admin.password);
+  await adminAgent.put('/api/ai/settings').send({
+    provider: 'mock', model: 'mock-1', api_key: 'mock-AAAA',
+    features_enabled: { capture: true }, confirm_threshold_cents: 10_000,
+  });
+
+  // Opfer: eigenes Todo, das NICHT verknüpft werden soll.
+  const victimTodo = await adminAgent.post('/api/todos').send({ title: 'Fremdes Todo' });
+  const victimTodoId = victimTodo.body.id;
+
+  // Angreifer: eigener User, eigenes Meeting + eigenes Theme.
+  await adminAgent.post('/api/users').send({ username: 'attacker', password: 'attacker12345' });
+  const attackerAgent = await login(request, app, 'attacker', 'attacker12345');
+  const m = await attackerAgent.post('/api/meetings').send({ title: 'Angreifer-Meeting', color: '#6366f1' });
+  const theme = await attackerAgent.post('/api/themes').send({ title: 'Angreifer-Thema' });
+
+  const apply = await attackerAgent.post(`/api/ai/meeting/${m.body.id}/capture`).send({
+    apply_now: {
+      new_topics: [], new_todos: [], topic_results: [],
+      theme_links: [{ theme_id: theme.body.id, ref_type: 'todo', ref_id: victimTodoId }],
+    },
+  });
+  assert.equal(apply.status, 200);
+  assert.equal(apply.body.created.theme_links.length, 0, 'darf keinen Link auf fremdes Todo anlegen');
+
+  const themes = await attackerAgent.get('/api/themes');
+  const linked = themes.body.find(t => t.id === theme.body.id);
+  assert.equal(linked.links.length, 0);
+});
+

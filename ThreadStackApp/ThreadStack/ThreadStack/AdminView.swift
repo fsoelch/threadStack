@@ -25,11 +25,7 @@ struct AdminView: View {
             .sheet(isPresented: $showNew, onDismiss: { Task { await load() } }) {
                 NewUserSheet()
             }
-            .alert("Fehler", isPresented: Binding(
-                get: { error != nil }, set: { if !$0 { error = nil } }
-            )) {
-                Button("OK", role: .cancel) {}
-            } message: { Text(error ?? "") }
+            .errorAlert($error)
         }
     }
 

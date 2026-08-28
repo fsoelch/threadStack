@@ -246,9 +246,7 @@ struct MeetingDetailView: View {
         .sheet(isPresented: $showNewTopic) { TopicFormView(meetingId: current.id) }
         .sheet(isPresented: $showBrief)    { AIBriefSheet(meetingId: current.id) }
         .sheet(isPresented: $showCapture)  { AICaptureSheet(meetingId: current.id) }
-        .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(error ?? "") }
+        .errorAlert($error)
         .alert("Erfolg", isPresented: Binding(
             get: { infoMessage != nil },
             set: { if !$0 { infoMessage = nil; dismiss() } }
@@ -402,8 +400,8 @@ struct MeetingDetailView: View {
         }
         .padding(10)
         .background(DS.orange.opacity(0.1))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.orange.opacity(0.3)))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusS).stroke(DS.orange.opacity(0.3)))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
     }
 
     private func restore(_ current: Meeting) {
@@ -494,14 +492,14 @@ struct MeetingDetailView: View {
                     .padding(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.background)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusXS))
                 }
             }
         }
         .padding(10)
         .background(DS.accentLight)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(DS.accent.opacity(0.3)))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: DS.radiusS).stroke(DS.accent.opacity(0.3)))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
     }
 
     private func sectionHeader(_ label: String, count: Int, color: Color,
@@ -616,9 +614,7 @@ struct TopicRowView: View {
                     StackPushSheet(target: PushTarget(refType: "topic", refId: topic.id, title: topic.title,
                                                        nextStep: topic.progress?.nextStep)) // A3: Vorbelegung
                 }
-                .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-                    Button("OK", role: .cancel) {}
-                } message: { Text(error ?? "") }
+                .errorAlert($error)
         }
     }
 
@@ -700,7 +696,7 @@ struct TopicRowView: View {
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(Color.green.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
             }
         }
         .onAppear {
@@ -722,7 +718,9 @@ struct TopicRowView: View {
         } else if topic.isSnoozed {
             Image(systemName: "moon.zzz.fill").foregroundStyle(.gray).scaledFont(.subheadline)
         } else {
-            Circle().stroke(DS.accent, lineWidth: 1.5)
+            // Neutraler Ring statt Akzentfarbe — konsistent mit `TodoRowView`
+            // (`TodosView.swift`) und dem Web-Pendant `.topic-status-icon.open`.
+            Circle().stroke(DS.neutralRing, lineWidth: 1.5)
                 .frame(width: 16, height: 16)
         }
     }

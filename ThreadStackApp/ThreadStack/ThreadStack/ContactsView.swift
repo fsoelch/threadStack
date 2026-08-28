@@ -72,9 +72,7 @@ struct ContactsView: View {
         #endif
         .sheet(isPresented: $showNew) { ContactFormView() }
         .sheet(item: $editContact)    { c in ContactFormView(contact: c) }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
     }
 }
 
@@ -123,9 +121,7 @@ struct ContactCardView: View {
                 }
             } label: { Label("Löschen", systemImage: "trash") }
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
     }
 }
 

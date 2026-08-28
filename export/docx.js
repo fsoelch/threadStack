@@ -5,6 +5,7 @@ const {
 } = require('docx');
 const docxTheme = require('./docxTheme');
 const { htmlToDocxBlocks } = require('./htmlToDocx');
+const { buildThemeTree } = require('./themeTree');
 
 const HEADING_LEVELS = [
   HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3,
@@ -68,21 +69,6 @@ function separatorParagraph() {
 
 function pageBreakParagraph() {
   return new Paragraph({ children: [new PageBreak()] });
-}
-
-function buildThemeTree(themes) {
-  const byId = new Map(themes.map(t => [t.id, { ...t, children: [] }]));
-  const roots = [];
-  for (const t of byId.values()) {
-    if (t.parent_id && byId.has(t.parent_id)) byId.get(t.parent_id).children.push(t);
-    else roots.push(t);
-  }
-  const sortRec = (list) => {
-    list.sort((a, b) => (a.sort_order - b.sort_order) || a.title.localeCompare(b.title, 'de'));
-    list.forEach(n => sortRec(n.children));
-  };
-  sortRec(roots);
-  return roots;
 }
 
 // Heading-Level fuer ein Topic nach Tiefe (0-indexiert): Tiefe 0 -> 2,

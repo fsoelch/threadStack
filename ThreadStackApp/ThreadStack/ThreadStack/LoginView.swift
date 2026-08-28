@@ -18,7 +18,7 @@ struct LoginView: View {
                 VStack(spacing: 10) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .fill(Color(hex: "#6366f1").opacity(0.12))
+                            .fill(DS.brandIndigo.opacity(0.12))
                             .frame(width: 72, height: 72)
                         Text("💬").font(.system(size: 36))
                     }
@@ -79,7 +79,7 @@ struct LoginView: View {
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color(hex: "#6366f1"))
+                    .tint(DS.brandIndigo)
                     .disabled(loading || username.isEmpty || password.isEmpty)
                     .controlSize(.large)
                 }

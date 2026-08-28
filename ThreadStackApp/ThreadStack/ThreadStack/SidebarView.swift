@@ -99,9 +99,7 @@ struct SidebarView: View {
         .listStyle(.inset)
         .navigationTitle("ThreadStack")
         .sheet(isPresented: $showNewMeeting) { MeetingFormView() }
-        .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(error ?? "") }
+        .errorAlert($error)
         .alert("Erfolg", isPresented: Binding(get: { infoMessage != nil }, set: { if !$0 { infoMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(infoMessage ?? "") }
@@ -215,9 +213,7 @@ struct SidebarView: View {
             }
         }
         .sheet(isPresented: $showNewMeeting) { MeetingFormView() }
-        .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(error ?? "") }
+        .errorAlert($error)
         .alert("Erfolg", isPresented: Binding(get: { infoMessage != nil }, set: { if !$0 { infoMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(infoMessage ?? "") }
@@ -239,7 +235,7 @@ struct SidebarView: View {
         Button { selectedMeetingId = sentinel } label: {
             VStack(alignment: .leading, spacing: 6) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: DS.radiusS)
                         .fill(color.opacity(0.15))
                         .frame(width: 30, height: 30)
                     Image(systemName: icon)
@@ -273,7 +269,7 @@ struct SidebarView: View {
                 .frame(width: 24, height: 24)
                 .background(iconColor.opacity(0.15))
                 .foregroundStyle(iconColor)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: DS.radiusXS))
             Text(label).foregroundStyle(.primary)
             Spacer()
             if let badge {

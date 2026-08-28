@@ -17,6 +17,15 @@ und hat bei Konflikten Vorrang, da sie projektweite Konsistenz sicherstellt.
 - Sicherheit ist keine Nachbesserung: Eingabevalidierung, sichere Fehlerbehandlung
   und der Umgang mit Secrets sind von Anfang an Teil der Umsetzung, nicht ein
   spaeterer Schritt.
+- Wiederverwendung vor Neuentwicklung: Fuer ein Problem, das im Projekt bereits
+  einmal geloest wurde (z.B. ein Rich-Text-Editor, ein Bearbeiten-Dialog, eine
+  Validierungs-/Sanitizing-Funktion, ein Rate-Limiter), wird IMMER die
+  bestehende Loesung wiederverwendet oder gezielt erweitert - nie eine zweite,
+  aehnliche Loesung parallel dazu gebaut. Divergenz zwischen aehnlichen Stellen
+  (z.B. ein Editor "unter Wissen" sieht anders aus/verhaelt sich anders als
+  derselbe Editor "unter Todos") ist ein Bug, kein akzeptabler Nebeneffekt.
+  Jede Erweiterung/Bugfix an einer gemeinsam genutzten Loesung kommt so allen
+  Verwendungsstellen zugute, statt nur einer.
 
 ## Sicherheits-Baseline (gilt fuer architect, developer, security-reviewer)
 

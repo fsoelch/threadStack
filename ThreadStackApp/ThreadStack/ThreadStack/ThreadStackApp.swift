@@ -14,6 +14,9 @@ struct ThreadStackApp: App {
     // Karten-Views (TodosView/MeetingDetailView) dieselbe, app-weit geteilte
     // Instanz nutzen statt divergierender lokaler `@StateObject`s.
     @StateObject private var summaryStore: SummaryStore
+    // Arbeit zur Lesbarkeit/Wartbarkeit: Graph-Zustand analog zu
+    // ProgressStore/SummaryStore ausgelagert (siehe GraphStore.swift).
+    @StateObject private var graphStore: GraphStore
 
     init() {
         // Clear stale NSToolbar configuration from UserDefaults.
@@ -27,6 +30,12 @@ struct ThreadStackApp: App {
         _state = StateObject(wrappedValue: appState)
         _progressStore = StateObject(wrappedValue: ProgressStore(appState: appState))
         _summaryStore = StateObject(wrappedValue: SummaryStore(appState: appState))
+        let graphStore = GraphStore(appState: appState)
+        _graphStore = StateObject(wrappedValue: graphStore)
+        // Schwache Rueckreferenz, damit AppState.logout() weiterhin garantieren
+        // kann, dass der Graph-Cache jeden Logout nicht ueberlebt (siehe
+        // GraphStore.swift-Kopfkommentar).
+        appState.graphStore = graphStore
     }
 
     var body: some Scene {
@@ -35,6 +44,7 @@ struct ThreadStackApp: App {
                 .environmentObject(state)
                 .environmentObject(progressStore)
                 .environmentObject(summaryStore)
+                .environmentObject(graphStore)
         }
         #if os(macOS)
         .defaultSize(width: 1100, height: 720)

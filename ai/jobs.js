@@ -1,5 +1,6 @@
 'use strict';
 const ai = require('./index');
+const { isoYearWeek } = require('./isoWeek');
 
 // Schlanker In-Prozess-Scheduler für Wochen-Digest (W-AI06).
 // Tickt jede Stunde, prüft pro Nutzer mit weekly_digest_enabled=1, ob heute
@@ -9,16 +10,6 @@ const ai = require('./index');
 // Idempotenz: weeklyDigest() deduplikiert per (user_id, ref_id=YYYY-Www).
 // Robust gegen Service-Restart: ein Service-Start ruft tick() zusätzlich
 // nach 30s einmalig, damit ein verpasstes Fenster nachgeholt werden kann.
-
-function isoYearWeek(d = new Date()) {
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day  = (date.getUTCDay() + 6) % 7;
-  date.setUTCDate(date.getUTCDate() - day + 3);
-  const isoYear  = date.getUTCFullYear();
-  const yearStart = new Date(Date.UTC(isoYear, 0, 4));
-  const isoWeek  = 1 + Math.round(((date - yearStart) / 86400000 - 3 + ((yearStart.getUTCDay() + 6) % 7)) / 7);
-  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
-}
 
 async function tickOnce(db, encryptionKey, now = new Date()) {
   // Effektive Wochentag/Stunde nach Server-Localzeit (analog Bestand: keine TZ-DB).

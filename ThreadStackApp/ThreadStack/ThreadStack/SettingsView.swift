@@ -92,6 +92,20 @@ struct SettingsURLView: View {
     @Environment(\.dismiss) var dismiss
     @State private var url = ""
 
+    /// Security-Nachbesserung: dieselbe Pruefung wie in
+    /// `AppState.url(_:)`/`ProgressAPI`/`SummaryAPI` (siehe
+    /// `isAllowedServerURLScheme` in Extensions.swift), aber bereits BEIM
+    /// SPEICHERN angewendet statt erst beim naechsten Request - vermeidet,
+    /// dass ein Nutzer eine http://-URL zu einem fremden Host speichert und
+    /// den Fehler erst beim naechsten Login/API-Aufruf bemerkt. Die eigent-
+    /// liche Logik liegt testbar in Extensions.swift (trimmedServerURLInput/
+    /// isValidServerURLInput), analog zu TodoOverviewLogic in TodosView.swift.
+    private var trimmedUrl: String { trimmedServerURLInput(url) }
+    private var isSchemeValid: Bool { isValidServerURLInput(trimmedUrl) }
+    private var showSchemeWarning: Bool {
+        !trimmedUrl.isEmpty && !isSchemeValid
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -103,7 +117,12 @@ struct SettingsURLView: View {
                 } header: {
                     Text("Server-URL")
                 } footer: {
-                    Text("Gib die Adresse deines ThreadStack-Servers ein (ohne abschließenden Schrägstrich).")
+                    if showSchemeWarning {
+                        Text("Nur https:// ist erlaubt (http:// nur für localhost/127.0.0.1). Bitte Adresse prüfen.")
+                            .foregroundStyle(.red)
+                    } else {
+                        Text("Gib die Adresse deines ThreadStack-Servers ein (ohne abschließenden Schrägstrich).")
+                    }
                 }
             }
             .navigationTitle("Server konfigurieren")
@@ -111,11 +130,10 @@ struct SettingsURLView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") {
-                        state.serverURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
-                            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        state.serverURL = trimmedUrl
                         dismiss()
                     }
-                    .disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(trimmedUrl.isEmpty || !isSchemeValid)
                 }
             }
             .onAppear { url = state.serverURL }

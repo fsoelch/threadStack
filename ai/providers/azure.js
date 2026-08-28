@@ -1,4 +1,5 @@
 'use strict';
+const { httpErr, withTimeout } = require('./_util');
 
 // Azure OpenAI: same SDK, different base URL + api-version + key header.
 function getClient({ apiKey, endpoint, apiVersion, model }) {
@@ -47,20 +48,6 @@ async function testConnection({ apiKey, model, azureEndpoint, azureApiVersion })
     apiKey, model, azureEndpoint, azureApiVersion,
   });
   return { ok: true, model, sample: r.content.slice(0, 16) };
-}
-
-function httpErr(status, msg) { const e = new Error(msg); e.httpStatus = status; return e; }
-
-function withTimeout(promise, ms) {
-  return new Promise((resolve, reject) => {
-    const to = setTimeout(() => {
-      const e = new Error('Provider-Timeout');
-      e.httpStatus = 503;
-      reject(e);
-    }, ms);
-    promise.then(v => { clearTimeout(to); resolve(v); },
-                 e => { clearTimeout(to); e.httpStatus = e.httpStatus || 503; reject(e); });
-  });
 }
 
 module.exports = { callModel, testConnection };

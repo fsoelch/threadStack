@@ -71,7 +71,7 @@ struct ProgressBadgeView: View {
         if ProgressBadgeLogic.isVisible(summary), let summary {
             let emphasis = summary.badgeEmphasisKind
             let (bg, fg): (Color, Color) = emphasis == .stale
-                ? (Color(hex: "#fef3c7"), Color(hex: "#92400e"))
+                ? (DS.warningBg, DS.warningFg)
                 : (DS.accentLight, DS.accentDark)
             HStack(spacing: 3) {
                 Image(systemName: ProgressBadgeLogic.iconName(for: emphasis))

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var graphStore: GraphStore
     @State private var selectedMeetingId: String? = nil
     @State private var selectedView: SidebarItem = .meetings
     @State private var error: String?
@@ -92,13 +93,11 @@ struct ContentView: View {
             detailView
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showAdmin)    { AdminView() }
         .task { await reload() }
-        .onChange(of: state.graphNavigationRequest) { _, target in
+        .onChange(of: graphStore.navigationRequest) { _, target in
             applyGraphNavigation(target)
         }
     }
@@ -117,14 +116,12 @@ struct ContentView: View {
             detailView
         }
         .navigationSplitViewStyle(.balanced)
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showAdmin)    { AdminView() }
         .refreshable { await reload() }
         .task { await reload() }
-        .onChange(of: state.graphNavigationRequest) { _, target in
+        .onChange(of: graphStore.navigationRequest) { _, target in
             applyGraphNavigation(target)
         }
     }
@@ -247,7 +244,7 @@ struct ContentView: View {
             selectedMeetingId = SidebarItem.contacts.sentinel
             selectedView = .contacts
         }
-        state.graphNavigationRequest = nil
+        graphStore.navigationRequest = nil
     }
 
     private func reload() async {

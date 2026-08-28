@@ -1,304 +1,24 @@
 'use strict';
-const fs   = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 
-const cryptoMod = require('./crypto');
-const cost      = require('./cost');
-const usage     = require('./usage');
 // Archiv-Kernmodul (Paket B1): `notArchivedSql`/`isTopicArchived` schließen
 // archivierte Meetings/Topics aus allen KI-Datenquellen aus (Paket B3).
 // Ausschließlich das bestehende Modul nutzen, kein eigenes Prädikat
 // nachformulieren (Wiederverwendungsgebot, CLAUDE.md).
 const archive   = require('../lib/archive');
-// SSRF-Absicherung für den nutzerdefinierten Azure-Endpoint (Security Review,
-// Mittel, A10): dieselbe Blockliste/URL-Validierung wie beim Link-Fetch-
-// Feature wiederverwenden statt einer zweiten Prüfung (Wiederverwendungsgebot).
-const { assertUrlAllowed, SafeFetchError } = require('../lib/safe-fetch');
+const cryptoMod = require('./crypto');
+const cost      = require('./cost');
+const usage     = require('./usage');
 
-// ── Provider registry ────────────────────────────────────────
-const PROVIDERS = {
-  anthropic: require('./providers/anthropic'),
-  openai:    require('./providers/openai'),
-  azure:     require('./providers/azure'),
-  mock:      require('./providers/mock'),
-};
-
-function pickProvider(name) {
-  if (process.env.AI_PROVIDER_OVERRIDE === 'mock') return PROVIDERS.mock;
-  const p = PROVIDERS[name];
-  if (!p) throw httpErr(409, `Unbekannter Provider: ${name}`);
-  return p;
-}
-
-// ── Settings helpers ─────────────────────────────────────────
-function uid() {
-  return Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
-}
-
-const DEFAULT_FEATURES = {
-  brief: true, capture: true, result_draft: true, reentry: true,
-  theme_tagging: false, digest: false, cross_meeting: false, drift: false,
-  link_summary: false,
-  // S2: ereignisgetriebene KI-Zusammenfassungen (Fortschritt/Beschreibung).
-  // Default AUS wie alle anderen kostenrelevanten Features.
-  progress_summary: false, description_summary: false,
-};
-
-function loadSettings(db, userId) {
-  const row = db.prepare('SELECT * FROM ai_settings WHERE user_id=?').get(userId);
-  if (!row) return null;
-  let features;
-  try { features = { ...DEFAULT_FEATURES, ...JSON.parse(row.features_enabled || '{}') }; }
-  catch { features = { ...DEFAULT_FEATURES }; }
-  return { ...row, features_enabled: features };
-}
-
-function saveSettings(db, userId, patch, encryptionKey) {
-  const now = new Date().toISOString();
-  let row = db.prepare('SELECT * FROM ai_settings WHERE user_id=?').get(userId);
-  if (!row) {
-    const id = uid();
-    db.prepare(
-      `INSERT INTO ai_settings(id,user_id,created_at,updated_at,features_enabled) VALUES (?,?,?,?,?)`
-    ).run(id, userId, now, now, JSON.stringify(DEFAULT_FEATURES));
-    row = db.prepare('SELECT * FROM ai_settings WHERE user_id=?').get(userId);
-  }
-
-  const updates = [];
-  const params  = [];
-
-  function set(col, val) { updates.push(`${col}=?`); params.push(val); }
-
-  if (patch.provider != null)               set('provider', String(patch.provider));
-  if (patch.model != null)                   set('model', String(patch.model));
-  if (patch.azure_endpoint != null) {
-    const endpoint = String(patch.azure_endpoint);
-    if (endpoint !== '') {
-      // Literale IP-Ziele (Loopback/Link-Local/Metadaten-Dienste/RFC1918 etc.)
-      // ablehnen; Hostname-basiertes DNS-Rebinding wird beim eigentlichen
-      // Request nicht zusätzlich geprüft (kein Lookup-Hook für den Azure-SDK-
-      // Client) - siehe Abschlussbericht.
-      try { assertUrlAllowed(endpoint); }
-      catch (e) {
-        if (e instanceof SafeFetchError) throw httpErr(400, 'Ungültiger oder nicht erlaubter Azure-Endpoint.');
-        throw e;
-      }
-    }
-    set('azure_endpoint', endpoint);
-  }
-  if (patch.azure_api_version != null)       set('azure_api_version', String(patch.azure_api_version));
-  if (patch.max_monthly_cost_cents != null)  set('max_monthly_cost_cents', patch.max_monthly_cost_cents | 0);
-  if (patch.confirm_threshold_cents != null) set('confirm_threshold_cents', patch.confirm_threshold_cents | 0);
-  if (patch.globally_disabled != null)       set('globally_disabled', patch.globally_disabled ? 1 : 0);
-  if (patch.drift_days != null)              set('drift_days', Math.max(1, patch.drift_days | 0));
-  if (patch.theme_tag_threshold != null)     set('theme_tag_threshold', Math.max(0, Math.min(1, Number(patch.theme_tag_threshold))));
-  if (patch.weekly_digest_enabled != null)   set('weekly_digest_enabled', patch.weekly_digest_enabled ? 1 : 0);
-  if (patch.weekly_digest_dow != null)       set('weekly_digest_dow', Math.max(0, Math.min(6, patch.weekly_digest_dow | 0)));
-  if (patch.weekly_digest_hour != null)      set('weekly_digest_hour', Math.max(0, Math.min(23, patch.weekly_digest_hour | 0)));
-  if (patch.features_enabled != null) {
-    const merged = { ...DEFAULT_FEATURES, ...patch.features_enabled };
-    set('features_enabled', JSON.stringify(merged));
-  }
-  if (patch.api_key != null) {
-    if (patch.api_key === '') {
-      set('api_key_encrypted', '');
-      set('api_key_last4', '');
-    } else {
-      set('api_key_encrypted', cryptoMod.encryptKey(patch.api_key, encryptionKey));
-      set('api_key_last4', cryptoMod.last4(patch.api_key));
-    }
-  }
-  if (updates.length) {
-    updates.push('updated_at=?'); params.push(now);
-    params.push(userId);
-    db.prepare(`UPDATE ai_settings SET ${updates.join(',')} WHERE user_id=?`).run(...params);
-  }
-  return loadSettings(db, userId);
-}
-
-function clearApiKey(db, userId) {
-  const now = new Date().toISOString();
-  db.prepare('UPDATE ai_settings SET api_key_encrypted=\'\', api_key_last4=\'\', updated_at=? WHERE user_id=?').run(now, userId);
-  return loadSettings(db, userId);
-}
-
-function publicSettings(s) {
-  if (!s) {
-    return {
-      provider: '', model: '', api_key_last4: '',
-      azure_endpoint: '', azure_api_version: '',
-      features_enabled: { ...DEFAULT_FEATURES },
-      max_monthly_cost_cents: 0, confirm_threshold_cents: 10,
-      globally_disabled: false,
-      drift_days: 21,
-      theme_tag_threshold: 0.7,
-      weekly_digest_enabled: false,
-      weekly_digest_dow: 0,
-      weekly_digest_hour: 18,
-      configured: false,
-    };
-  }
-  return {
-    provider: s.provider || '',
-    model:    s.model    || '',
-    api_key_last4:     s.api_key_last4 || '',
-    azure_endpoint:    s.azure_endpoint || '',
-    azure_api_version: s.azure_api_version || '',
-    features_enabled:  s.features_enabled,
-    max_monthly_cost_cents:  s.max_monthly_cost_cents  | 0,
-    confirm_threshold_cents: s.confirm_threshold_cents | 0,
-    globally_disabled: !!s.globally_disabled,
-    drift_days:            (s.drift_days != null) ? (s.drift_days | 0) : 21,
-    theme_tag_threshold:   (s.theme_tag_threshold != null) ? Number(s.theme_tag_threshold) : 0.7,
-    weekly_digest_enabled: !!s.weekly_digest_enabled,
-    weekly_digest_dow:     (s.weekly_digest_dow != null) ? (s.weekly_digest_dow | 0) : 0,
-    weekly_digest_hour:    (s.weekly_digest_hour != null) ? (s.weekly_digest_hour | 0) : 18,
-    configured: !!(s.provider && s.api_key_last4),
-  };
-}
-
-// ── Gating helpers ───────────────────────────────────────────
-function assertActive(settings, feature) {
-  if (!settings)                  throw httpErr(409, 'AI nicht konfiguriert');
-  if (settings.globally_disabled) throw httpErr(409, 'AI ist deaktiviert');
-  if (!settings.provider)         throw httpErr(409, 'kein Provider konfiguriert');
-  if (!settings.api_key_encrypted)throw httpErr(409, 'kein API-Key konfiguriert');
-  if (feature && !settings.features_enabled[feature]) {
-    throw httpErr(409, `Feature "${feature}" ist deaktiviert`);
-  }
-}
-
-function httpErr(status, msg) { const e = new Error(msg); e.httpStatus = status; return e; }
-
-// ── Prompt loading & interpolation ───────────────────────────
-const PROMPT_DIR = path.join(__dirname, 'prompts');
-const promptCache = {};
-
-function loadPrompt(name) {
-  if (promptCache[name]) return promptCache[name];
-  const raw = fs.readFileSync(path.join(PROMPT_DIR, `${name}.md`), 'utf8');
-  const sysMatch  = raw.match(/^#\s*SYSTEM\s*\n([\s\S]*?)(?=^#\s*USER\s*$)/m);
-  const userMatch = raw.match(/^#\s*USER\s*\n([\s\S]*)$/m);
-  const parsed = {
-    system: (sysMatch  ? sysMatch[1]  : '').trim(),
-    user:   (userMatch ? userMatch[1] : '').trim(),
-  };
-  promptCache[name] = parsed;
-  return parsed;
-}
-
-function interpolate(tpl, vars) {
-  // Supports {{key}} and {{#key}}…{{/key}} conditional blocks.
-  let out = tpl.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_, k, body) =>
-    vars[k] ? body : ''
-  );
-  out = out.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] != null ? String(vars[k]) : ''));
-  return out;
-}
-
-// ── JSON validation (lightweight, no extra dep) ──────────────
-function parseJsonStrict(text) {
-  // Strip optional ```json fences just in case the model ignores instructions.
-  const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, '').trim();
-  return JSON.parse(cleaned);
-}
-
-const CAPTURE_SCHEMA = {
-  new_topics:    'array',
-  topic_results: 'array',
-  new_todos:     'array',
-  theme_links:   'array',
-};
-
-function validateCapture(obj) {
-  if (!obj || typeof obj !== 'object') throw new Error('Top-level must be object');
-  for (const k of Object.keys(CAPTURE_SCHEMA)) {
-    if (obj[k] == null) obj[k] = [];
-    if (!Array.isArray(obj[k])) throw new Error(`${k} must be array`);
-  }
-  return obj;
-}
-
-const BRIEF_SCHEMA = { talking_points: 'array', open_issues: 'array', history: 'string' };
-function validateBrief(obj) {
-  if (!obj || typeof obj !== 'object') throw new Error('Top-level must be object');
-  if (!Array.isArray(obj.talking_points)) obj.talking_points = [];
-  if (!Array.isArray(obj.open_issues))    obj.open_issues = [];
-  if (typeof obj.history !== 'string')    obj.history = String(obj.history || '');
-  return obj;
-}
-
-// ── Core dispatch ────────────────────────────────────────────
-async function dispatchCall({ db, userId, settings, encryptionKey, feature, system, user, maxTokens, json, confirmed }) {
-  const provider = pickProvider(settings.provider);
-  const model    = settings.model;
-  const isMock   = process.env.AI_PROVIDER_OVERRIDE === 'mock' || settings.provider === 'mock';
-
-  // Estimate before sending
-  const estimate = cost.estimateBeforeCall({
-    model, feature, promptText: (system || '') + '\n' + (user || ''),
-  });
-
-  // Budget + confirm gating
-  usage.assertBudgetOk(db, userId, settings, estimate.cost_cents);
-  usage.assertConfirmedIfExpensive(settings, estimate.cost_cents, confirmed);
-
-  // Decrypt API key just-in-time, never log
-  const apiKey = isMock
-    ? 'mock'
-    : cryptoMod.decryptKey(settings.api_key_encrypted, encryptionKey);
-
-  let raw;
-  try {
-    raw = await provider.callModel({
-      system, user, maxTokens, json,
-      apiKey, model,
-      azureEndpoint:   settings.azure_endpoint,
-      azureApiVersion: settings.azure_api_version,
-      feature,
-    });
-  } catch (e) {
-    if (!e.httpStatus) e.httpStatus = 503;
-    throw e;
-  }
-
-  // Log actual usage with provider-reported tokens when available.
-  const realCost = cost.estimateCostCents({
-    model,
-    inputTokens:  raw.inputTokens  || estimate.inputTokens,
-    outputTokens: raw.outputTokens || estimate.outputTokens,
-  });
-  usage.logUsage(db, {
-    userId, feature, provider: settings.provider, model,
-    inputTokens:  raw.inputTokens  || estimate.inputTokens,
-    outputTokens: raw.outputTokens || estimate.outputTokens,
-    costCents: realCost,
-  });
-
-  return { raw, cost_cents: realCost };
-}
-
-async function callWithRetryJson({ ctx, system, user, maxTokens, validate }) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const { raw, cost_cents } = await dispatchCall({ ...ctx, system, user, maxTokens, json: true });
-    let obj;
-    try {
-      obj = typeof raw.content === 'object' ? raw.content : parseJsonStrict(raw.content);
-      validate(obj);
-      return { obj, cost_cents };
-    } catch (e) {
-      if (attempt === 1) {
-        const err = new Error('Strukturierte Antwort konnte nicht validiert werden');
-        err.httpStatus = 422;
-        err.detail = { reason: e.message };
-        throw err;
-      }
-      // retry once with a clarifying nudge
-      user = user + '\n\n(Hinweis: Antworte ausschließlich mit reinem JSON, kein Markdown, kein Text drumherum.)';
-    }
-  }
-}
+const { httpErr } = require('./errors');
+const { loadPrompt, interpolate } = require('./prompt');
+const {
+  parseJsonStrict, validateCapture, validateBrief, validateThemeTagging, validateCMI,
+} = require('./validators');
+const { stripHtml, neutralizeMarkers } = require('./utils');
+const { uid, DEFAULT_FEATURES, loadSettings, saveSettings, clearApiKey, publicSettings } = require('./settings');
+const { assertActive, dispatchCall, callWithRetryJson, pickProvider } = require('./dispatch');
+const { isoYearWeek } = require('./isoWeek');
 
 // ── Feature: Pre-Meeting Briefing (W-AI01) ───────────────────
 async function briefMeeting({ db, userId, settings, encryptionKey, meetingId, confirmed }) {
@@ -541,15 +261,6 @@ async function summarizeReentry({ db, userId, settings, encryptionKey, frameId, 
 }
 
 // ── Feature: Auto-Theme-Tagging (W-AI04, Phase 3) ────────────
-const THEME_TAG_SCHEMA = {
-  matches: 'array',
-};
-function validateThemeTagging(obj) {
-  if (!obj || typeof obj !== 'object') throw new Error('Top-level must be object');
-  if (!Array.isArray(obj.matches)) obj.matches = [];
-  return obj;
-}
-
 async function suggestThemes({ db, userId, settings, encryptionKey, refType, refId, confirmed }) {
   assertActive(settings, 'theme_tagging');
 
@@ -605,17 +316,6 @@ async function suggestThemes({ db, userId, settings, encryptionKey, refType, ref
 }
 
 // ── Feature: Weekly Digest (W-AI06, Phase 3) ─────────────────
-function isoYearWeek(d = new Date()) {
-  // ISO week: Thursday determines the year.
-  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const day  = (date.getUTCDay() + 6) % 7;  // Mon=0
-  date.setUTCDate(date.getUTCDate() - day + 3);
-  const isoYear  = date.getUTCFullYear();
-  const yearStart = new Date(Date.UTC(isoYear, 0, 4));
-  const isoWeek  = 1 + Math.round(((date - yearStart) / 86400000 - 3 + ((yearStart.getUTCDay() + 6) % 7)) / 7);
-  return `${isoYear}-W${String(isoWeek).padStart(2, '0')}`;
-}
-
 function gatherWeeklyStats(db, userId) {
   const now = new Date();
   const sinceIso = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -722,13 +422,6 @@ function listDigestArchive(db, userId) {
 }
 
 // ── Feature: Cross-Meeting-Insight (W-AI07, Phase 3) ─────────
-const CMI_SCHEMA = { matches: 'array' };
-function validateCMI(obj) {
-  if (!obj || typeof obj !== 'object') throw new Error('Top-level must be object');
-  if (!Array.isArray(obj.matches)) obj.matches = [];
-  return obj;
-}
-
 async function crossMeetingInsight({ db, userId, settings, encryptionKey, meetingId, confirmed }) {
   assertActive(settings, 'cross_meeting');
 
@@ -1024,6 +717,25 @@ async function summarizeDescription({ db, userId, settings, encryptionKey, refTy
   return { artifact_id: artifactId, content, cost_cents };
 }
 
+// Ownership-Check für theme_links-Zielobjekte in applyCapture() — eigenständige
+// Kopie von server.js::ownsRef() (kein Zugriff auf server.js-Scope von hier
+// aus), auf die tatsächlich für theme_links zulässigen ref_type-Werte
+// beschränkt (analog server.js POST /themes/:id/links).
+function ownsRefForCapture(db, userId, refType, refId) {
+  if (refType === 'topic') {
+    return !!db.prepare(
+      'SELECT 1 FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?'
+    ).get(refId, userId);
+  }
+  if (refType === 'todo') {
+    return !!db.prepare('SELECT 1 FROM todos WHERE id=? AND user_id=?').get(refId, userId);
+  }
+  if (refType === 'contact') {
+    return !!db.prepare('SELECT 1 FROM contacts WHERE id=? AND user_id=?').get(refId, userId);
+  }
+  return false;
+}
+
 // ── Apply capture suggestions (after user confirmation) ──────
 function applyCapture(db, userId, meetingId, apply) {
   if (!db.prepare(
@@ -1077,6 +789,12 @@ function applyCapture(db, userId, meetingId, apply) {
       // Validate ownership of theme
       const th = db.prepare('SELECT id FROM themes WHERE id=? AND user_id=?').get(l.theme_id, userId);
       if (!th) continue;
+      // Security-Nachbesserung (IDOR): ref_id kommt aus einem vom Client
+      // gesendeten Body (apply_now) und ist NICHT der ursprüngliche,
+      // serverseitig erzeugte KI-Vorschlag — ohne diese Prüfung könnte ein
+      // Nutzer einen theme_link auf ein fremdes Topic/Todo/Contact anlegen.
+      // Analog zu server.js::ownsRef().
+      if (!ownsRefForCapture(db, userId, l.ref_type, l.ref_id)) continue;
       try {
         const id = uid();
         db.prepare(
@@ -1115,21 +833,6 @@ async function testFromCli() {
   console.log('ai:test — not implemented as standalone yet. Use the /api/ai/test endpoint from the UI.');
 }
 
-// ── Utilities ────────────────────────────────────────────────
-function stripHtml(s) {
-  if (!s) return '';
-  return String(s).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-// Neutralisiert Fragmente, die wie unsere Nonce-Marker aussehen, in Werten,
-// die aus nicht vertrauenswürdigen/externen Nutzerdaten stammen (Titel,
-// Fortschrittseinträge, Beschreibungen, Seiteninhalt). Modulweiter Helper,
-// ursprünglich in summarizeLink eingeführt und für S2
-// (summarizeProgress/summarizeDescription) hierher extrahiert, um dieselbe
-// Härtung ohne Duplikation wiederzuverwenden (Security-Review-Muster).
-function neutralizeMarkers(s) {
-  return String(s || '').replace(/<<<INHALT-?[0-9a-f]*|INHALT-?[0-9a-f]*>>>/gi, '[…]');
-}
 
 module.exports = {
   // settings

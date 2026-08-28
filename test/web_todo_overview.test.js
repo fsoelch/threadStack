@@ -22,7 +22,17 @@ const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
 
 const INDEX_HTML_PATH = path.resolve(__dirname, '..', 'index.html');
-const INDEX_HTML = fs.readFileSync(INDEX_HTML_PATH, 'utf8');
+const APP_JS_PATH     = path.resolve(__dirname, '..', 'public', 'app.js');
+// Die App-Logik liegt seit der Extraktion aus index.html in public/app.js
+// (externes <script defer src="/assets/app.js">). jsdom laedt externe
+// <script src>-Ressourcen nur ueber einen echten HTTP-Request (auch mit
+// `resources:"usable"`), was dem hier bewusst deaktivierten Netzwerk
+// widerspraeche. Daher wird der externe Tag vor dem Parsen durch ein
+// inline <script> mit dem Dateiinhalt ersetzt - Ausfuehrung/Verhalten
+// bleibt damit identisch zum vormaligen Inline-Skript.
+const INDEX_HTML = fs.readFileSync(INDEX_HTML_PATH, 'utf8')
+  .replace('<script defer src="/assets/app.js"></script>',
+    () => `<script>${fs.readFileSync(APP_JS_PATH, 'utf8')}</script>`);
 
 function loadApp() {
   const virtualConsole = new VirtualConsole();

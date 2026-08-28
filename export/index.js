@@ -2,6 +2,7 @@
 const { buildExportXml } = require('./xml');
 const { buildExportDocx } = require('./docx');
 const { knowledgeThemeIds, knowledgeRelatedIds } = require('../lib/knowledge-queries');
+const { placeholders } = require('../lib/http');
 
 const VALID_SCOPES = new Set(['knowledge', 'todos', 'both']);
 const VALID_FORMATS = new Set(['docx', 'xml']);
@@ -40,7 +41,7 @@ function collectExportData(db, userId, { scope, includeGraph, openOnly }) {
       ? groupBy(db.prepare(
           `SELECT tl.ref_id as todo_id, tl.theme_id, th.title as theme_title
            FROM theme_links tl JOIN themes th ON th.id = tl.theme_id
-           WHERE tl.ref_type='todo' AND tl.ref_id IN (${todoIds.map(() => '?').join(',')})`
+           WHERE tl.ref_type='todo' AND tl.ref_id IN (${placeholders(todoIds.length)})`
         ).all(...todoIds), 'todo_id')
       : new Map();
     result.todos = rows.map(t => ({ ...t, themeRefs: themeRefsByTodo.get(t.id) || [] }));

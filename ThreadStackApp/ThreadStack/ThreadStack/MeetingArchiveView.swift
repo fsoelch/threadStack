@@ -47,9 +47,7 @@ struct MeetingArchiveView: View {
         .searchable(text: $search, prompt: "Archiv durchsuchen")
         .onChange(of: search) { _, newValue in triggerSearch(newValue) }
         .task { await reload() }
-        .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(error ?? "") }
+        .errorAlert($error)
         .alert("Erfolg", isPresented: Binding(get: { infoMessage != nil }, set: { if !$0 { infoMessage = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(infoMessage ?? "") }

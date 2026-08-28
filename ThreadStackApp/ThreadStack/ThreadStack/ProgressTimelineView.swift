@@ -212,13 +212,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             }
             Button("Abbrechen", role: .cancel) { deleteCandidate = nil }
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { deleteErrorText != nil }, set: { if !$0 { deleteErrorText = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(deleteErrorText ?? "")
-        }
+        .errorAlert($deleteErrorText)
     }
 
     private func loadIfNeeded() async {
@@ -392,11 +386,11 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
         }
         .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DS.radiusM)
                 .fill(entry.kind == "result" ? DS.green.opacity(0.08) : DS.cardBg)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: DS.radiusM)
                 .strokeBorder(entry.kind == "result" ? DS.green.opacity(0.3) : Color.clear)
         )
     }

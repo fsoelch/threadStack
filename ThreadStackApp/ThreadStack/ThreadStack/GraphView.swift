@@ -10,6 +10,7 @@ import SwiftUI
 /// bearbeitet werden (Paket 7 „knowledge-entrypoints“).
 struct GraphView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var graphStore: GraphStore
 
     @State private var positions: [String: CGPoint] = [:]
     @State private var visibleTypes: Set<GraphNodeType> = GraphView.loadVisibleTypes()
@@ -34,12 +35,12 @@ struct GraphView: View {
     }
 
     private var nodesByKey: [String: GraphNode] {
-        Dictionary(uniqueKeysWithValues: state.graphNodes.map { ($0.key, $0) })
+        Dictionary(uniqueKeysWithValues: graphStore.nodes.map { ($0.key, $0) })
     }
 
     private var searchMatchKeys: Set<String> {
         guard !search.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
-        return Set(state.graphNodes
+        return Set(graphStore.nodes
             .filter { $0.title.localizedCaseInsensitiveContains(search) }
             .map(\.key))
     }
@@ -48,12 +49,10 @@ struct GraphView: View {
         content
             .navigationTitle("Graph")
             .task { await initialLoad() }
-            .onChange(of: state.graphNodes) { _, newNodes in syncPositions(for: newNodes) }
+            .onChange(of: graphStore.nodes) { _, newNodes in syncPositions(for: newNodes) }
             .onChange(of: search) { _, _ in updateFocusFromSearch() }
             .onChange(of: visibleTypes) { _, newValue in GraphView.saveVisibleTypes(newValue) }
-            .alert("Fehler", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-                Button("OK", role: .cancel) {}
-            } message: { Text(error ?? "") }
+            .errorAlert($error)
             .confirmationDialog(reparentDialogTitle, isPresented: Binding(
                 get: { reparentCandidate != nil }, set: { if !$0 { cancelReparent() } }
             ), titleVisibility: .visible) {
@@ -143,31 +142,31 @@ struct GraphView: View {
     }
 
     @ViewBuilder private var canvasArea: some View {
-        if state.graphIsLoading && state.graphNodes.isEmpty {
+        if graphStore.isLoading && graphStore.nodes.isEmpty {
             ProgressView("Graph wird geladen…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let err = state.graphError, state.graphNodes.isEmpty {
+        } else if let err = graphStore.error, graphStore.nodes.isEmpty {
             errorState(err)
-        } else if state.graphNodes.isEmpty {
+        } else if graphStore.nodes.isEmpty {
             emptyState
         } else {
             ZStack(alignment: .top) {
                 GraphCanvas(
-                    nodes: state.graphNodes,
-                    edges: state.graphEdges,
+                    nodes: graphStore.nodes,
+                    edges: graphStore.edges,
                     positions: $positions,
                     visibleTypes: visibleTypes,
                     searchMatchKeys: searchMatchKeys,
                     focusKey: focusKey,
-                    editingEnabled: !state.graphIsOffline,
+                    editingEnabled: !graphStore.isOffline,
                     onTapNode: { selectedNode = $0 },
                     onTapEdge: { selectedEdge = $0 },
                     onNodeDragEnded: handleNodeDragEnded
                 )
-                if state.graphIsOffline {
+                if graphStore.isOffline {
                     offlineBanner
                 }
-                if state.graphPositionSaveError != nil {
+                if graphStore.positionSaveError != nil {
                     positionSaveHint
                 }
             }
@@ -180,12 +179,12 @@ struct GraphView: View {
             Text("Offline — letzter geladener Stand. Bearbeiten ist deaktiviert.")
                 .font(.caption)
             Spacer()
-            Button("Erneut versuchen") { Task { await state.loadGraph() } }
+            Button("Erneut versuchen") { Task { await graphStore.load() } }
                 .font(.caption)
         }
         .padding(8)
         .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusM))
         .padding(8)
     }
 
@@ -208,7 +207,7 @@ struct GraphView: View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle").font(.system(size: 40)).foregroundStyle(.secondary)
             Text(message).multilineTextAlignment(.center).foregroundStyle(.secondary)
-            Button("Erneut versuchen") { Task { await state.loadGraph() } }
+            Button("Erneut versuchen") { Task { await graphStore.load() } }
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -220,7 +219,7 @@ struct GraphView: View {
                 .font(.system(size: 40)).foregroundStyle(.secondary)
             Text("Noch keine Topics vorhanden — lege dein erstes Topic an, um den Graphen zu füllen.")
                 .multilineTextAlignment(.center).foregroundStyle(.secondary)
-            Button("Erneut versuchen") { Task { await state.loadGraph() } }
+            Button("Erneut versuchen") { Task { await graphStore.load() } }
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -229,8 +228,8 @@ struct GraphView: View {
     // MARK: - Load / layout sync
 
     private func initialLoad() async {
-        await state.loadGraph()
-        syncPositions(for: state.graphNodes)
+        await graphStore.load()
+        syncPositions(for: graphStore.nodes)
     }
 
     /// Recomputes default positions only for nodes that don't have one yet,
@@ -243,7 +242,7 @@ struct GraphView: View {
             return
         }
         lastNodeCount = nodes.count
-        let computed = GraphLayout.computePositions(nodes: nodes, edges: state.graphEdges)
+        let computed = GraphLayout.computePositions(nodes: nodes, edges: graphStore.edges)
         for (key, point) in computed where positions[key] == nil {
             positions[key] = point
         }
@@ -267,20 +266,20 @@ struct GraphView: View {
                 editingKnowledgePage = page
             } else {
                 error = "Objekt existiert nicht mehr."
-                Task { await state.loadGraph() }
+                Task { await graphStore.load() }
             }
         case .todo:
-            state.graphNavigationRequest = .todos
+            graphStore.navigationRequest = .todos
         case .theme:
-            state.graphNavigationRequest = .themes
+            graphStore.navigationRequest = .themes
         case .contact:
-            state.graphNavigationRequest = .contacts
+            graphStore.navigationRequest = .contacts
         case .topic:
             if let meetingId = node.meta?.meetingId {
-                state.graphNavigationRequest = .meeting(meetingId: meetingId)
+                graphStore.navigationRequest = .meeting(meetingId: meetingId)
             } else {
                 error = "Objekt existiert nicht mehr."
-                Task { await state.loadGraph() }
+                Task { await graphStore.load() }
             }
         }
     }
@@ -288,7 +287,7 @@ struct GraphView: View {
     // MARK: - Drag handling (move / reparent)
 
     private func handleNodeDragEnded(_ node: GraphNode, previous: CGPoint, new: CGPoint, droppedOnKey: String?) {
-        guard !state.graphIsOffline else {
+        guard !graphStore.isOffline else {
             // Editing is disabled while offline — revert visually.
             positions[node.key] = previous
             return
@@ -300,7 +299,7 @@ struct GraphView: View {
             return
         }
         positions[node.key] = new
-        state.enqueueGraphPositionSave(type: node.type, id: node.id, x: Double(new.x), y: Double(new.y))
+        graphStore.enqueuePositionSave(type: node.type, id: node.id, x: Double(new.x), y: Double(new.y))
     }
 
     private func beginReparent(source: GraphNode, target: GraphNode, previous: CGPoint, new: CGPoint) {
@@ -326,9 +325,9 @@ struct GraphView: View {
                 // Conservative reconciliation: edge direction for `hierarchy`
                 // isn't specified precisely enough to safely splice locally,
                 // so we refresh from the server rather than guess.
-                await state.loadGraph()
+                await graphStore.load()
                 positions[c.source.key] = c.newPoint
-                state.enqueueGraphPositionSave(type: c.source.type, id: c.source.id,
+                graphStore.enqueuePositionSave(type: c.source.type, id: c.source.id,
                                                x: Double(c.newPoint.x), y: Double(c.newPoint.y))
             } catch {
                 positions[c.source.key] = c.previousPoint
@@ -347,7 +346,7 @@ struct GraphView: View {
     /// `meta.parentId` as delivered by `/api/graph`.
     private func themeDescendantIds(of id: String) -> Set<String> {
         var childrenByParent: [String: [String]] = [:]
-        for n in state.graphNodes where n.nodeType == .theme {
+        for n in graphStore.nodes where n.nodeType == .theme {
             guard let parentId = n.meta?.parentId else { continue }
             childrenByParent[parentId, default: []].append(n.id)
         }

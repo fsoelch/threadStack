@@ -66,6 +66,30 @@ test('Export: XML (both, mit Graph) enthält Themes, Seiten, Todos', async (t) =
   assert.match(xml, /data:image\/png;base64/);
 });
 
+test('Export: XML enthält "]]>" in Beschreibung/Ergebnis ohne 500 (CDATA-Escape-Bugfix)', async (t) => {
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  const admin = ensureTestAdmin(db);
+  t.after(() => cleanup(dir));
+  const agent = await login(request, app, admin.username, admin.password);
+
+  const todo = await agent.post('/api/todos').send({ title: 'Snippet-Todo', description: 'Code: if (a]]>b) { }' });
+  await agent.put(`/api/todos/${todo.body.id}`).send({ done: true, result: 'Ergebnis mit ]]> Sequenz' });
+
+  const r = await agent.get('/api/export?scope=todos&format=xml');
+  assert.equal(r.status, 200);
+
+  // Der Export muss weiterhin wohlgeformtes, per DOMParser gueltiges XML sein
+  // - vor dem Fix warf xmlbuilder2 hier eine ungefangene InvalidCharacterError
+  // (Document.createCDATASection() lehnt "]]>" laut WHATWG-DOM-Spec immer ab).
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM();
+  const doc = new dom.window.DOMParser().parseFromString(r.text, 'application/xml');
+  assert.equal(doc.getElementsByTagName('parsererror').length, 0, r.text);
+  assert.match(doc.getElementsByTagName('description')[0].textContent, /if \(a\]\]>b\)/);
+  assert.match(doc.getElementsByTagName('result')[0].textContent, /Ergebnis mit \]\]> Sequenz/);
+});
+
 test('Export: XML scope=todos&openOnly=1 enthält nur offene Todos', async (t) => {
   const dir = setupEnv();
   const { app, db } = loadServer(REPO_ROOT);

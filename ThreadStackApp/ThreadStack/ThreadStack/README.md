@@ -43,7 +43,17 @@ Files to add:
 
 If your server uses **HTTPS** (recommended), skip this step.
 
-For HTTP only: in Xcode, select your target → **Info** tab → add key:
+**Hinweis (Security):** Die App akzeptiert `http://` als Server-URL ohnehin
+nur für lokale Entwicklungs-Hosts (`localhost`/`127.0.0.1`/`::1`, siehe
+`isAllowedServerURLScheme` in `Extensions.swift`) — jeder andere `http://`-Host
+wird bereits auf Code-Ebene abgelehnt, unabhängig von der ATS-Konfiguration.
+`NSAllowsArbitraryLoads` ist daher **nicht nötig und nicht empfohlen** für den
+produktiven Einsatz: es würde ATS-Schutz app-weit (auch für andere Netzwerk-
+aufrufe) deaktivieren, ohne die App-eigene Prüfung zu umgehen. Nur relevant,
+falls gegen einen lokalen `http://`-Server auf einem **echten Gerät** (nicht
+Simulator) getestet wird und ATS die Loopback-Ausnahme nicht greift:
+
+For HTTP-only local dev on a real device: in Xcode, select your target → **Info** tab → add key:
 ```
 App Transport Security Settings → Allow Arbitrary Loads → YES
 ```

@@ -80,20 +80,20 @@ struct DigestView: View {
             Text(c.summary).font(.callout)
         }
         .padding(12).background(DS.cardBg)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
 
         if let h = c.highlights, !h.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Highlights").font(.subheadline).fontWeight(.semibold)
                 ForEach(Array(h.enumerated()), id: \.offset) { _, item in
                     HStack(alignment: .top, spacing: 8) {
-                        Text("•").foregroundStyle(Color(hex: "#6366f1")).fontWeight(.bold)
+                        Text("•").foregroundStyle(DS.brandIndigo).fontWeight(.bold)
                         Text(item).font(.callout)
                     }
                 }
             }
             .padding(12).background(DS.cardBg)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
         }
         if let f = c.focus_next, !f.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
@@ -106,7 +106,7 @@ struct DigestView: View {
                 }
             }
             .padding(12).background(DS.cardBg)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
         }
     }
 
