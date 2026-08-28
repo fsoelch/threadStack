@@ -44,47 +44,31 @@ struct KnowledgeRowView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: "doc.text.fill").foregroundStyle(DS.purple).scaledFont(.subheadline)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(page.title).scaledFont(.subheadline).fontWeight(.medium)
-                    .foregroundStyle(page.originThemeTitle != nil ? .secondary : .primary)
-                if !paths.isEmpty {
-                    Text("🏷️ " + paths.joined(separator: "  ·  "))
-                        .scaledFont(.caption2).foregroundStyle(DS.purple.opacity(0.85))
+        HStack(alignment: .top, spacing: 0) {
+            Rectangle().fill(DS.purple.opacity(0.5)).frame(width: 3)
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "doc.text.fill").foregroundStyle(DS.purple).scaledFont(.subheadline)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(page.title).scaledFont(.subheadline).fontWeight(.medium)
+                        .foregroundStyle(page.originThemeTitle != nil ? .secondary : .primary)
+                    if !paths.isEmpty {
+                        Text("🏷️ " + paths.joined(separator: "  ·  "))
+                            .scaledFont(.caption2).foregroundStyle(DS.purple.opacity(0.85))
+                    }
+                    if !page.content.isEmpty {
+                        Text(stripHTML(page.content)).scaledFont(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
                 }
-                if !page.content.isEmpty {
-                    Text(stripHTML(page.content)).scaledFont(.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
+                Spacer()
+                if let ot = page.originThemeTitle { themeOriginBadge(ot) }
             }
-            Spacer()
-            if let ot = page.originThemeTitle { themeOriginBadge(ot) }
+            .padding(10)
         }
-        .padding(.vertical, 2)
-        .listRowBackground(page.originThemeTitle != nil ? themeInheritedRowBg : nil)
-    }
-}
-
-struct ThemeTodoRowView: View {
-    let todo: TodoItem
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: todo.done ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(todo.done ? DS.green : .secondary).scaledFont(.subheadline)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(todo.title).scaledFont(.subheadline).fontWeight(.medium)
-                    .strikethrough(todo.done)
-                    .foregroundStyle(todo.done ? .secondary : (todo.originThemeTitle != nil ? .secondary : .primary))
-                if !todo.description.isEmpty {
-                    Text(stripHTML(todo.description)).scaledFont(.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
-            }
-            Spacer()
-            if let ot = todo.originThemeTitle { themeOriginBadge(ot) }
-        }
-        .padding(.vertical, 2)
-        .listRowBackground(todo.originThemeTitle != nil ? themeInheritedRowBg : nil)
+        .background(page.originThemeTitle != nil ? themeInheritedRowBg : DS.cardBg)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusL))
+        .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
     }
 }
 
@@ -185,6 +169,11 @@ struct ThemeDetailScreen: View {
     let themeId: String
     var onNavigate: (String) -> Void = { _ in }
     @EnvironmentObject var state: AppState
+    // Dieselbe app-weite Store-Instanz wie in `TodosView`/`MeetingDetailView`
+    // (siehe `ThreadStackApp.swift`) — damit die hier wiederverwendete
+    // `TodoRowView` die KI-Zusammenfassung genauso anzeigen und aktualisieren
+    // kann wie in der Haupt-Todo-Übersicht.
+    @EnvironmentObject var summaryStore: SummaryStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var showEdit = false
@@ -199,7 +188,6 @@ struct ThemeDetailScreen: View {
     @State private var error: String?
     @State private var showNewKnowledge = false
     @State private var showNewTodo = false
-    @State private var editingTodo: TodoItem?
 
     private var theme: Theme? { state.themes.first(where: { $0.id == themeId }) }
     private var path: [Theme] { state.themeAncestorsPath(themeId) }
@@ -217,6 +205,12 @@ struct ThemeDetailScreen: View {
             }
         }
         .task(id: "\(themeId)-\(includeDescendants)") { await load() }
+        // `todosScoped` ist eine lokale Momentaufnahme (Server liefert
+        // zusaetzlich originThemeTitle/Vererbung, siehe `state.themeTodos`);
+        // Aktionen aus der wiederverwendeten `TodoRowView` (Erledigt/Loeschen/
+        // Schlafen/...) aendern nur `state.todos` — ohne diesen Sync wuerde
+        // die Topic-Detailliste nach solchen Aktionen veraltet bleiben.
+        .onChange(of: state.todos) { _, _ in Task { await load() } }
     }
 
     @ViewBuilder
@@ -270,14 +264,7 @@ struct ThemeDetailScreen: View {
             if !linkedMeetingTopics.isEmpty {
                 Section {
                     ForEach(Array(linkedMeetingTopics.enumerated()), id: \.offset) { _, item in
-                        HStack(spacing: 6) {
-                            Text("📋").scaledFont(.caption2)
-                            Text(item.title).scaledFont(.caption).lineLimit(1)
-                            Spacer()
-                            if let mid = item.meetingId, let m = state.meetings.first(where: { $0.id == mid }) {
-                                Text(m.title).scaledFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
+                        linkedTopicRow(item)
                     }
                 } header: { Text("Verknüpfte Meeting-Themen").scaledFont(.caption).fontWeight(.semibold) }
             }
@@ -304,8 +291,7 @@ struct ThemeDetailScreen: View {
                     Text("Noch keine Todos verknüpft.").foregroundStyle(.secondary).font(.footnote)
                 } else {
                     ForEach(todosScoped) { t in
-                        Button { editingTodo = t } label: { ThemeTodoRowView(todo: t) }
-                            .buttonStyle(.plain)
+                        TodoRowView(todo: t, summaryStore: summaryStore, originBadge: t.originThemeTitle)
                     }
                 }
                 Button { showNewTodo = true } label: {
@@ -339,9 +325,6 @@ struct ThemeDetailScreen: View {
         .sheet(isPresented: $showNewTodo) {
             TodoFormView(presetThemeId: theme.id, onSaved: { Task { await load() } })
         }
-        .sheet(item: $editingTodo) { t in
-            TodoFormView(todo: t, onSaved: { Task { await load() } })
-        }
         .confirmationDialog(
             "Topic mit Unter-Topics löschen",
             isPresented: $showDeleteChoice,
@@ -357,9 +340,7 @@ struct ThemeDetailScreen: View {
                      + ".")
             }
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
     }
 
     private func load() async {
@@ -369,6 +350,23 @@ struct ThemeDetailScreen: View {
         knowledge = await k
         todosScoped = await t
         loading = false
+    }
+
+    /// Ausgelagert aus der `ForEach`-Closure in `content(_:)` (Swift-6-
+    /// Nachbesserung): die verschachtelte optionale Doppel-Bindung zusammen
+    /// mit mehreren gestylten `Text`-Views in einem `HStack` ließ den
+    /// Type-Checker beim Kompilieren des Moduls gelegentlich in ein Timeout
+    /// laufen ("unable to type-check this expression in reasonable time").
+    @ViewBuilder
+    private func linkedTopicRow(_ item: (type: String, title: String, meetingId: String?)) -> some View {
+        HStack(spacing: 6) {
+            Text("📋").scaledFont(.caption2)
+            Text(item.title).scaledFont(.caption).lineLimit(1)
+            Spacer()
+            if let mid = item.meetingId, let m = state.meetings.first(where: { $0.id == mid }) {
+                Text(m.title).scaledFont(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
     }
 
     private func confirmDelete(_ theme: Theme) {
@@ -518,9 +516,7 @@ struct KnowledgeDetailView: View {
         } message: {
             Text("„\(page.title)\u{201C} wird endgültig gelöscht. Das kann nicht rückgängig gemacht werden.")
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
     }
 
     private func performDelete() {

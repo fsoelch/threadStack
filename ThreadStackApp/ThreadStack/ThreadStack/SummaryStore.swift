@@ -36,8 +36,8 @@ final class SummaryStore: ObservableObject {
     /// Kopfkommentar. Als `static let` exponiert (statt rein privat), damit
     /// Tests die tatsächlich für den Produktionspfad geltenden Defaults
     /// bestätigen können, ohne 10×2000ms real abwarten zu müssen.
-    static let defaultPollIntervalNanoseconds: UInt64 = 2_000_000_000
-    static let defaultMaxPollAttempts = 10
+    nonisolated static let defaultPollIntervalNanoseconds: UInt64 = 2_000_000_000
+    nonisolated static let defaultMaxPollAttempts = 10
 
     // MARK: - Published state
 
@@ -137,10 +137,10 @@ final class SummaryStore: ObservableObject {
         await withTaskGroup(of: Void.self) { group in
             for refKey in refs {
                 group.addTask { [weak self] in
+                    guard let self else { return }
                     await withTaskCancellationHandler {
-                        await self?.startPolling(refKey)
+                        await self.startPolling(refKey)
                     } onCancel: {
-                        guard let self else { return }
                         Task { @MainActor in self.cancelPolling(for: refKey) }
                     }
                 }

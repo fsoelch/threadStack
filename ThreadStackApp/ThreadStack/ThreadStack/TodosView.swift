@@ -32,9 +32,8 @@ enum TodoOverviewLogic {
 
 struct TodosView: View {
     @EnvironmentObject var state: AppState
-    @EnvironmentObject var progressStore: ProgressStore
-    // Zentrale, app-weite Instanz (analog `progressStore` oben), registriert
-    // in `ThreadStackApp.swift` und über `.environmentObject(...)` injiziert.
+    // Zentrale, app-weite Instanz, registriert in `ThreadStackApp.swift` und
+    // über `.environmentObject(...)` injiziert.
     @EnvironmentObject var summaryStore: SummaryStore
     @State private var search = ""
     @State private var showNew = false
@@ -116,7 +115,7 @@ struct TodosView: View {
             } else if !openTodos.isEmpty {
                 Section(header: sectionHeader("Offen", count: openTodos.count, color: DS.accent)) {
                     ForEach(openTodos) { t in
-                        TodoRowView(todo: t, progressStore: progressStore, summaryStore: summaryStore)
+                        TodoRowView(todo: t, summaryStore: summaryStore)
                     }
                     .onDelete { deleteTodo(from: openTodos, at: $0) }
                 }
@@ -125,14 +124,14 @@ struct TodosView: View {
                 Section(header: sectionHeader("Schlafend", count: snoozedTodos.count,
                                               color: .gray, icon: "moon.zzz.fill")) {
                     ForEach(snoozedTodos) { t in
-                        TodoRowView(todo: t, progressStore: progressStore, summaryStore: summaryStore)
+                        TodoRowView(todo: t, summaryStore: summaryStore)
                     }
                 }
             }
             if !doneTodos.isEmpty {
                 Section(header: sectionHeader("Erledigt", count: doneTodos.count, color: .secondary)) {
                     ForEach(doneTodos) { t in
-                        TodoRowView(todo: t, progressStore: progressStore, summaryStore: summaryStore)
+                        TodoRowView(todo: t, summaryStore: summaryStore)
                     }
                     .onDelete { deleteTodo(from: doneTodos, at: $0) }
                 }
@@ -178,9 +177,7 @@ struct TodosView: View {
         }
         #endif
         .sheet(isPresented: $showNew) { TodoFormView() }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
         .onAppear {
             summaryStore.ingest(from: Self.summaryIngestItems(state.todos))
         }
@@ -226,10 +223,20 @@ struct TodosView: View {
 
 struct TodoRowView: View {
     let todo: TodoItem
-    // A3: Fortschritt/KI-Zusammenfassung/Inline-Composer nutzen dieselben,
-    // von `TodosView` gehaltenen Store-Instanzen — keine eigenen pro Zeile.
-    @ObservedObject var progressStore: ProgressStore
+    // A3: KI-Zusammenfassung nutzt dieselbe, von `TodosView` gehaltene
+    // Store-Instanz — keine eigene pro Zeile. Der Fortschritt-Store wird
+    // hier nicht mehr benötigt: der Inline-Composer wurde aus der Übersicht
+    // entfernt (kommt selten vor, Zwischenstände erfasst man stattdessen
+    // beim Bearbeiten des Todos — siehe `TodoFormView`), zugunsten von mehr
+    // Platz für die Beschreibung.
     @ObservedObject var summaryStore: SummaryStore
+    // Nur gesetzt, wenn diese Zeile innerhalb eines Topics dargestellt wird
+    // und das Todo nicht direkt, sondern ueber ein Unter-Topic verknuepft ist
+    // (`todo.originThemeTitle`, siehe `ThemeDetailScreen`) — Wiederverwendung
+    // dieser Karte statt einer zweiten, abgespeckten Topic-Todo-Zeile
+    // (vorher `ThemeTodoRowView`), damit Fortschritt/Faelligkeit/KI-
+    // Zusammenfassung ueberall identisch aussehen (siehe CLAUDE.md).
+    var originBadge: String? = nil
     @EnvironmentObject var state: AppState
     @State private var showEdit = false
     @State private var showComplete = false
@@ -243,82 +250,26 @@ struct TodoRowView: View {
     private var summaryRef: String { "todo:\(todo.id)" }
     private var aiSummary: AISummaryPair? { summaryStore.pair(for: summaryRef) }
 
+    // Farbe des linken Akzentbalkens (siehe `accentBar`) — analog zum Web-
+    // Pendant `.topic-card.open/.done::before` (`#BABCD4`/Gruen), damit auf
+    // einen Blick erkennbar ist, wo eine Karte beginnt/endet (Tester-Fund:
+    // "kaum zu erkennen, wo ein Todo endet").
+    private var accentBarColor: Color {
+        if todo.done { return DS.green }
+        if todo.isSnoozed { return .gray }
+        return DS.neutralRing
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 8) {
-                statusIcon
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        Text(todo.title)
-                            .scaledFont(.subheadline).fontWeight(.medium)
-                            .strikethrough(todo.done)
-                            .foregroundStyle(todo.done ? .secondary : .primary)
-                        if todo.isPrivate {
-                            Image(systemName: "lock.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-
-                    if !todo.description.isEmpty {
-                        Text(htmlAttributedString(todo.description))
-                            .scaledFont(.caption).lineLimit(2)
-                    }
-
-                    if !todo.done, let due = todo.dueDateFormatted {
-                        dueBadge(text: due, status: todo.dueStatus)
-                    }
-                    // Erledigte Todos: keine Fortschrittszeile (Vertrag) —
-                    // schlafende Todos behalten sie weiterhin sichtbar.
-                    if TodoOverviewLogic.showsProgressBadge(done: todo.done) {
-                        ProgressBadgeView(summary: todo.progress) // A3
-                    }
-                    if todo.isSnoozed, let wake = todo.snoozeWakeFormatted {
-                        Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
-                            .scaledFont(.caption2).foregroundStyle(.secondary)
-                    }
-                    // Hinweis (siehe Abschlussbericht Paket A3): eine "Aus
-                    // Meetings"-Gruppe (Topics mit `isTodo == true` aus allen
-                    // Meetings) existiert in `TodosView.swift`/`state.todos`
-                    // nicht — `state.todos` liefert ausschließlich
-                    // eigenständige `TodoItem`s (`GET /api/todos`). Die
-                    // bestehende Herkunfts-Kennzeichnung für aus Themen
-                    // stammende Todos lebt in `ThemeDetailScreen`
-                    // (`ThemesView.swift`, außerhalb dieser Datei-
-                    // Eigentümerschaft) — hier daher bewusst NICHT dupliziert.
-                    if !themeLinks.isEmpty {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 4) {
-                                ForEach(themeLinks, id: \.link.id) { tl in themeChip(tl.theme.title) }
-                            }
-                        }
-                    }
-                    if TodoOverviewLogic.showsAISummary(done: todo.done, isReadOnly: false) {
-                        AISummaryCardView(kind: .progress, summary: aiSummary?.progress,
-                                          refType: "todo", refId: todo.id, store: summaryStore,
-                                          onShowAllEntries: { showEdit = true })
-                        AISummaryCardView(kind: .description, summary: aiSummary?.description,
-                                          refType: "todo", refId: todo.id, store: summaryStore)
-                    }
-                }
-                Spacer()
-            }
-
-            // Story 6: Zwischenstand direkt in der Zeile erfassen — kein
-            // Angebot bei erledigten Todos (Vertrag).
-            if TodoOverviewLogic.showsInlineComposer(done: todo.done, isReadOnly: false) {
-                InlineEntryComposerView(refType: "todo", refId: todo.id, hasSnooze: todo.isSnoozed,
-                                        store: progressStore)
-            }
-
-            if todo.done && !todo.result.isEmpty {
-                Text(htmlAttributedString(todo.result))
-                    .scaledFont(.caption).padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.green.opacity(0.08))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
+        HStack(alignment: .top, spacing: 0) {
+            Rectangle().fill(accentBarColor).frame(width: 3)
+            cardContent.padding(10)
         }
+        .background(DS.cardBg)
+        .clipShape(RoundedRectangle(cornerRadius: DS.radiusL))
+        .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+        .listRowSeparator(.hidden)
+        .listRowBackground(Color.clear)
         .opacity(todo.isSnoozed ? 0.7 : 1)
         .onAppear {
             if TodoOverviewLogic.shouldStartPolling(done: todo.done, isReadOnly: false, pair: aiSummary) {
@@ -397,9 +348,79 @@ struct TodoRowView: View {
             StackPushSheet(target: PushTarget(refType: "todo", refId: todo.id, title: todo.title,
                                                nextStep: todo.progress?.nextStep)) // A3: Vorbelegung
         }
-        .alert("Fehler", isPresented: Binding(
-            get: { error != nil }, set: { if !$0 { error = nil } }
-        )) { Button("OK", role: .cancel) {} } message: { Text(error ?? "") }
+        .errorAlert($error)
+    }
+
+    private var cardContent: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                statusIcon
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 4) {
+                        Text(todo.title)
+                            .scaledFont(.subheadline).fontWeight(.medium)
+                            .strikethrough(todo.done)
+                            .foregroundStyle(todo.done ? .secondary : .primary)
+                        if todo.isPrivate {
+                            Image(systemName: "lock.fill")
+                                .font(.system(size: 9))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    if !todo.description.isEmpty {
+                        Text(htmlAttributedString(todo.description))
+                            .scaledFont(.caption).lineLimit(4)
+                    }
+
+                    if !todo.done, let due = todo.dueDateFormatted {
+                        dueBadge(text: due, status: todo.dueStatus)
+                    }
+                    // Erledigte Todos: keine Fortschrittszeile (Vertrag) —
+                    // schlafende Todos behalten sie weiterhin sichtbar.
+                    if TodoOverviewLogic.showsProgressBadge(done: todo.done) {
+                        ProgressBadgeView(summary: todo.progress) // A3
+                    }
+                    if todo.isSnoozed, let wake = todo.snoozeWakeFormatted {
+                        Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
+                            .scaledFont(.caption2).foregroundStyle(.secondary)
+                    }
+                    // Hinweis (siehe Abschlussbericht Paket A3): eine "Aus
+                    // Meetings"-Gruppe (Topics mit `isTodo == true` aus allen
+                    // Meetings) existiert in `TodosView.swift`/`state.todos`
+                    // nicht — `state.todos` liefert ausschließlich
+                    // eigenständige `TodoItem`s (`GET /api/todos`). Die
+                    // bestehende Herkunfts-Kennzeichnung für aus Themen
+                    // stammende Todos lebt in `ThemeDetailScreen`
+                    // (`ThemesView.swift`, außerhalb dieser Datei-
+                    // Eigentümerschaft) — hier daher bewusst NICHT dupliziert.
+                    if !themeLinks.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 4) {
+                                ForEach(themeLinks, id: \.link.id) { tl in themeChip(tl.theme.title) }
+                            }
+                        }
+                    }
+                    if TodoOverviewLogic.showsAISummary(done: todo.done, isReadOnly: false) {
+                        AISummaryCardView(kind: .progress, summary: aiSummary?.progress,
+                                          refType: "todo", refId: todo.id, store: summaryStore,
+                                          onShowAllEntries: { showEdit = true })
+                        AISummaryCardView(kind: .description, summary: aiSummary?.description,
+                                          refType: "todo", refId: todo.id, store: summaryStore)
+                    }
+                }
+                Spacer()
+                if let originBadge { themeOriginBadge(originBadge) }
+            }
+
+            if todo.done && !todo.result.isEmpty {
+                Text(htmlAttributedString(todo.result))
+                    .scaledFont(.caption).padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
+            }
+        }
     }
 
     @ViewBuilder private var statusIcon: some View {
@@ -408,7 +429,7 @@ struct TodoRowView: View {
         } else if todo.isSnoozed {
             Image(systemName: "moon.zzz.fill").foregroundStyle(.gray).scaledFont(.subheadline)
         } else {
-            Circle().stroke(DS.green, lineWidth: 1.5).frame(width: 16, height: 16)
+            Circle().stroke(DS.neutralRing, lineWidth: 1.5).frame(width: 16, height: 16)
         }
     }
 
@@ -416,8 +437,8 @@ struct TodoRowView: View {
     private func dueBadge(text: String, status: DueStatus) -> some View {
         let (bg, fg, label): (Color, Color, String) = {
             switch status {
-            case .overdue: return (Color(hex: "#fee2e2"), Color(hex: "#b91c1c"), "Überfällig: \(text)")
-            case .today:   return (Color(hex: "#fef3c7"), Color(hex: "#92400e"), "Heute: \(text)")
+            case .overdue: return (DS.dangerBg, DS.dangerFg, "Überfällig: \(text)")
+            case .today:   return (DS.warningBg, DS.warningFg, "Heute: \(text)")
             default:       return (DS.accentLight, DS.accentDark, "Fällig: \(text)")
             }
         }()
