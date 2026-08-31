@@ -673,13 +673,16 @@ final class AppState: ObservableObject {
     }
 
     /// Wissen zu einem Topic, optional inkl. Unter-Topics (mit originThemeId/-Title für Herkunfts-Badges).
-    func themeKnowledge(id: String, includeDescendants: Bool) async -> [KnowledgePage] {
-        (try? await request("GET", "/themes/\(id)/knowledge?includeDescendants=\(includeDescendants)")) ?? []
+    /// Wirft (statt still `[]` zu liefern), damit ein 401/Netzwerkfehler nicht
+    /// als "Topic hat kein Wissen" missverstanden wird (siehe ThemeDetailScreen.load()).
+    func themeKnowledge(id: String, includeDescendants: Bool) async throws -> [KnowledgePage] {
+        try await request("GET", "/themes/\(id)/knowledge?includeDescendants=\(includeDescendants)")
     }
 
     /// Todos zu einem Topic, optional inkl. Unter-Topics (mit originThemeId/-Title für Herkunfts-Badges).
-    func themeTodos(id: String, includeDescendants: Bool) async -> [TodoItem] {
-        (try? await request("GET", "/themes/\(id)/todos?includeDescendants=\(includeDescendants)")) ?? []
+    /// Wirft ebenfalls (siehe themeKnowledge).
+    func themeTodos(id: String, includeDescendants: Bool) async throws -> [TodoItem] {
+        try await request("GET", "/themes/\(id)/todos?includeDescendants=\(includeDescendants)")
     }
 
     // MARK: - Knowledge (native Rich-Text-Editor, Wissensmanagement v2.1)

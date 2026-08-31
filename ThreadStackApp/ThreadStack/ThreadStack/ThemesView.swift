@@ -345,10 +345,18 @@ struct ThemeDetailScreen: View {
 
     private func load() async {
         loading = true
-        async let k = state.themeKnowledge(id: themeId, includeDescendants: includeDescendants)
-        async let t = state.themeTodos(id: themeId, includeDescendants: includeDescendants)
-        knowledge = await k
-        todosScoped = await t
+        do {
+            async let k = state.themeKnowledge(id: themeId, includeDescendants: includeDescendants)
+            async let t = state.themeTodos(id: themeId, includeDescendants: includeDescendants)
+            knowledge = try await k
+            todosScoped = try await t
+        } catch {
+            // Sichtbar machen statt als "kein Wissen/keine Todos" zu
+            // erscheinen (siehe AppState.themeKnowledge/-Todos): ein 401/
+            // Netzwerkfehler darf nicht mit einem tatsächlich leeren Topic
+            // verwechselt werden.
+            self.error = error.localizedDescription
+        }
         loading = false
     }
 
