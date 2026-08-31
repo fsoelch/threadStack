@@ -553,6 +553,19 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Setzt die Topic-Zuordnungen eines Todos atomar - Pendant zu
+    /// `setKnowledgeThemes` (siehe dort), damit Topics einem Todo auch
+    /// manuell zugeordnet werden können statt nur ueber `presetThemeId`
+    /// beim Anlegen aus einem Topic-Kontext.
+    struct TodoThemesResult: Decodable, Equatable {
+        let appliedThemeIds: [String]
+        let droppedCount: Int
+    }
+
+    func setTodoThemes(id: String, themeIds: [String]) async throws -> TodoThemesResult {
+        try await request("PUT", "/todos/\(id)/themes", body: ["themeIds": themeIds])
+    }
+
     func completeTodo(id: String, result: String, resultDate: String) async throws {
         try await requestOK("PUT", "/todos/\(id)", body: [
             "done": true, "result": result, "resultDate": resultDate

@@ -101,6 +101,10 @@ struct TodoFormView: View {
     // bereits angelegte Todo laufen statt erneut createTodoReturning
     // aufzurufen (das wuerde sonst ein Duplikat anlegen).
     @State private var createdId: String?
+    // Manuelle Topic-Zuordnung (Requirements Fix 3: Topics muessen sich auch
+    // ohne AI-Vorschlag manuell zuordnen lassen) - analog zu KnowledgeEditorView.
+    @State private var themeIds: Set<String> = []
+    @State private var showTopicPicker = false
 
     private var detailsSummaryText: String? {
         TodoFormDetailsSummary.summaryText(
@@ -123,6 +127,9 @@ struct TodoFormView: View {
                 }
                 Section {
                     descriptionSection
+                }
+                Section("Zugehörige Topics") {
+                    topicsSection
                 }
                 if todo != nil {
                     Section("Fortschritt") {
@@ -170,7 +177,36 @@ struct TodoFormView: View {
                     description = newHTML
                 }
             }
+            .sheet(isPresented: $showTopicPicker) {
+                KnowledgeTopicPickerSheet(
+                    initialSelection: themeIds,
+                    emptySelectionHint: "Ohne Topic-Zuordnung erscheint dieses Todo nicht in der Topic-Detailansicht."
+                ) { selection in
+                    themeIds = selection
+                }
+            }
         }
+    }
+
+    private var topicsSection: some View {
+        Button {
+            showTopicPicker = true
+        } label: {
+            HStack {
+                Text(topicsSummaryText)
+                    .foregroundStyle(themeIds.isEmpty ? .secondary : .primary)
+                Spacer()
+                Image(systemName: "chevron.right").foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityLabel("Zugehörige Topics: \(topicsSummaryText)")
+        .accessibilityHint("Öffnet die Topic-Auswahl.")
+    }
+
+    private var topicsSummaryText: String {
+        guard !themeIds.isEmpty else { return "Keine Topics ausgewählt" }
+        let titles = themeIds.compactMap { id in state.themes.first(where: { $0.id == id })?.title }
+        return titles.isEmpty ? "\(themeIds.count) Topic(s)" : titles.joined(separator: ", ")
     }
 
     @ViewBuilder
@@ -251,10 +287,14 @@ struct TodoFormView: View {
     }
 
     private func populate() {
+        if let presetThemeId, todo == nil {
+            themeIds = [presetThemeId]
+        }
         guard let t = todo else { return }
         title = t.title
         description = t.description
         isPrivate = t.isPrivate
+        themeIds = Set(state.themeLinks(for: t.id).filter { $0.link.refType == "todo" }.map { $0.theme.id })
         if let s = t.snoozedUntil, !s.isEmpty, let d = parseFlexDate(s) {
             hasSnooze = true; snoozeDate = d
         }
@@ -337,9 +377,12 @@ struct TodoFormView: View {
                     savedId = created.id
                     createdId = created.id
                     NotificationScheduler.shared.reschedule(id: "todo-\(created.id)", title: notificationTitle, fireAt: fireAt, isPrivate: isPrivate, notificationTitle: "ThreadStack — Erinnerung")
-                    if let presetThemeId {
-                        try? await state.addThemeLink(themeId: presetThemeId, refType: "todo", refId: created.id)
-                    }
+                }
+                // Topic-Zuordnung wird immer (Anlegen UND Bearbeiten) ueber
+                // die Auswahl im Formular gesteuert - ersetzt das fruehere
+                // Auto-Link-nur-bei-Neuanlage-aus-Topic-Kontext-Verhalten.
+                if let savedId {
+                    _ = try? await state.setTodoThemes(id: savedId, themeIds: Array(themeIds))
                 }
                 // Der Snooze/das Anlegen/Aktualisieren ist an dieser Stelle
                 // bereits serverseitig erfolgt — ein Fehler beim optionalen

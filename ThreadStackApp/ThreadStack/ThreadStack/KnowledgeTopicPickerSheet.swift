@@ -47,6 +47,9 @@ struct KnowledgeTopicPickerSheet: View {
 
     /// Bereits zugeordnete Topic-IDs.
     let initialSelection: Set<String>
+    /// Hinweistext, wenn (noch) kein Topic ausgewählt ist - je Einsatzort
+    /// (Wissen/Todo) unterschiedlich formuliert, Auswahl-Logik bleibt identisch.
+    var emptySelectionHint: String = "Ohne Topic-Zuordnung erscheint diese Seite unter „Ohne Topic“ in der globalen Wissens-Ansicht."
     /// Finale Auswahl nach Bestätigung ("Fertig").
     let onDone: (Set<String>) -> Void
 
@@ -136,7 +139,7 @@ struct KnowledgeTopicPickerSheet: View {
         List {
             if selection.isEmpty {
                 Section {
-                    Text("Ohne Topic-Zuordnung erscheint diese Seite unter „Ohne Topic“ in der globalen Wissens-Ansicht.")
+                    Text(emptySelectionHint)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }

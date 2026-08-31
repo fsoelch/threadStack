@@ -770,6 +770,34 @@ app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   res.json(responseBody);
 });
 
+// Setzt die Topic-Zuordnungen eines Todos atomar (ersetzt alle bisherigen
+// theme_links vom Typ 'todo' für dieses Todo) - Pendant zu PUT /knowledge/:id/themes,
+// damit Topics einem Todo auch manuell (statt nur beim Anlegen aus einem
+// Topic-Kontext heraus) zugeordnet werden können.
+app.put(`${A}/todos/:id/themes`, requireAuth, (req, res) => {
+  const t = db.prepare('SELECT id FROM todos WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
+  if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
+  const { themeIds } = req.body || {};
+  if (!Array.isArray(themeIds)) return res.status(400).json({ error: 'themeIds muss ein Array sein' });
+
+  const requestedThemeIds = [...new Set(themeIds.filter(x => typeof x === 'string'))];
+  const validThemes = requestedThemeIds.length
+    ? db.prepare(`SELECT id FROM themes WHERE user_id=? AND id IN (${requestedThemeIds.map(()=>'?').join(',')})`)
+        .all(req.session.uid, ...requestedThemeIds)
+    : [];
+  const appliedThemeIds = validThemes.map(x => x.id);
+  // droppedCount bündelt gelöschte UND fremde IDs - kein Auskunfts-Unterschied.
+  const droppedCount = requestedThemeIds.length - appliedThemeIds.length;
+
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    db.prepare(`DELETE FROM theme_links WHERE ref_type='todo' AND ref_id=?`).run(t.id);
+    const ins = db.prepare('INSERT INTO theme_links(id,theme_id,ref_type,ref_id,created_at) VALUES (?,?,?,?,?)');
+    for (const themeId of appliedThemeIds) ins.run(uid(), themeId, 'todo', t.id, now);
+  })();
+  res.json({ ok: true, appliedThemeIds, droppedCount });
+});
+
 app.delete(`${A}/todos/:id`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT id FROM todos WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });

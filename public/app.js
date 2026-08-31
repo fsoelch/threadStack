@@ -105,6 +105,7 @@ let knowledgeFilterThemeId = '';
 let knowledgeSearch     = '';
 let editKnowledgeId     = null;
 let knowledgeThemeSelection = new Set(); // im Wissens-Modal ausgewählte Topic-IDs
+let todoThemeSelection = new Set();      // im Todo-Modal ausgewählte Topic-IDs
 
 const COLORS = ['#1D6FE8','#3b82f6','#06b6d4','#10b981','#22c55e','#f59e0b','#ef4444','#ec4899','#a855f7','#64748b'];
 
@@ -2890,6 +2891,12 @@ function openTodoModal(id, presetThemeId) {
   }
   updateTodoMoreDetailsSummary();
   mountTodoProgressArea(t);
+  document.getElementById('todo-theme-filter').value = '';
+  todoThemeSelection = new Set(
+    t ? (buildThemeMap()[t.id] || []).filter(x => x.link.refType === 'todo').map(x => x.theme.id)
+      : (todoModalPresetThemeId ? [todoModalPresetThemeId] : [])
+  );
+  renderTodoThemeChecklist();
   document.getElementById('todo-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('todo-title').focus(), 50);
   // Snapshot NACH allen obigen Feld-Initialisierungen für den Dirty-Check
@@ -2941,16 +2948,14 @@ async function saveTodoModal() {
       // Fehler) dadurch in den Update-Zweig (PUT) statt erneut ein Todo
       // anzulegen — verhindert ein doppelt angelegtes Todo.
       editTodoId = savedTodoId;
-      if (todoModalPresetThemeId) {
-        try {
-          const link = await api('POST', `/themes/${todoModalPresetThemeId}/links`, {
-            refType: 'todo', refId: savedTodoId
-          });
-          const th = themeById(todoModalPresetThemeId);
-          if (th) th.links.push(link);
-        } catch (e) { toast(e.message, 'error'); }
-      }
     }
+    // Topic-Zuordnung wird immer (Anlegen UND Bearbeiten) ueber den
+    // Auswahl-Dialog gesteuert - ersetzt das frühere Auto-Link-nur-bei-
+    // Neuanlage-aus-Topic-Kontext-Verhalten (siehe Requirements Fix 3).
+    try {
+      await api('PUT', `/todos/${savedTodoId}/themes`, { themeIds: [...todoThemeSelection] });
+      await loadThemes();
+    } catch (e) { toast(e.message, 'error'); }
     todoModalPresetThemeId = null;
     // Der Fortschritts-Composer ist seit dem Redesign "Übersichtlichere Todos
     // und Tasks" ein eigenständiger, selbst-speichernder Baustein
@@ -4086,28 +4091,32 @@ function switchQuickToFullEditor() {
   kbTrackDirty();
 }
 
-function renderKnowledgeThemeChecklist() {
-  const el = document.getElementById('knowledge-theme-checklist');
-  const chipsEl = document.getElementById('knowledge-theme-selected-chips');
+// Gemeinsame Checklisten-Logik fuer die Topic-Auswahl (Wissen UND Todo
+// nutzen exakt dieselbe Komponente - siehe CLAUDE.md "Wiederverwendung vor
+// Neuentwicklung": eine Topic-Auswahl darf sich nicht je Einsatzort anders
+// verhalten).
+function renderThemeChecklist(selection, opts) {
+  const el = document.getElementById(opts.checklistId);
+  const chipsEl = document.getElementById(opts.chipsId);
   if (!el) return;
   if (!themes.length) {
     el.innerHTML = '<p class="theme-empty-items">Noch keine Topics vorhanden. Legen Sie zuerst ein Topic an.</p>';
     if (chipsEl) chipsEl.innerHTML = '';
     return;
   }
-  const filterRaw = (document.getElementById('knowledge-theme-filter')?.value || '').trim().toLowerCase();
+  const filterRaw = (document.getElementById(opts.filterId)?.value || '').trim().toLowerCase();
   const all = themes
     .map(t => ({ t, path: themeAncestorsPath(t.id).map(p => p.title).join(' › ') }))
     .sort((a, b) => a.path.localeCompare(b.path));
   const filtered = filterRaw ? all.filter(x => x.path.toLowerCase().includes(filterRaw)) : all;
 
   if (chipsEl) {
-    const selected = all.filter(x => knowledgeThemeSelection.has(x.t.id));
+    const selected = all.filter(x => selection.has(x.t.id));
     chipsEl.innerHTML = selected.length
       ? `<span style="width:100%;font-size:.75rem;color:var(--text-muted)">Ausgewählt (${selected.length})</span>` +
         selected.map(({ t, path }) => `<span class="theme-chip" style="display:inline-flex;align-items:center;gap:.25rem">
           ${escHtml(path)}
-          <button type="button" aria-label="${escHtml(t.title)} entfernen" onclick="toggleKnowledgeThemeSel('${t.id}',false)" style="background:none;border:none;cursor:pointer;color:inherit;font-size:1rem;line-height:1;padding:0">×</button>
+          <button type="button" aria-label="${escHtml(t.title)} entfernen" onclick="${opts.toggle}('${t.id}',false)" style="background:none;border:none;cursor:pointer;color:inherit;font-size:1rem;line-height:1;padding:0">×</button>
         </span>`).join('')
       : '';
   }
@@ -4118,18 +4127,36 @@ function renderKnowledgeThemeChecklist() {
   }
   el.innerHTML = filtered
     .map(({ t, path }) => {
-      const checked = knowledgeThemeSelection.has(t.id);
+      const checked = selection.has(t.id);
       const hl = filterRaw ? escHtml(path).replace(new RegExp(`(${filterRaw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'ig'), '<mark>$1</mark>') : escHtml(path);
       return `<label style="display:flex;align-items:center;gap:.5rem;padding:.25rem 0;font-size:.8125rem">
-        <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleKnowledgeThemeSel('${t.id}',this.checked)">
+        <input type="checkbox" ${checked ? 'checked' : ''} onchange="${opts.toggle}('${t.id}',this.checked)">
         <span>${hl}</span>
       </label>`;
     }).join('');
+}
+
+function renderKnowledgeThemeChecklist() {
+  renderThemeChecklist(knowledgeThemeSelection, {
+    checklistId: 'knowledge-theme-checklist', chipsId: 'knowledge-theme-selected-chips',
+    filterId: 'knowledge-theme-filter', toggle: 'toggleKnowledgeThemeSel',
+  });
 }
 function toggleKnowledgeThemeSel(id, checked) {
   if (checked) knowledgeThemeSelection.add(id); else knowledgeThemeSelection.delete(id);
   renderKnowledgeThemeChecklist();
   kbTrackDirty();
+}
+
+function renderTodoThemeChecklist() {
+  renderThemeChecklist(todoThemeSelection, {
+    checklistId: 'todo-theme-checklist', chipsId: 'todo-theme-selected-chips',
+    filterId: 'todo-theme-filter', toggle: 'toggleTodoThemeSel',
+  });
+}
+function toggleTodoThemeSel(id, checked) {
+  if (checked) todoThemeSelection.add(id); else todoThemeSelection.delete(id);
+  renderTodoThemeChecklist();
 }
 
 // ── A8: Verweise zwischen Wissensseiten ("Verwandtes Wissen") ──
