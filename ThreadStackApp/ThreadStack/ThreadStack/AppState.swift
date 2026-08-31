@@ -605,11 +605,13 @@ final class AppState: ObservableObject {
 
     // MARK: - Themes
 
-    func createTheme(title: String, description: String, parentId: String? = nil) async throws {
+    @discardableResult
+    func createTheme(title: String, description: String, parentId: String? = nil) async throws -> Theme {
         var body: [String: Any] = ["title": title, "description": description]
         if let parentId { body["parentId"] = parentId }
         let th: Theme = try await request("POST", "/themes", body: body)
         themes.append(th)
+        return th
     }
 
     func updateTheme(id: String, title: String, description: String) async throws {

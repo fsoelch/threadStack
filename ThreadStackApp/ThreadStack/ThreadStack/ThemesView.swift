@@ -544,6 +544,11 @@ struct KnowledgeDetailView: View {
 struct ThemeFormView: View {
     var theme: Theme? = nil
     var parentId: String? = nil
+    /// Wird nach erfolgreichem Neuanlegen mit dem erzeugten Topic aufgerufen,
+    /// bevor das Sheet schliesst - ermoeglicht Aufrufern (z.B. der Topic-
+    /// Auswahl im Wissens-Editor), das neue Topic direkt zu markieren/
+    /// auszuwaehlen, ohne es erst wieder suchen zu muessen.
+    var onCreated: ((Theme) -> Void)? = nil
     @EnvironmentObject var state: AppState
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
@@ -581,7 +586,8 @@ struct ThemeFormView: View {
                 if let t = theme {
                     try await state.updateTheme(id: t.id, title: title, description: description)
                 } else {
-                    try await state.createTheme(title: title, description: description, parentId: parentId)
+                    let created = try await state.createTheme(title: title, description: description, parentId: parentId)
+                    onCreated?(created)
                 }
                 dismiss()
             } catch { self.error = error.localizedDescription; loading = false }

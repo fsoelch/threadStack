@@ -55,6 +55,11 @@ struct KnowledgeTopicPickerSheet: View {
 
     @State private var selection: Set<String> = []
     @State private var query = ""
+    // Requirements Fix 5: unter Wissen liess sich bislang kein neues Topic
+    // erfassen, ohne die Auswahl abzubrechen und ueber die Topics-Ansicht zu
+    // gehen - jetzt direkt aus der Auswahl heraus moeglich (Topic wird nach
+    // dem Anlegen automatisch selektiert).
+    @State private var showNewTheme = false
 
     private var pathById: [String: String] {
         var out: [String: String] = [:]
@@ -97,6 +102,15 @@ struct KnowledgeTopicPickerSheet: View {
                         .accessibilityLabel("Abbrechen")
                         .accessibilityHint("Schließt die Topic-Auswahl ohne zu speichern.")
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    Button {
+                        showNewTheme = true
+                    } label: {
+                        Label("Neues Topic", systemImage: "plus")
+                    }
+                    .accessibilityLabel("Neues Topic anlegen")
+                    .accessibilityHint("Öffnet den Dialog zum Anlegen eines neuen Topics und wählt es direkt aus.")
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Fertig") {
                         onDone(selection)
@@ -107,6 +121,11 @@ struct KnowledgeTopicPickerSheet: View {
             }
         }
         .onAppear { selection = initialSelection }
+        .sheet(isPresented: $showNewTheme) {
+            ThemeFormView { created in
+                selection.insert(created.id)
+            }
+        }
     }
 
     private var selectedChipsRow: some View {
