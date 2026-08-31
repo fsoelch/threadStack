@@ -124,8 +124,10 @@ struct TodoFormView: View {
                 Section {
                     descriptionSection
                 }
-                Section("Fortschritt") {
-                    progressSection
+                if todo != nil {
+                    Section("Fortschritt") {
+                        progressSection
+                    }
                 }
                 Section {
                     DisclosureGroup(isExpanded: $detailsExpanded) {
@@ -218,6 +220,9 @@ struct TodoFormView: View {
             .scaledFont(.caption).foregroundStyle(.secondary)
     }
 
+    // Wird nur im Bearbeiten-Modus gerendert (siehe Section-Bedingung in
+    // `body`): beim Neuanlegen gibt es noch keinen Fortschritt zu zeigen,
+    // das Todo existiert ja gerade erst.
     @ViewBuilder
     private var progressSection: some View {
         if let t = todo {
@@ -230,12 +235,6 @@ struct TodoFormView: View {
                     progressComposerFocused = true
                 }
             }
-        } else {
-            // Noch keine refId — nur der Composer, ohne Nächster-Schritt/
-            // Verlauf/Wiedereinstiegskarte (ergeben für ein noch nicht
-            // existierendes Todo keinen Sinn). Der eigentliche Commit erfolgt
-            // erst in save(), sobald die id feststeht.
-            ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused, onSave: {})
         }
     }
 

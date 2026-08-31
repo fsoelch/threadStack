@@ -46,9 +46,14 @@ struct HTMLContentView: View {
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: https:; style-src 'unsafe-inline'">
         <style>
+        :root { color-scheme: light dark; }
         body { font-family: -apple-system, sans-serif; margin: 8px; color: #1c1c1e; word-wrap: break-word; }
         img { max-width: 100%; height: auto; }
         a { color: #1D6FE8; }
+        @media (prefers-color-scheme: dark) {
+          body { color: #f2f2f7; }
+          a { color: #6cb0ff; }
+        }
         </style>
         </head>
         <body>\(html)</body>
