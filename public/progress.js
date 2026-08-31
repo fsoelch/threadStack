@@ -1071,11 +1071,12 @@
     this.destroyed = false;
     // `openOnMount`: ueberspringt den sonst noetigen ersten Klick auf den
     // 💬-Trigger und zeigt das Textfeld direkt beim Einhaengen (siehe
-    // `mountCardComposer` in index.html — dort ist das Einhaengen selbst
-    // bereits die bewusste Nutzer-Aktion "Zwischenstand erfassen", ein
-    // zusaetzlicher Klick auf einen Zwischen-Trigger waere redundant).
-    // Default `false` erhaelt das bisherige Verhalten fuer andere
-    // Einhaenge-Stellen (z.B. Bearbeiten-Ansicht) unveraendert.
+    // `mountCardComposer`/`mountTodoProgressArea` in public/app.js — das
+    // Einhaengen selbst ist dort bereits die bewusste Nutzer-Aktion
+    // "Zwischenstand erfassen", ein zusaetzlicher Klick auf einen
+    // Zwischen-Trigger waere redundant). Default `false` erhaelt das
+    // bisherige Verhalten fuer verbleibende Einhaenge-Stellen (z.B.
+    // Themen-/Topic-Bearbeiten-Ansicht) unveraendert.
     this.open = !!opts.openOnMount;
     this.text = '';
     this.saving = false;

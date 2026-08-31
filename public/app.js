@@ -522,6 +522,11 @@ function mountTodoProgressArea(t) {
       refType: 'todo', refId: t.id,
       snoozedUntil: t.snoozedUntil || null,
       done: !!t.done,
+      // Wie bei mountCardComposer: das Öffnen des Bearbeiten-Sheets für ein
+      // bestehendes Todo ist bereits die bewusste Nutzer-Aktion, das
+      // Eingabefeld für einen neuen Zwischenstand soll deshalb sofort
+      // sichtbar sein statt hinter dem 💬-Zwischentrigger (Nutzerfeedback).
+      openOnMount: true,
       onSaved: (result) => onTodoProgressEntrySaved('todo', t.id, result),
       onError: (err) => toast(err?.message || 'Zwischenstand konnte nicht gespeichert werden', 'error'),
     });
