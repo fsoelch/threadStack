@@ -1744,13 +1744,6 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
   margin-top:1.125rem; padding-top:1.125rem; border-top:1px solid var(--border);
 }
 .ts-progress-section-title { font-size:.8125rem; font-weight:600; color:var(--text); margin-bottom:.625rem; }
-/* Heimatposition der Composer-/Reentry-Slot-Knoten (siehe mountTimeline-
-   Vertrag: darf kein Nachfahre des Mount-Containers sein). Wird beim Mounten
-   in den Fortschrittsbereich verschoben, daher hier ohne eigene Darstellung. */
-.ts-progress-slot-home { display:none; }
-.ts-progress-composer { margin-bottom:.75rem; }
-.ts-progress-composer .form-label { margin-bottom:.375rem; }
-.ts-progress-snooze-hint { font-size:.75rem; color:var(--text-muted); margin-top:.375rem; line-height:1.4; }
 .ts-progress-entry-context {
   background:var(--card2); border:1px solid var(--border); border-radius:8px;
   padding:.5rem .75rem; margin-bottom:.75rem; font-size:.75rem; color:var(--text-muted);
@@ -2026,23 +2019,8 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
       </div>
       <div id="t-progress-section" class="ts-progress-section" style="display:none">
         <div class="ts-progress-section-title">📈 Fortschritt</div>
-        <div id="t-progress-timeline-mount"></div>
-        <!-- Heimatposition der stabilen Slot-Knoten: NICHT innerhalb des Mount-Containers -->
-        <div id="t-progress-slot-home" class="ts-progress-slot-home">
-          <div id="t-progress-composer-slot" class="ts-progress-composer">
-            <label class="form-label" for="t-progress-note">Neuer Zwischenstand</label>
-            <div class="rt-wrapper">
-              <div class="rt-toolbar" id="t-progress-note-tb"></div>
-              <div class="rt-content" id="t-progress-note" contenteditable="true" oninput="updateProgressComposerCharHint('topic')"></div>
-            </div>
-            <div class="ts-progress-char-hint" id="t-progress-note-hint" style="display:none"></div>
-            <div class="ts-progress-snooze-hint" id="t-progress-snooze-hint" style="display:none"
-                 aria-describedby="t-progress-note">Wird beim Speichern als Zwischenstand zu deiner Ruhephase geführt, weil du „Schlafen bis" gesetzt hast.</div>
-            <div class="form-error" id="t-progress-note-error" style="display:none"></div>
-            <button type="button" class="btn btn-secondary btn-sm" id="t-progress-note-save-btn" onclick="saveTopicProgressComposerBtn()">Zwischenstand speichern</button>
-          </div>
-          <div id="t-progress-reentry-mount"></div>
-        </div>
+        <div id="t-progress-composer"></div>
+        <div id="t-progress-timeline" style="margin-top:.5rem"></div>
       </div>
       <details class="more-details-native" id="t-more-details">
         <summary id="t-more-details-summary">Weitere Details</summary>

@@ -482,9 +482,7 @@ async function onTodoProgressEntrySaved(refType, refId, result) {
     if (refType === 'todo') await loadTodos(); else await loadMeetings();
   } catch (e) { toast(e.message || 'Aktualisierung fehlgeschlagen', 'error'); }
   render();
-  if (editTodoId && refType === 'todo' && refId === editTodoId) {
-    mountTodoProgressArea(todos.find(x => x.id === editTodoId));
-  }
+  remountEditModalProgressArea(refType, refId);
   // Server verarbeitet die KI-Zusammenfassung ggf. asynchron
   // (aiSummary.pending === true) — TSProgress.pollSummaries() wartet
   // bis zu 10x/2000ms auf das Ergebnis, danach wird einmal final neu
@@ -498,43 +496,59 @@ async function onTodoProgressEntrySaved(refType, refId, result) {
       if (refType === 'todo') await loadTodos(); else await loadMeetings();
     } catch { /* still non-fatal */ }
     render();
-    if (editTodoId && refType === 'todo' && refId === editTodoId) {
-      mountTodoProgressArea(todos.find(x => x.id === editTodoId));
-    }
+    remountEditModalProgressArea(refType, refId);
   }
 }
 
-function mountTodoProgressArea(t) {
-  const section   = document.getElementById('todo-progress-section');
-  const composerEl = document.getElementById('todo-progress-composer');
-  const timelineEl = document.getElementById('todo-progress-timeline');
+function remountEditModalProgressArea(refType, refId) {
+  if (refType === 'todo' && editTodoId && refId === editTodoId) {
+    mountTodoProgressArea(todos.find(x => x.id === editTodoId));
+  } else if (refType === 'topic' && editTopicId && refId === editTopicId) {
+    mountTopicProgressArea(getTopic(editTopicMid, editTopicId));
+  }
+}
+
+// Fortschrittsbereich im Todo-/Themen-Bearbeiten-Dialog: ein gemeinsamer,
+// selbstspeichernder Composer (TSProgress.mountInlineComposer) plus
+// Zeitstrahl (TSProgress.mountTimeline) fuer BEIDE Vorhaben-Typen - Themen
+// nutzten frueher ein abweichendes Muster (manueller Speichern-Button,
+// Rich-Text-Feld, Wiedereinstiegskarte), das zu Divergenz zwischen den
+// beiden gleichwertigen "Vorhaben"-Ansichten fuehrte (siehe CLAUDE.md,
+// "Wiederverwendung vor Neuentwicklung") - jetzt identisch fuer beide.
+function mountProgressArea(idPrefix, refType, item) {
+  const section   = document.getElementById(`${idPrefix}-progress-section`);
+  const composerEl = document.getElementById(`${idPrefix}-progress-composer`);
+  const timelineEl = document.getElementById(`${idPrefix}-progress-timeline`);
   if (!section) return;
   composerEl.innerHTML = '';
   timelineEl.innerHTML = '';
-  if (!t || !t.id) { section.style.display = 'none'; return; }
+  if (!item || !item.id) { section.style.display = 'none'; return; }
   section.style.display = '';
   if (!window.TSProgress) {
     timelineEl.innerHTML = '<p class="form-hint">Fortschrittsverlauf derzeit nicht verfügbar.</p>';
     return;
   }
-  if (!t.done && typeof TSProgress.mountInlineComposer === 'function') {
+  if (!item.done && typeof TSProgress.mountInlineComposer === 'function') {
     TSProgress.mountInlineComposer(composerEl, {
-      refType: 'todo', refId: t.id,
-      snoozedUntil: t.snoozedUntil || null,
-      done: !!t.done,
+      refType, refId: item.id,
+      snoozedUntil: item.snoozedUntil || null,
+      done: !!item.done,
       // Wie bei mountCardComposer: das Öffnen des Bearbeiten-Sheets für ein
-      // bestehendes Todo ist bereits die bewusste Nutzer-Aktion, das
+      // bestehendes Todo/Thema ist bereits die bewusste Nutzer-Aktion, das
       // Eingabefeld für einen neuen Zwischenstand soll deshalb sofort
       // sichtbar sein statt hinter dem 💬-Zwischentrigger (Nutzerfeedback).
       openOnMount: true,
-      onSaved: (result) => onTodoProgressEntrySaved('todo', t.id, result),
+      onSaved: (result) => onTodoProgressEntrySaved(refType, item.id, result),
       onError: (err) => toast(err?.message || 'Zwischenstand konnte nicht gespeichert werden', 'error'),
     });
   }
   if (typeof TSProgress.mountTimeline === 'function') {
-    TSProgress.mountTimeline(timelineEl, { refType: 'todo', refId: t.id, limit: 3 });
+    TSProgress.mountTimeline(timelineEl, { refType, refId: item.id, limit: 3 });
   }
 }
+
+function mountTodoProgressArea(t) { mountProgressArea('todo', 'todo', t); }
+function mountTopicProgressArea(t) { mountProgressArea('t', 'topic', t); }
 
 // ── Karten: Composer "Zwischenstand erfassen" (Story 6, Übersichtsliste) ─
 function mountCardComposer(container, refType, refId) {
@@ -2305,7 +2319,8 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           ${!isDone ? `
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openTodoModal('${t.id}')" title="Bearbeiten">${SVG.pencil}</button>
             <button class="btn btn-success btn-sm" onclick="openCompleteTodoModal('${t.id}')">${SVG.check} Erledigt</button>
-            <button class="btn btn-secondary btn-sm btn-icon" onclick="toggleTodoCardComposer('todo','${t.id}')" aria-label="Zwischenstand erfassen" title="Zwischenstand erfassen">${SVG.notes}</button>` : `
+            <button class="btn btn-secondary btn-sm btn-icon" onclick="toggleTodoCardComposer('todo','${t.id}')" aria-label="Zwischenstand erfassen" title="Zwischenstand erfassen">${SVG.notes}</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="openStackPushModal('todo','${t.id}')" title="Auf Stack legen (⌘⇧P)">📚</button>` : `
             <button class="btn btn-secondary btn-sm" onclick="reopenPersonalTodo('${t.id}')">↺ Öffnen</button>`}
           <details class="topic-overflow" onclick="event.stopPropagation()">
             <summary class="btn btn-secondary btn-sm btn-icon" title="Weitere Aktionen">⋯</summary>
@@ -2964,11 +2979,10 @@ async function saveTodoModal() {
     todoModalPresetThemeId = null;
     // Der Fortschritts-Composer ist seit dem Redesign "Übersichtlichere Todos
     // und Tasks" ein eigenständiger, selbst-speichernder Baustein
-    // (TSProgress.mountInlineComposer, siehe mountTodoProgressArea) - er hat
+    // (TSProgress.mountInlineComposer, siehe mountProgressArea) - er hat
     // seine eigene "Speichern"-Aktion und muss beim Speichern des Todos
-    // selbst nicht mehr committet werden (kein commitProgressComposer mehr
-    // für Todos; Topics nutzen das alte Muster weiterhin unverändert, siehe
-    // Abschlussbericht W2: #topic-modal nicht Teil dieses Redesigns).
+    // selbst nicht mehr committet werden. Themen nutzen seit der
+    // Vereinheitlichung denselben Composer (siehe saveTopicModal).
     closeTodoModal(true); render();
     await loadThemeDetail(); render();
     if (savedTodoId && !data.done) triggerThemeSuggestions('todo', savedTodoId);
@@ -3324,33 +3338,22 @@ function openTopicModal(mid, tid) {
   }
   document.getElementById('topic-modal').style.display = 'flex';
   // Fortschrittsbereich erscheint nur beim Bearbeiten eines bestehenden
-  // Themas (Arbeitspaket W2) — Erst-Fokus bleibt auf dem Titelfeld, das
-  // Mounten des Fortschrittsbereichs erfolgt danach.
-  setTimeout(() => {
-    document.getElementById('t-title').focus();
-    if (tid) openProgressEmbed('topic', 'topic', tid); else closeProgressEmbed('topic');
-  }, 50);
+  // Themas, identisch zum Todo-Modal (mountTodoProgressArea/
+  // mountTopicProgressArea teilen sich seit der Vereinheitlichung
+  // dieselbe Implementierung, siehe mountProgressArea).
+  mountTopicProgressArea(t);
+  setTimeout(() => { document.getElementById('t-title').focus(); }, 50);
 }
 
 function closeTopicModal() {
   document.getElementById('topic-modal').style.display = 'none';
-  closeProgressEmbed('topic');
 }
 
-// Datenverlustschutz (Arbeitspaket W2): ersetzt ALLE direkten Schließ-
-// Aufrufe für das Topic-Modal (×, Abbrechen, Overlay-Klick, Escape).
+// Ersetzt ALLE direkten Schließ-Aufrufe für das Topic-Modal (×, Abbrechen,
+// Overlay-Klick, Escape) - analog zum Todo-Modal gibt es fuer den
+// Zwischenstand-Composer selbst keine eigene Verwerfen-Rueckfrage mehr (der
+// Composer ist selbstspeichernd, siehe mountProgressArea).
 function requestCloseTopicModal() {
-  const html = getRT('t-progress-note');
-  if (window.TSProgress && !TSProgress.isEffectivelyEmptyHtml(html)) {
-    genericConfirm(
-      'Zwischenstand verwerfen?',
-      'Dein eingetippter Zwischenstand-Text ist noch nicht gespeichert und geht verloren, wenn du fortfährst.',
-      'Verwerfen', 'Weiterbearbeiten'
-    ).then((confirmed) => {
-      if (confirmed) { setRT('t-progress-note', ''); closeTopicModal(); }
-    });
-    return;
-  }
   closeTopicModal();
 }
 
@@ -3360,9 +3363,9 @@ function topicModalOverlayClick(e) {
   const progressSection = document.getElementById('t-progress-section');
   const hasText =
     [...modal.querySelectorAll('input[type="text"], input[type="email"], textarea')]
+      .filter(el => !(progressSection && progressSection.contains(el)))
       .some(el => el.value.trim() !== '') ||
     [...modal.querySelectorAll('.rt-content')]
-      .filter(el => !(progressSection && progressSection.contains(el)))
       .some(el => (el.textContent || '').trim() !== '');
   if (hasText) return;
   requestCloseTopicModal();
@@ -3412,24 +3415,16 @@ async function saveTopicModal() {
       getMeeting(editTopicMid).topics.push(t);
       savedTopicId = t.id;
       // Sicherheitsfix (Security Review, Mittel, Fund 2): editTopicId SOFORT
-      // nach erfolgreichem Anlegen auf die neu vergebene Id setzen, BEVOR
-      // der Fortschritts-Composer committet wird — analog zu saveTodoModal()
-      // (siehe dortiger Kommentar für die ausführliche Begründung inkl. der
-      // bewussten Entscheidung gegen einen erneuten openProgressEmbed(...)).
+      // nach erfolgreichem Anlegen auf die neu vergebene Id setzen - analog
+      // zu saveTodoModal() (siehe dortiger Kommentar).
       editTopicId = savedTopicId;
     }
-
-    // Fortschritts-Composer NACH erfolgreichem Speichern des Themas, VOR dem
-    // Schließen des Modals committen (Arbeitspaket W2). Schlägt das fehl,
-    // bleibt das Modal offen und der Text im Composer erhalten.
-    const progressResult = await commitProgressComposer('topic', 'topic', savedTopicId, data.snoozedUntil);
-
-    if (progressResult === 'failed') {
-      toast('Thema gespeichert — der Zwischenstand konnte noch nicht gespeichert werden.', 'error');
-    } else {
-      closeTopicModal();
-      toast(wasNewTopic ? 'Thema hinzugefügt' : 'Thema aktualisiert');
-    }
+    // Der Fortschritts-Composer ist seit der Vereinheitlichung mit dem
+    // Todo-Modal ein eigenständiger, selbst-speichernder Baustein (siehe
+    // mountProgressArea) und muss beim Speichern des Themas selbst nicht
+    // mehr committet werden (kein commitProgressComposer mehr für Themen).
+    closeTopicModal();
+    toast(wasNewTopic ? 'Thema hinzugefügt' : 'Thema aktualisiert');
     render();
     if (savedTopicId && !data.done) triggerThemeSuggestions('topic', savedTopicId);
   } catch(e) { toast(e.message, 'error'); }
@@ -5595,10 +5590,9 @@ function onTodoSnoozeChange() {
   cb.disabled = !hasDate;
   if (!hasDate) cb.checked = false;
   document.getElementById('todo-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
-  // Hinweis im Fortschritts-Composer ein-/ausblenden (Arbeitspaket W2) — kein
-  // Seiteneffekt auf den Composer-Text selbst.
-  const snoozeHint = document.getElementById('todo-progress-snooze-hint');
-  if (snoozeHint) snoozeHint.style.display = hasDate ? '' : 'none';
+  // Der Schlafen-bis-Hinweis im Zwischenstand-Composer wird vom Composer
+  // selbst gerendert (siehe ComposerInstance.snoozedFuture in progress.js),
+  // kein externes Hinweis-Element hier mehr nötig.
 }
 function onTopicSnoozeChange() {
   const hasDate = !!document.getElementById('t-snooze').value;
@@ -5606,8 +5600,8 @@ function onTopicSnoozeChange() {
   cb.disabled = !hasDate;
   if (!hasDate) cb.checked = false;
   document.getElementById('t-snooze-time').style.display = (hasDate && cb.checked) ? '' : 'none';
-  const snoozeHint = document.getElementById('t-progress-snooze-hint');
-  if (snoozeHint) snoozeHint.style.display = hasDate ? '' : 'none';
+  // Analog zu onTodoSnoozeChange(): der Hinweis kommt jetzt aus dem
+  // Composer selbst (siehe mountProgressArea).
 }
 
 function onPopResolutionChange() {
@@ -5899,208 +5893,12 @@ function showProgressRetryToast(msg, retryFn) {
   setTimeout(() => el.remove(), 9000);
 }
 
-// ── Fortschrittsbereich eingebettet in Todo-/Themen-Modal (Arbeitspaket W2) ──
-// Ersetzt das frühere separate Verlaufs-Panel: der Zeitstrahl (inkl. Composer
-// für einen neuen Zwischenstand, Nächster-Schritt-Kopf und
-// Wiedereinstiegskarte) ist fest unterhalb der Beschreibung im jeweiligen
-// Bearbeiten-Modal eingebettet und nur beim Bearbeiten eines bestehenden
-// Todos/Themas sichtbar.
-
-// Sicherheitsfix (Security Review, Mittel, Fund 1): der pending clientToken
-// eines Composer-Commits wird an das konkrete Vorhaben (refType/refId)
-// gebunden, nicht nur an den UI-Slot ('todo'|'topic'). Ohne diese Bindung
-// würde ein Token, der für ein Vorhaben erzeugt, aber wegen eines Netzwerk-
-// fehlers nie zugestellt wurde, bei einem nachfolgenden Speichern-Versuch
-// für ein ANDERES Vorhaben (z. B. ein zwischenzeitlich neu angelegtes Todo)
-// wiederverwendet — der Zwischenstand würde serverseitig (Idempotenz über
-// user_id + client_token) am falschen Vorhaben landen. Schlüsselformat
-// analog zur bestehenden nativen App-Lösung (ProgressStore.pendingEntryTokens,
-// dort `refType:refId`), hier zusätzlich um den UI-Slot ergänzt.
-const progressComposerToken = {}; // `${key}:${refType}:${refId}` -> pending clientToken des Composers
-function progressComposerTokenKey(key, refType, refId) { return `${key}:${refType}:${refId}`; }
-// Verwirft alle für einen UI-Slot ('todo'|'topic') gemerkten Tokens, unabhängig
-// vom zuletzt referenzierten Vorhaben — wird beim Öffnen/Schließen des
-// eingebetteten Fortschrittsbereichs aufgerufen, da closeProgressEmbed(key)
-// selbst kein refType/refId kennt (siehe Vertrag von openProgressEmbed/
-// closeProgressEmbed weiter unten).
-function clearProgressComposerTokensForSlot(key) {
-  const prefix = `${key}:`;
-  Object.keys(progressComposerToken).forEach(k => { if (k.startsWith(prefix)) delete progressComposerToken[k]; });
-}
-const timelineHandles = {};       // key -> Handle von TSProgress.mountTimeline
-const reentryHandles  = {};       // key -> Handle von TSProgress.mountReentryCard
-
-// Die Feld-Ids im Topic-Modal folgen der bestehenden Namenskonvention dieses
-// Modals (z. B. "t-title" statt "todo-title") — deshalb hier eine Zuordnung
-// von "key" auf den tatsächlichen Id-Präfix, statt den Key direkt als
-// Präfix zu verwenden.
-const PROGRESS_EMBED_ID_PREFIX = { todo: 'todo', topic: 't' };
-
-function progressEmbedIds(key) {
-  const p = PROGRESS_EMBED_ID_PREFIX[key] || key;
-  return {
-    section: `${p}-progress-section`,
-    timelineMount: `${p}-progress-timeline-mount`,
-    composerSlot: `${p}-progress-composer-slot`,
-    note: `${p}-progress-note`,
-    noteHint: `${p}-progress-note-hint`,
-    noteError: `${p}-progress-note-error`,
-    noteSaveBtn: `${p}-progress-note-save-btn`,
-    reentryMount: `${p}-progress-reentry-mount`,
-  };
-}
-
-// Bettet den Fortschrittsverlauf für ein bestehendes Vorhaben ein. `key`
-// identifiziert die Composer-/Handle-Instanz ('todo'|'topic'), `refType`/
-// `refId` das Vorhaben selbst (siehe TSProgress.mountTimeline-Vertrag).
-function openProgressEmbed(key, refType, refId) {
-  if (!isValidProgressRefType(refType) || !refId) return;
-  closeProgressEmbed(key); // vorherigen Mount-Zustand (anderes Vorhaben) sicher aufräumen
-  const ids = progressEmbedIds(key);
-  const section = document.getElementById(ids.section);
-  const composerSlotEl = document.getElementById(ids.composerSlot);
-  const reentryMountEl = document.getElementById(ids.reentryMount);
-  const timelineMountEl = document.getElementById(ids.timelineMount);
-  if (!section || !composerSlotEl || !reentryMountEl || !timelineMountEl) return;
-
-  section.style.display = '';
-  setRT(ids.note, '');
-  const errEl = document.getElementById(ids.noteError);
-  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
-  const hintEl = document.getElementById(ids.noteHint);
-  if (hintEl) hintEl.style.display = 'none';
-  clearProgressComposerTokensForSlot(key);
-
-  if (!window.TSProgress) { toast('Fortschrittsmodul ist noch nicht geladen — bitte kurz warten.', 'error'); return; }
-
-  // Reihenfolge gemäß mountTimeline-Vertrag: mountReentryCard zuerst separat
-  // mounten, den befüllten Container danach unverändert als reentrySlot an
-  // mountTimeline übergeben (siehe progress-dev.html).
-  reentryHandles[key] = TSProgress.mountReentryCard(reentryMountEl, {
-    refType, refId,
-    onRequestCompose: () => {
-      const noteEl = document.getElementById(ids.note);
-      if (noteEl) {
-        noteEl.focus();
-        if (typeof noteEl.scrollIntoView === 'function') noteEl.scrollIntoView({ block: 'nearest' });
-      }
-    },
-  });
-  timelineHandles[key] = TSProgress.mountTimeline(timelineMountEl, {
-    refType, refId, limit: 3,
-    composerSlot: composerSlotEl,
-    reentrySlot: reentryMountEl,
-  });
-}
-
-// Hängt beide Handles aus (Reentry zuerst, dann Timeline, siehe W1-Hinweis)
-// und blendet den Fortschrittsbereich wieder aus. Sicher mehrfach aufrufbar.
-function closeProgressEmbed(key) {
-  const ids = progressEmbedIds(key);
-  if (reentryHandles[key]) { reentryHandles[key].destroy(); delete reentryHandles[key]; }
-  if (timelineHandles[key]) { timelineHandles[key].destroy(); delete timelineHandles[key]; }
-  clearProgressComposerTokensForSlot(key);
-  // Sicherheitsfix (Security Review, Niedrig, Fund 4): Notiz-Feld und
-  // Hinweis-/Fehleranzeigen beim Ausblenden genauso zurücksetzen wie beim
-  // Öffnen (siehe openProgressEmbed) — sonst bleibt beim nächsten Anlegen
-  // eines NEUEN Todos/Themas (Section erscheint erst gar nicht) Text aus
-  // einer vorherigen Bearbeiten-Sitzung im ausgeblendeten Composer-Feld
-  // stehen und könnte fälschlich am neuen Vorhaben committet werden.
-  setRT(ids.note, '');
-  const errEl = document.getElementById(ids.noteError);
-  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
-  const hintEl = document.getElementById(ids.noteHint);
-  if (hintEl) hintEl.style.display = 'none';
-  const section = document.getElementById(ids.section);
-  if (section) section.style.display = 'none';
-}
-
-function updateProgressComposerCharHint(key) {
-  const ids = progressEmbedIds(key);
-  const el = document.getElementById(ids.note);
-  const hintEl = document.getElementById(ids.noteHint);
-  if (!el || !hintEl) return;
-  const len = (el.textContent || '').length;
-  if (len > 0) {
-    hintEl.textContent = `${len} / 5.000 Zeichen (ungefähr)`;
-    hintEl.style.display = '';
-  } else {
-    hintEl.style.display = 'none';
-  }
-}
-
-// Committet den Inhalt des Composers als neuen Zwischenstand. Liefert
-// 'noop' (kein Inhalt, kein Request), 'saved' oder 'failed'. Wird sowohl vom
-// eigenständigen "Zwischenstand speichern"-Button als auch nach erfolgreichem
-// Todo-/Themen-Speichern aufgerufen — nach einem erfolgreichen Commit ist der
-// Composer leer, ein zweiter Aufruf ist daher automatisch ein no-op (kein
-// doppelter Eintrag bei Composer-Save gefolgt von Formular-Speichern).
-async function commitProgressComposer(key, refType, refId, snoozedUntilValue) {
-  const ids = progressEmbedIds(key);
-  if (!isValidProgressRefType(refType) || !refId) return 'noop';
-  // Sicherheitsfix (Security Review, Niedrig, Fund 4): ist der eingebettete
-  // Fortschrittsbereich für diesen Slot gerade ausgeblendet, wird NIE
-  // committet — ein sichtbarer Composer ist Voraussetzung dafür, dass der
-  // Inhalt tatsächlich vom Nutzer für DIESES Vorhaben eingegeben wurde
-  // (verhindert defensiv, dass Restinhalt aus einer anderen Sitzung an ein
-  // frisch angelegtes Todo/Thema committet wird, siehe auch closeProgressEmbed).
-  const section = document.getElementById(ids.section);
-  if (!section || section.style.display === 'none') return 'noop';
-  const html = getRT(ids.note);
-  if (!window.TSProgress || TSProgress.isEffectivelyEmptyHtml(html)) return 'noop';
-  const errEl = document.getElementById(ids.noteError);
-  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
-  const source = TSProgress.deriveEntrySource({ snoozedUntil: snoozedUntilValue });
-  // Sicherheitsfix (Security Review, Mittel, Fund 1): Token an refType/refId
-  // binden (siehe Deklaration von progressComposerToken oben) statt nur an
-  // den UI-Slot, damit ein Retry nie den Token eines anderen Vorhabens nutzt.
-  const tokenKey = progressComposerTokenKey(key, refType, refId);
-  if (!progressComposerToken[tokenKey]) progressComposerToken[tokenKey] = makeProgressClientToken();
-  try {
-    await TSHost.api('POST', `/api/progress/${encodeURIComponent(refType)}/${encodeURIComponent(refId)}/entries`, {
-      body: html, source, clientToken: progressComposerToken[tokenKey],
-    });
-    setRT(ids.note, '');
-    updateProgressComposerCharHint(key);
-    delete progressComposerToken[tokenKey];
-    if (timelineHandles[key]) timelineHandles[key].reload();
-    if (reentryHandles[key]) reentryHandles[key].reload();
-    onProgressChangedHost(refType, refId);
-    return 'saved';
-  } catch (e) {
-    if (errEl) {
-      errEl.textContent = e.message || 'Zwischenstand konnte nicht gespeichert werden.';
-      errEl.style.display = '';
-    }
-    return 'failed';
-  }
-}
-
-// Eigenständiger Composer-Speichern-Button: speichert NUR den Zwischenstand,
-// ohne das gesamte Todo/Thema-Formular zu speichern.
-async function saveTodoProgressComposerBtn() {
-  if (!editTodoId) return;
-  const ids = progressEmbedIds('todo');
-  setBusy(ids.noteSaveBtn, true);
-  try {
-    const r = await commitProgressComposer('todo', 'todo', editTodoId, document.getElementById('todo-snooze').value);
-    if (r === 'saved') toast('Zwischenstand gespeichert');
-  } finally {
-    setBusy(ids.noteSaveBtn, false);
-  }
-}
-
-async function saveTopicProgressComposerBtn() {
-  if (!editTopicId) return;
-  const ids = progressEmbedIds('topic');
-  setBusy(ids.noteSaveBtn, true);
-  try {
-    const r = await commitProgressComposer('topic', 'topic', editTopicId, document.getElementById('t-snooze').value);
-    if (r === 'saved') toast('Zwischenstand gespeichert');
-  } finally {
-    setBusy(ids.noteSaveBtn, false);
-  }
-}
+// ── Fortschrittsbereich eingebettet in Todo-/Themen-Modal ──────────────
+// Der Zeitstrahl und der selbstspeichernde Composer (siehe mountProgressArea
+// oben) sind fest unterhalb der Beschreibung im jeweiligen Bearbeiten-Modal
+// eingebettet und nur beim Bearbeiten eines bestehenden Todos/Themas
+// sichtbar. Todo und Thema nutzen seit der Vereinheitlichung denselben Code
+// (kein separates Slot-/Token-/Reentry-Handling pro Vorhaben-Typ mehr).
 
 // ── End-of-Day Review & Stack History views ─────────────────
 function openEodReview()   { selectView('__eod__'); }
@@ -6852,12 +6650,12 @@ document.getElementById('login-pw').addEventListener('keydown',   e => { if (e.k
 document.getElementById('login-user').addEventListener('keydown', e => { if (e.key==='Enter') document.getElementById('login-pw').focus(); });
 
 // ── Init ─────────────────────────────────────────────────────
-// todo-progress-note entfällt (Redesign "Übersichtlichere Todos und Tasks":
-// der Fortschritts-Composer im Todo-Modal ist jetzt TSProgress.mountInline-
-// Composer, kein eigenes rt-content-Feld mehr). t-progress-note/pop-progress-
-// note bleiben unverändert (Themen-/Pop-Dialog nicht Teil dieses Redesigns).
+// todo-progress-note/t-progress-note entfallen (der Fortschritts-Composer
+// in beiden Bearbeiten-Modalen ist TSProgress.mountInlineComposer, ein
+// einfaches <textarea> ohne eigenes rt-content-Feld, siehe mountProgressArea).
+// pop-progress-note (Pop-Dialog) ist davon unberührt.
 ['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc',
-  'progress-entry-body','t-progress-note','pop-progress-note']
+  'progress-entry-body','pop-progress-note']
   .forEach(id => initRtToolbar(id+'-tb', id));
 initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });
 initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });

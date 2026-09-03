@@ -313,17 +313,19 @@ test('renderPersonalTodoCard: Erledigt-Karten haben keine Fortschrittszeile und 
   assert.doesNotMatch(html, /toggleTodoCardComposer/);
 });
 
-test('renderPersonalTodoCard: offene Karten zeigen "Zwischenstand erfassen" als Primäraktion, "Auf Stack legen" wandert ins Ueberlaufmenue', async () => {
+test('renderPersonalTodoCard: offene Karten zeigen "Zwischenstand erfassen" als Primäraktion und einen direkten "Auf Stack legen"-Button, analog zur Themen-Karte', async () => {
   const { window } = loadApp();
   await tick();
   const openTodo = { id: 'o1', title: 'Offen', description: '', done: false };
   const html = window.renderPersonalTodoCard(openTodo, false, {});
   assert.match(html, /toggleTodoCardComposer\('todo','o1'\)/);
   assert.match(html, /aria-label="Zwischenstand erfassen"/);
-  // "Auf Stack legen" ist jetzt Teil des Ueberlaufmenues (topic-overflow-menu), nicht mehr eigenstaendiger Button.
+  // Direkter Schnellzugriffs-Button (wie bei renderTopicCard), zusaetzlich
+  // zum bestehenden Ueberlaufmenue-Eintrag.
+  assert.match(html, /openStackPushModal\('todo','o1'\)/);
   const overflowIdx = html.indexOf('topic-overflow-menu');
-  const stackIdx = html.indexOf('Auf Stack legen');
-  assert.ok(overflowIdx > -1 && stackIdx > overflowIdx);
+  const stackIdxInOverflow = html.indexOf('Auf Stack legen', overflowIdx);
+  assert.ok(overflowIdx > -1 && stackIdxInOverflow > overflowIdx, 'Ueberlaufmenue-Eintrag bleibt zusaetzlich erhalten');
 });
 
 test('AI-Einstellungen: neue Feature-Labels sind registriert und werden ueber das bestehende, datengetriebene Rendering dargestellt', async () => {
