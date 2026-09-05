@@ -365,3 +365,124 @@ test('Legacy-Shim: gleiche Sanitizing-/Längenprüfung wie Infoblöcke (body_too
   assert.equal(r.status, 400);
   assert.equal(r.body.code, 'body_too_long');
 });
+
+// ── Code-Review-Fund "Kritisch #2": Umbenennen von "Zuständigkeit" ────────
+
+test('Legacy-Shim: description setzen funktioniert weiterhin (kein 500), nachdem die Rubrik "Zuständigkeit" umbenannt wurde', async (t) => {
+  const { app, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+
+  const cats = await agent.get('/api/contact-categories');
+  const zustaendigkeit = cats.body.categories.find((c) => c.label === 'Zuständigkeit');
+  const renamed = await agent.put(`/api/contact-categories/${zustaendigkeit.id}`).send({ label: 'Verantwortlich' });
+  assert.equal(renamed.status, 200, 'Umbenennen von "Zuständigkeit" selbst bleibt erlaubt (nur "Sonstiges" ist geschützt)');
+
+  // POST mit description: darf NICHT mit 500 fehlschlagen, obwohl die
+  // Rubrik "Zuständigkeit" unter diesem Label nicht mehr existiert.
+  const created = await agent.post('/api/contacts').send({ name: 'Max', description: '<p>Neue Notiz</p>' });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.description, '<p>Neue Notiz</p>');
+
+  const blocks = await agent.get(`/api/contacts/${created.body.id}/info-blocks`);
+  const legacy = blocks.body.blocks.find((b) => b.isLegacyDescription);
+  assert.ok(legacy, 'Legacy-Block muss trotzdem angelegt werden');
+  assert.equal(legacy.categoryLabel, 'Sonstiges', 'weicht mangels "Zuständigkeit" auf die Auffangrubrik aus');
+
+  // PUT mit description auf einem ANDEREN Kontakt: ebenfalls kein 500.
+  const other = await agent.post('/api/contacts').send({ name: 'Bob' });
+  const updated = await agent.put(`/api/contacts/${other.body.id}`).send({ name: 'Bob', description: '<p>Auch das</p>' });
+  assert.equal(updated.status, 200);
+  assert.equal(updated.body.description, '<p>Auch das</p>');
+});
+
+// ── Code-Review-Fund "Hoch #3": Teil-Update-Konvention bei PUT /contacts/:id ──
+
+test('PUT /contacts/:id: Teil-Update - nicht mitgeschickte Felder bleiben unverändert (kein stilles Leeren)', async (t) => {
+  const { app, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const created = await agent.post('/api/contacts').send({ name: 'Max', role: 'Einkauf', email: 'max@example.com' });
+  const contactId = created.body.id;
+
+  const onlyName = await agent.put(`/api/contacts/${contactId}`).send({ name: 'Max Mustermann' });
+  assert.equal(onlyName.status, 200);
+  assert.equal(onlyName.body.name, 'Max Mustermann');
+  assert.equal(onlyName.body.role, 'Einkauf', 'role darf NICHT geleert werden, wenn nicht mitgeschickt');
+  assert.equal(onlyName.body.email, 'max@example.com', 'email darf NICHT geleert werden, wenn nicht mitgeschickt');
+
+  const onlyEmail = await agent.put(`/api/contacts/${contactId}`).send({ email: 'x@example.com' });
+  assert.equal(onlyEmail.status, 200);
+  assert.equal(onlyEmail.body.name, 'Max Mustermann', 'name bleibt vom vorherigen Update erhalten');
+  assert.equal(onlyEmail.body.role, 'Einkauf');
+  assert.equal(onlyEmail.body.email, 'x@example.com');
+});
+
+test('PUT /contacts/:id: explizites Leeren eines Feldes (leerer String) bleibt möglich', async (t) => {
+  const { app, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const created = await agent.post('/api/contacts').send({ name: 'Max', role: 'Einkauf', email: 'max@example.com' });
+  const contactId = created.body.id;
+
+  const cleared = await agent.put(`/api/contacts/${contactId}`).send({ name: 'Max', role: '', email: '' });
+  assert.equal(cleared.status, 200);
+  assert.equal(cleared.body.role, '');
+  assert.equal(cleared.body.email, '');
+});
+
+test('PUT /contacts/:id: Teil-Update ohne name -> 200 mit Bestandsname statt 400 name_required', async (t) => {
+  const { app, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const created = await agent.post('/api/contacts').send({ name: 'Max' });
+  const contactId = created.body.id;
+
+  const r = await agent.put(`/api/contacts/${contactId}`).send({ email: 'x@example.com' });
+  assert.equal(r.status, 200, 'darf NICHT mit 400 name_required fehlschlagen, wenn name nicht mitgeschickt wird');
+  assert.equal(r.body.name, 'Max');
+  assert.equal(r.body.email, 'x@example.com');
+});
+
+// ── Code-Review-Fund "Mittel #4": search_index-Trigger-Override nachholen ──
+
+test('ensureContactNoteTriggers: holt den search_index-Trigger-Override nach, falls search_index beim ersten Lauf fehlte, und reindexiert bestehende Kontakte', async (t) => {
+  const { app, db, dir } = buildTestApp({ withSearchIndex: false });
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const created = await agent.post('/api/contacts').send({ name: 'Max', role: 'Einkauf', email: 'max@example.com' });
+  const contactId = created.body.id;
+  const cats = await agent.get('/api/contact-categories');
+  const catA = cats.body.categories[0];
+  await agent.post(`/api/contacts/${contactId}/info-blocks`).send({ categoryId: catA.id, body: '<p>Zustaendig fuer APAC</p>' });
+
+  // search_index existierte beim ersten runContactMigrations()-Lauf NICHT -
+  // wird jetzt (analog db/schema.js beim FTS5-Erststart) nachträglich
+  // angelegt, MIT der alten, description-basierten Trigger-Formel.
+  db.exec(`CREATE VIRTUAL TABLE search_index USING fts5(ref_type UNINDEXED, ref_id UNINDEXED, user_id UNINDEXED, title, body);`);
+  db.exec(`
+    CREATE TRIGGER trg_search_contacts_ai AFTER INSERT ON contacts BEGIN
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('contact', new.id, new.user_id, new.name,
+        COALESCE(new.role,'') || ' ' || COALESCE(new.email,'') || ' ' || COALESCE(new.description,''));
+    END;
+    CREATE TRIGGER trg_search_contacts_au AFTER UPDATE ON contacts BEGIN
+      DELETE FROM search_index WHERE ref_type='contact' AND ref_id=old.id;
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('contact', new.id, new.user_id, new.name,
+        COALESCE(new.role,'') || ' ' || COALESCE(new.email,'') || ' ' || COALESCE(new.description,''));
+    END;
+  `);
+  // Zu diesem Zeitpunkt (VOR ensureContactNoteTriggers) fehlt der Infoblock-Text
+  // im search_index, weil er nie über die alte Formel erfasst wurde.
+  assert.equal(searchIndexBody(db, contactId), null);
+
+  ensureContactNoteTriggers(db);
+
+  const body = searchIndexBody(db, contactId);
+  assert.match(body, /Zustaendig fuer APAC/, 'Reindex muss bereits vorhandene Kontakte nachträglich erfassen');
+  assert.match(body, /Einkauf/);
+
+  // Der Override muss auch fortlaufend greifen (nicht nur beim einmaligen Reindex).
+  await agent.post(`/api/contacts/${contactId}/info-blocks`).send({ categoryId: catA.id, body: '<p>Weiterer Text</p>' });
+  const bodyAfter = searchIndexBody(db, contactId);
+  assert.match(bodyAfter, /Weiterer Text/);
+});

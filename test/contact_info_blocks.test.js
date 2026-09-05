@@ -155,6 +155,29 @@ test('POST info-blocks: 400 body_too_long bei Roh-HTML > 50000 Zeichen', async (
   assert.equal(r.body.code, 'body_too_long');
 });
 
+test('POST info-blocks: body_too_long liefert für Roh-HTML- und Klartext-Grenze unterscheidbare Meldungen mit korrektem Grenzwert (Code-Review-Fund "Mittel #5")', async (t) => {
+  const { app, db, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  makeContact(db, { id: 'c1' });
+  const agent = await loginAgent(app);
+  const categoryId = await firstCategoryId(agent);
+
+  const rawTooLong = await agent.post('/api/contacts/c1/info-blocks')
+    .send({ categoryId, body: '<p>' + 'a'.repeat(50001) + '</p>' });
+  assert.equal(rawTooLong.status, 400);
+  assert.equal(rawTooLong.body.code, 'body_too_long');
+  assert.match(rawTooLong.body.error, /50000/, 'Meldung muss den tatsächlich verletzten Grenzwert (50000, roh) nennen');
+  assert.doesNotMatch(rawTooLong.body.error, /\b5000\b(?!0)/, 'Meldung darf NICHT fälschlich 5000 nennen');
+
+  const textTooLong = await agent.post('/api/contacts/c1/info-blocks')
+    .send({ categoryId, body: `<p>${'a'.repeat(5001)}</p>` });
+  assert.equal(textTooLong.status, 400);
+  assert.equal(textTooLong.body.code, 'body_too_long');
+  assert.match(textTooLong.body.error, /5000/, 'Meldung muss den tatsächlich verletzten Grenzwert (5000, Klartext) nennen');
+
+  assert.notEqual(rawTooLong.body.error, textTooLong.body.error, 'die beiden Grenzwertverletzungen müssen unterscheidbare Meldungen liefern');
+});
+
 test('POST info-blocks: 201 legt Infoblock an, sortOrder fortlaufend je Rubrik, sanitized', async (t) => {
   const { app, db, dir } = buildTestApp();
   t.after(() => cleanup(dir));

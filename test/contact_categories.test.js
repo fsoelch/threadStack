@@ -268,14 +268,58 @@ test('DELETE /contact-categories/:id: "Sonstiges" selbst kann bei Nutzung nicht 
   assert.equal(r.body.code, 'category_fallback_protected');
 });
 
-test('DELETE /contact-categories/:id: "Sonstiges" OHNE Nutzung kann gelöscht werden', async (t) => {
+test('DELETE /contact-categories/:id: "Sonstiges" ist auch OHNE Nutzung geschützt (409, nicht 200)', async (t) => {
+  // Code-Review-Fund "Kritisch #1": der Schutz der Auffangrubrik hing zuvor
+  // an usage>0 - eine ungenutzte "Sonstiges" ließ sich löschen (200) und
+  // brach danach JEDE weitere Rubrik-Löschung mit Infoblöcken (500), weil
+  // ensureDefaultCategories() ein No-Op ist, sobald andere Rubriken existieren.
   const { app, dir } = buildTestApp();
   t.after(() => cleanup(dir));
   const agent = await loginAgent(app);
   const cats = await agent.get('/api/contact-categories');
   const sonstiges = cats.body.categories.find((c) => c.label === 'Sonstiges');
   const r = await agent.delete(`/api/contact-categories/${sonstiges.id}`);
-  assert.equal(r.status, 200);
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'category_fallback_protected');
+
+  const stillThere = await agent.get('/api/contact-categories');
+  assert.ok(stillThere.body.categories.some((c) => c.id === sonstiges.id), '"Sonstiges" darf weiterhin existieren');
+});
+
+test('DELETE /contact-categories/:id: nach fälschlichem Löschversuch von "Sonstiges" funktioniert eine weitere Rubrik-Löschung mit Infoblöcken weiterhin (kein 500)', async (t) => {
+  // Regressionstest für die Folgeschäden aus Fund "Kritisch #1": eine
+  // WEITERE genutzte Rubrik muss sich weiterhin sauber umhängen und löschen
+  // lassen, nachdem zuvor versucht wurde, "Sonstiges" zu löschen.
+  const { app, db, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const cats = await agent.get('/api/contact-categories');
+  const sonstiges = cats.body.categories.find((c) => c.label === 'Sonstiges');
+  await agent.delete(`/api/contact-categories/${sonstiges.id}`); // jetzt: 409, kein Effekt
+
+  const created = await agent.post('/api/contact-categories').send({ label: 'Genutzt' });
+  const categoryId = created.body.category.id;
+  makeContact(db, { id: 'c1' });
+  await agent.post('/api/contacts/c1/info-blocks').send({ categoryId, body: '<p>Info</p>' });
+
+  const r = await agent.delete(`/api/contact-categories/${categoryId}?confirm=true`);
+  assert.equal(r.status, 200, 'darf NICHT mit 500 fehlschlagen');
+  assert.equal(r.body.reassignedCount, 1);
+  assert.ok(r.body.fallbackCategoryId);
+});
+
+test('PUT /contact-categories/:id: "Sonstiges" kann nicht umbenannt werden (409, sonst würde Fund "Kritisch #1" umgangen)', async (t) => {
+  const { app, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const cats = await agent.get('/api/contact-categories');
+  const sonstiges = cats.body.categories.find((c) => c.label === 'Sonstiges');
+  const r = await agent.put(`/api/contact-categories/${sonstiges.id}`).send({ label: 'Umbenannt' });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'category_fallback_protected');
+
+  const stillThere = await agent.get('/api/contact-categories');
+  assert.ok(stillThere.body.categories.some((c) => c.label === 'Sonstiges'), 'Label darf sich nicht geändert haben');
 });
 
 test('Fremder Nutzer sieht/ändert Rubriken des anderen Nutzers nicht (404, keine Existenz-Enumeration)', async (t) => {
