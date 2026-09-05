@@ -75,6 +75,16 @@ struct TopicFormView: View {
     // bereits angelegte Thema laufen statt erneut createTopicReturning
     // aufzurufen (das wuerde sonst ein Duplikat anlegen).
     @State private var createdId: String?
+    // Arbeitspaket A1 ("Erweiterung Ansprechpartner-Konzept"): Zuständigkeit
+    // (Ansprechpartner) — Feature-Parität zu `TodoFormView` (siehe dortiger
+    // Kommentar, identisches Verhalten).
+    @State private var contactIds: Set<String> = []
+    @State private var showContactPicker = false
+    /// Ziel eines Chip-Taps in `contactsSection` — öffnet die
+    /// Ansprechpartner-Ansicht (Vertrag: "Anzeige zugeordneter Kontakte als
+    /// Chips/Liste mit Navigation zur Kontaktansicht"), identisch zu
+    /// `TodoFormView` (Feature-Parität).
+    @State private var contactDetailTarget: Contact?
 
     private var detailsSummaryText: String? {
         TopicFormDetailsSummary.summaryText(
@@ -98,6 +108,9 @@ struct TopicFormView: View {
                 }
                 Section("Fortschritt") {
                     progressSection
+                }
+                Section("Ansprechpartner") {
+                    contactsSection
                 }
                 Section {
                     Toggle("Als Todo markieren", isOn: $isTodo)
@@ -143,7 +156,74 @@ struct TopicFormView: View {
                     description = newHTML
                 }
             }
+            .sheet(isPresented: $showContactPicker) {
+                ContactAssignmentPickerSheet(initialSelection: contactIds) { selection in
+                    contactIds = selection
+                }
+            }
+            .task { await loadInitialAssignments() }
         }
+    }
+
+    private var contactsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                showContactPicker = true
+            } label: {
+                HStack {
+                    Text(contactsSummaryText)
+                        .foregroundStyle(contactIds.isEmpty ? .secondary : .primary)
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityLabel("Ansprechpartner: \(contactsSummaryText)")
+            .accessibilityHint("Öffnet die Ansprechpartner-Auswahl.")
+            if !assignedContacts.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(assignedContacts) { contact in
+                            contactChip(contact)
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(item: $contactDetailTarget) { ContactDetailView(contact: $0) }
+    }
+
+    private var assignedContacts: [Contact] {
+        contactIds.compactMap { id in state.contacts.first(where: { $0.id == id }) }
+    }
+
+    private var contactsSummaryText: String {
+        contactIds.isEmpty ? "Keine Ansprechpartner ausgewählt" : "\(contactIds.count) Ansprechpartner"
+    }
+
+    private func contactChip(_ contact: Contact) -> some View {
+        Button {
+            contactDetailTarget = contact
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "person.fill").font(.system(size: 8))
+                Text(contact.name)
+            }
+            .scaledFont(.caption2).fontWeight(.medium)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(DS.pink.opacity(0.1))
+            .foregroundStyle(DS.pink)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(contact.name) öffnen")
+        .accessibilityHint("Öffnet die Ansprechpartner-Ansicht.")
+    }
+
+    /// Lädt die bereits bestehende Zuständigkeits-Zuordnung EINMALIG beim
+    /// Öffnen eines bestehenden Themas (Neuanlage: `contactIds` startet leer).
+    private func loadInitialAssignments() async {
+        guard let t = topic else { return }
+        contactIds = Set((try? await state.loadAssignments(refType: "topic", refId: t.id))?.map(\.contactId) ?? [])
     }
 
     @ViewBuilder
@@ -305,8 +385,19 @@ struct TopicFormView: View {
                 let progressResult = await progressComposer.commit(
                     store: progressStore, refType: "topic", refId: savedId, hasSnooze: hasSnooze
                 )
+                // Zuständigkeit (Ansprechpartner) committen — siehe
+                // `TodoFormView.save()` (identisches Verhalten, Feature-
+                // Parität): Fehler hier bleiben sichtbar, Auswahl bleibt
+                // erhalten, kein stiller Verwurf (Story 14).
+                var assignmentErrorText: String?
+                if let savedId {
+                    do { try await state.setAssignments(refType: "topic", refId: savedId, contactIds: Array(contactIds)) }
+                    catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
+                }
                 loading = false
-                if progressResult != .failed {
+                if let assignmentErrorText {
+                    self.error = assignmentErrorText
+                } else if progressResult != .failed {
                     dismiss()
                 }
             } catch {
@@ -314,5 +405,13 @@ struct TopicFormView: View {
                 loading = false
             }
         }
+    }
+
+    /// Siehe `TodoFormView.friendlyAssignmentErrorMessage` (identisches
+    /// Verhalten, Feature-Parität).
+    private func friendlyAssignmentErrorMessage(_ error: Error) -> String {
+        isTransportFailure(error)
+            ? "Keine Verbindung — deine Ansprechpartner-Auswahl bleibt erhalten. Bitte erneut versuchen, sobald du wieder online bist."
+            : error.localizedDescription
     }
 }

@@ -233,6 +233,69 @@ struct Contact: Identifiable, Codable, Equatable {
     var sortOrder: Int?
     var createdAt: String
     var updatedAt: String?
+    // Arbeitspaket A1 ("Erweiterung Ansprechpartner-Konzept"): additiv, vom
+    // Server optional in GET/POST/PUT /api/contacts[/:id] eingebettet (siehe
+    // Vertrag). Alle drei Felder bleiben optional, damit ein älterer
+    // Server-Stand (der diese Felder noch nicht liefert) die Dekodierung
+    // dieses gesamten Objekts nicht zum Absturz bringt — synthesized
+    // `Codable` nutzt für optionale Properties automatisch `decodeIfPresent`.
+    /// Rubriken dieses Kontakts INKLUSIVE Server-Sortierung — steuert die
+    /// Gruppierungs-Reihenfolge der Infoblöcke in `ContactDetailView` (dort
+    /// bewusst NICHT selbst neu sortiert, siehe Vertrag).
+    var categories: [ContactCategory]?
+    var infoBlockCount: Int?
+    var snippet: String?
+}
+
+// MARK: - Contact-Rubriken (frei erweiterbare Kategorien für Infoblöcke)
+
+struct ContactCategory: Identifiable, Codable, Equatable {
+    let id: String
+    var label: String
+    var isDefault: Bool?
+    var sortOrder: Int?
+    var usageCount: Int?
+}
+
+// MARK: - Contact-Infoblöcke (benannte Rich-Text-Zusatzinformationen)
+
+struct ContactInfoBlock: Identifiable, Codable, Equatable {
+    let id: String
+    var contactId: String
+    var categoryId: String
+    var categoryLabel: String
+    var bodyHtml: String
+    var excerpt: String
+    var sortOrder: Int
+    var isLegacyDescription: Bool?
+    var createdAt: String
+    var updatedAt: String
+}
+
+// MARK: - Zuständigkeit (Kontakt <-> Todo/Topic)
+
+/// Ein einem Todo/Thema zugeordneter Ansprechpartner (Sicht "von der
+/// Vorhabenseite aus" — `GET/PUT /api/assignments/:refType/:refId`).
+struct AssignedContact: Codable, Equatable, Identifiable {
+    var id: String { contactId }
+    let contactId: String
+    var name: String
+    var role: String
+    var email: String
+    var assignedAt: String
+}
+
+/// Ein Vorhaben (Todo/Thema), für das ein Kontakt zuständig ist (Sicht "von
+/// der Kontaktseite aus" — `GET /api/contacts/:contactId/assignments`).
+struct AssignmentTarget: Codable, Equatable, Identifiable {
+    var id: String { refType + ":" + refId }
+    let refType: String
+    let refId: String
+    var title: String
+    var done: Bool
+    var meetingId: String?
+    var meetingTitle: String?
+    var assignedAt: String
 }
 
 // MARK: - Users
