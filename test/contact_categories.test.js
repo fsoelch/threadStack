@@ -254,7 +254,7 @@ test('DELETE /contact-categories/:id?confirm=true: hängt Infoblöcke an "Sonsti
   assert.equal(blocks.body.blocks[0].categoryLabel, 'Sonstiges');
 });
 
-test('DELETE /contact-categories/:id: "Sonstiges" selbst kann bei Nutzung nicht gelöscht werden (auch mit confirm=true)', async (t) => {
+test('DELETE /contact-categories/:id: "Sonstiges" ist auch MIT Nutzung geschützt (confirm=true hebt den Schutz nicht auf)', async (t) => {
   const { app, db, dir } = buildTestApp();
   t.after(() => cleanup(dir));
   const agent = await loginAgent(app);

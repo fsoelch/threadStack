@@ -123,6 +123,39 @@ test('partieller Unique-Index verhindert strukturell einen zweiten Legacy-Block 
   }, /UNIQUE constraint failed/);
 });
 
+test('fehlt die Rubrik "Zuständigkeit" (z.B. umbenannt), migriert die Migration verlustfrei in die Auffangrubrik "Sonstiges" statt den Kontakt zu überspringen', (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => cleanup(dir));
+  makeContact(db, { id: 'c1', description: '<p>Alter Text</p>' });
+
+  // "Zuständigkeit" existiert bereits (durch ensureDefaultCategories via
+  // runContactMigrations/tempDb noch nicht angelegt) - zuerst anlegen lassen,
+  // dann umbenennen, um den Umbenennungsfall aus dem Code-Review-Fund
+  // "Mittel" nachzustellen.
+  const { ensureDefaultCategories } = require('../lib/contacts/queries');
+  ensureDefaultCategories(db, 'u1', '2024-01-01T00:00:00.000Z');
+  const before = getCategoryByLabelNorm(db, 'u1', normalizeLabel('Zuständigkeit'));
+  assert.ok(before, 'Vorbedingung: Rubrik "Zuständigkeit" existiert vor der Umbenennung');
+  db.prepare('UPDATE contact_categories SET label=?, label_norm=? WHERE id=?')
+    .run('Aufgaben', normalizeLabel('Aufgaben'), before.id);
+  assert.equal(getCategoryByLabelNorm(db, 'u1', normalizeLabel('Zuständigkeit')), undefined);
+
+  const result = migrateContactDescriptions(db, { now: () => new Date('2024-06-01T00:00:00.000Z') });
+  assert.deepEqual(result, { migrated: 1, skipped: 0 }, 'darf NICHT dauerhaft skipped bleiben');
+
+  const contact = db.prepare('SELECT description FROM contacts WHERE id=?').get('c1');
+  assert.equal(contact.description, '', 'description-Spalte muss trotzdem geleert werden (verlustfrei)');
+
+  const block = db.prepare('SELECT * FROM contact_info_blocks WHERE contact_id=?').get('c1');
+  assert.ok(block, 'Infoblock muss angelegt werden, auch ohne Rubrik "Zuständigkeit"');
+  assert.equal(block.is_legacy_description, 1);
+  assert.equal(block.body_text, 'Alter Text');
+
+  const fallback = getCategoryByLabelNorm(db, 'u1', normalizeLabel('Sonstiges'));
+  assert.ok(fallback);
+  assert.equal(block.category_id, fallback.id, 'Infoblock landet in der Auffangrubrik "Sonstiges"');
+});
+
 test('Logging enthält ausschließlich Zähler, keine Kontaktnamen/Inhalte', (t) => {
   const { db, dir } = tempDb();
   t.after(() => cleanup(dir));
