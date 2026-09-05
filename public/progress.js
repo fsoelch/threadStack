@@ -47,7 +47,9 @@
   // TimelineInstance) und keinen next-step-Endpunkt server-seitig.
   var VALID_REF_TYPES = { todo: true, topic: true, contact: true };
 
-  function isValidRefType(t) { return t === 'todo' || t === 'topic' || t === 'contact'; }
+  function isValidRefType(t) {
+    return typeof t === 'string' && Object.prototype.hasOwnProperty.call(VALID_REF_TYPES, t);
+  }
 
   function isValidRefId(id) {
     return typeof id === 'string' && id.length > 0 && id.length <= 200;

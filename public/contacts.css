@@ -5,7 +5,12 @@
  * index.html/app.js) zu vermeiden. Rich-Text-Klassen (.rt-wrapper,
  * .rt-toolbar, .rt-content, .rt-display) werden bewusst NICHT hier neu
  * definiert, sondern aus dem bereits bestehenden globalen Stylesheet
- * (index.html) wiederverwendet.
+ * (index.html) wiederverwendet. Gleiches gilt für das Dialog-Chrome
+ * (.modal-overlay/.modal/.modal-header/.modal-body/.modal-footer/
+ * .modal-close) — auch hier KEINE eigene "tsc-modal-*"-Variante, um keine
+ * zweite Dialogoptik in der App entstehen zu lassen (Code-Review-Fund).
+ * Im eigenständigen Dev-Harness (contacts-dev.html), das ohne index.html
+ * läuft, werden die paar dafür nötigen Basisregeln lokal nachgebildet.
  */
 
 .tsc-detail { display: flex; flex-direction: column; gap: 1.5rem; }
@@ -86,12 +91,11 @@
 .tsc-assignment-meeting { font-size: .6875rem; color: var(--text-muted, #5A5850); flex-shrink: 0; }
 .tsc-assignment-done { opacity: .7; }
 
-.tsc-modal-overlay {
-  position: fixed; inset: 0; background: rgba(16,22,30,.4); display: flex; align-items: center; justify-content: center; z-index: 1000;
-}
-.tsc-modal { background: #fff; border-radius: 12px; padding: 1.25rem; max-width: 480px; width: 90%; max-height: 85vh; overflow-y: auto; }
-.tsc-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
-.tsc-modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: .5rem; margin-top: .75rem; }
+/* Dialog-Chrome (Overlay/Rahmen/Kopf/Fußzeile) nutzt bewusst das bestehende,
+   app.js-weite .modal-overlay/.modal/.modal-header/.modal-body/.modal-footer/
+   .modal-close-Muster (siehe index.html) statt eines zweiten, eigenen
+   Dialog-Stils (Code-Review-Fund) — hier verbleiben nur die Inhalte, die
+   spezifisch für diese Dialoge sind (Picker-Liste, Rubrik-Verwaltung). */
 .tsc-picker-count { margin-right: auto; font-size: .8125rem; color: var(--text-muted, #5A5850); }
 .tsc-picker-context { font-size: .8125rem; color: var(--text-muted, #5A5850); margin: 0 0 .75rem; }
 .tsc-picker-search { width: 100%; box-sizing: border-box; font-family: inherit; font-size: .875rem; padding: .4rem .6rem; border: 1px solid var(--border, #E8E7E2); border-radius: 8px; margin-bottom: .5rem; }

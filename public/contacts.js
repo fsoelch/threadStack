@@ -10,17 +10,35 @@
  *  - window.TSProgress (public/progress.js) für die chronologischen Notizen
  *    eines Kontakts (refType:'contact') — KEIN eigener Notiz-Composer, siehe
  *    mountInlineComposer/mountTimeline dort.
+ *  - window.TSHost.api (analog public/progress.js, siehe getHost()) für
+ *    sämtliche Netzwerkaufrufe. Alle Pfad-Helfer bauen weiterhin Pfade mit
+ *    führendem "/api/..." — TSHost.api entfernt dieses Präfix selbst
+ *    (`path.replace(/^\/api(?=\/|$)/, '')`, siehe app.js) und hängt den
+ *    tatsächlichen, ggf. konfigurierbaren Basis-Pfad (`BASE_PATH`/`server.js`)
+ *    davor. Ein direkter `fetch('/api/...')` wäre im Produktivbetrieb mit
+ *    gesetztem Basis-Pfad-Präfix funktionsunfähig (Code-Review-Fund).
  *  - Host-Adapter, die W2 (index.html/app.js-Integration) beim Aufruf von
- *    mountContactDetail() durchreicht: rt (setRT/getRT), openThemeLinkModal,
- *    confirm, toast, onContactChanged, onNavigate, onError. Dieses Modul
- *    ruft KEINE app.js-Funktionen direkt auf.
+ *    mountContactDetail() durchreicht: rt (setRT/getRT[, initToolbar]),
+ *    openThemeLinkModal, confirm, toast, onContactChanged, onNavigate,
+ *    onError. Dieses Modul ruft KEINE app.js-Funktionen direkt auf (außer
+ *    indirekt über window.TSHost.api).
  *
- * Netzwerk: Der Vertrag sieht für mountContactDetail()/openAssignmentPicker()
- * keinen `api`-Adapter vor (anders als TSHost.api bei progress.js/graph.js).
- * Dieses Modul spricht daher direkt mit `fetch()` unter den in der
- * Architektur spezifizierten absoluten Pfaden (`/api/...`). Läuft die App
- * unter einem Basis-Pfad-Präfix (siehe `_path`/`API` in app.js), greift das
- * NICHT automatisch — siehe Abweichungsdokumentation im Abschlussbericht.
+ *    rt.initToolbar(editorId, toolbarId) ist OPTIONAL (Fallback: No-Op) und
+ *    wird für JEDEN dynamisch erzeugten Infoblock-Editor unmittelbar VOR
+ *    rt.setRT(editorId, ...) aufgerufen, nachdem der Editor bereits ins DOM
+ *    eingehängt wurde. Hosts, deren Rich-Text-Toolbar pro Editor-Instanz
+ *    verdrahtet werden muss (Buttons/Handler an `#<toolbarId>` binden),
+ *    nutzen diesen Hook; ohne ihn bleibt die Toolbar leer.
+ *
+ *    WICHTIG für den Host (W2): openThemeLinkModal(ctx, onClosed) wird mit
+ *    ZWEI Argumenten aufgerufen — `ctx` ({refType,refId,title}) wie bisher,
+ *    UND `onClosed` (Funktion ohne Argumente). Der Host MUSS `onClosed()`
+ *    genau einmal aufrufen, sobald der Theme-Link-Dialog geschlossen wird
+ *    (egal ob mit oder ohne Änderung), damit Abschnitt 3 (Zugeordnete
+ *    Topics) neu geladen wird. Ohne diesen Aufruf bleiben frisch gesetzte
+ *    Verknüpfungen bis zum nächsten reload() unsichtbar (Code-Review-Fund:
+ *    ersetzt ein zuvor genutztes, dauerhaft laufendes 1,5s-Polling von
+ *    GET /api/themes).
  *
  * Keine Fremdbibliothek, kein Build-Step.
  */
@@ -139,26 +157,28 @@
   }
 
   // ==========================================================================
-  // Netzwerk (kein TSHost.api-Adapter im Vertrag, siehe Header-Kommentar)
+  // Netzwerk (window.TSHost.api, analog public/progress.js)
   // ==========================================================================
 
+  function getHost() {
+    return (typeof window !== 'undefined') ? window.TSHost : null;
+  }
+
   function request(method, path, body) {
-    var opts = { method: method, credentials: 'same-origin' };
-    if (body != null) {
-      opts.headers = { 'Content-Type': 'application/json' };
-      opts.body = JSON.stringify(body);
+    var host = getHost();
+    if (!host || typeof host.api !== 'function') {
+      return Promise.reject(new Error('TSHost.api ist nicht verfügbar'));
     }
-    return fetch(path, opts).then(function (res) {
-      return res.json().catch(function () { return {}; }).then(function (data) {
-        if (!res.ok) {
-          var err = new Error((data && data.error) || 'Fehler');
-          err.status = res.status;
-          err.code = data && data.code;
-          err.body = data || {};
-          throw err;
-        }
-        return data;
-      });
+    return host.api(method, path, body != null ? body : null).catch(function (err) {
+      // TSHost.api (siehe app.js) liefert Fehler mit `status`/`body`, setzt
+      // aber kein Top-Level `code` (nur `err.body.code`). Dieses Modul wertet
+      // an mehreren Stellen `err.code` aus (block_conflict, category_exists,
+      // category_in_use, block_limit_reached) — daher hier normalisieren,
+      // analog zur früheren direkten fetch()-Fehlerabbildung.
+      if (err && err.code === undefined && err.body && typeof err.body === 'object') {
+        err.code = err.body.code;
+      }
+      throw err;
     });
   }
 
@@ -426,6 +446,13 @@
     this.onNavigate = isFn(opts.onNavigate) ? opts.onNavigate : noop;
     this.onError = isFn(opts.onError) ? opts.onError : noop;
     this.rt = (opts.rt && isFn(opts.rt.setRT) && isFn(opts.rt.getRT)) ? opts.rt : { setRT: noop, getRT: function () { return ''; } };
+    // Optionaler Host-Adapter für dynamisch erzeugte Infoblock-Editoren
+    // (siehe renderBlockEditor): der Host kann initToolbar(editorId,
+    // toolbarId) bereitstellen, um Toolbar-Wiring für eine zur Laufzeit neu
+    // erzeugte editorId nachzuholen (Code-Review-Fund — zuvor gab es dafür
+    // gar keinen Adapter-Punkt). Fällt auf No-Op zurück, falls der Host
+    // (noch) nichts anbietet.
+    this.initToolbarFn = (opts.rt && isFn(opts.rt.initToolbar)) ? opts.rt.initToolbar : noop;
     this.openThemeLinkModalFn = isFn(opts.openThemeLinkModal) ? opts.openThemeLinkModal : null;
     this.confirmFn = isFn(opts.confirm) ? opts.confirm : function () { return Promise.resolve(window.confirm ? window.confirm('Wirklich fortfahren?') : true); };
     this.toastFn = isFn(opts.toast) ? opts.toast : noop;
@@ -434,7 +461,7 @@
 
     this.state = {
       loading: true, error: null, contact: null,
-      categories: [], categoriesLoaded: false,
+      categories: [], categoriesLoaded: false, categoriesError: null,
       blocks: [], blocksLoading: false, blocksError: null,
       editingBlockId: null,   // block.id oder 'new'
       editorCategory: null,   // aktuell in der Combobox gewählte Rubrik
@@ -476,22 +503,79 @@
     try { this.onError(err); } catch (e) { /* Host-Callback darf nicht werfen */ }
   };
 
+  // Baut den Notizen-Bereich (Abschnitt 2) sauber ab, bevor renderAll() den
+  // section2El-Container leert. Ohne dies bleibt _notesMounted nach einem
+  // reload() fälschlich `true`, sodass mountNotesIfNeeded() den bereits
+  // geleerten Container nie wieder befüllt (Code-Review-Fund) — zusätzlich
+  // würden die alten Composer-/Timeline-Handles (Listener/Timer) nie
+  // destroy()t.
+  ContactDetailInstance.prototype.teardownNotes = function () {
+    if (this._composerHandle && isFn(this._composerHandle.destroy)) {
+      try { this._composerHandle.destroy(); } catch (e) { /* Handle evtl. bereits ungültig */ }
+    }
+    if (this._timelineHandle && isFn(this._timelineHandle.destroy)) {
+      try { this._timelineHandle.destroy(); } catch (e) { /* Handle evtl. bereits ungültig */ }
+    }
+    this._composerHandle = null;
+    this._timelineHandle = null;
+    this._notesMounted = false;
+  };
+
   ContactDetailInstance.prototype.load = function () {
     var self = this;
+    this.teardownNotes();
     this.state.loading = true;
     this.state.error = null;
     this.renderAll();
+    // Rubriken/Infoblöcke werden NICHT mit `.catch(() => [])` verschluckt
+    // (Code-Review-Fund): ein fehlgeschlagener Request würde sonst wie ein
+    // echter Leerzustand aussehen und im Rubriken-Fehlerfall dazu führen,
+    // dass ALLE Blöcke ungruppiert und aufgeklappt landen — inkl. eines
+    // etwaigen "Privates"-Inhalts. Beide Requests werden daher separat
+    // abgefangen und als eigener Fehlerzustand (categoriesError/blocksError)
+    // abgebildet; nur ein Fehler beim Kontakt selbst (contactUrl) lässt
+    // load() insgesamt fehlschlagen (siehe äußerer catch).
+    var categoriesP = request('GET', categoriesUrl()).then(function (cats) {
+      return { ok: true, value: Array.isArray(cats) ? cats : [] };
+    }).catch(function (err) {
+      return { ok: false, error: err };
+    });
+    var blocksP = request('GET', infoBlocksUrl(this.contactId)).then(function (blocks) {
+      return { ok: true, value: Array.isArray(blocks) ? blocks : [] };
+    }).catch(function (err) {
+      return { ok: false, error: err };
+    });
     Promise.all([
       request('GET', contactUrl(this.contactId)),
-      request('GET', categoriesUrl()).catch(function () { return []; }),
-      request('GET', infoBlocksUrl(this.contactId)).catch(function () { return []; })
+      categoriesP,
+      blocksP
     ]).then(function (results) {
       if (self.destroyed) return;
       self.state.loading = false;
       self.state.contact = results[0];
-      self.state.categories = Array.isArray(results[1]) ? results[1] : [];
-      self.state.categoriesLoaded = true;
-      self.state.blocks = Array.isArray(results[2]) ? results[2] : [];
+
+      var catResult = results[1];
+      if (catResult.ok) {
+        self.state.categories = catResult.value;
+        self.state.categoriesLoaded = true;
+        self.state.categoriesError = null;
+      } else {
+        self.state.categories = [];
+        self.state.categoriesLoaded = false;
+        self.state.categoriesError = genericErrorMessage();
+        self.reportError(catResult.error);
+      }
+
+      var blocksResult = results[2];
+      if (blocksResult.ok) {
+        self.state.blocks = blocksResult.value;
+        self.state.blocksError = null;
+      } else {
+        self.state.blocks = [];
+        self.state.blocksError = genericErrorMessage();
+        self.reportError(blocksResult.error);
+      }
+
       self.renderAll();
       self.mountNotesIfNeeded();
       self.loadTopics();
@@ -519,12 +603,47 @@
       if (self.destroyed) return;
       self.state.blocks = Array.isArray(blocks) ? blocks : [];
       self.state.blocksLoading = false;
+      self.state.blocksError = null;
       self.renderSection1();
     }).catch(function (err) {
       if (self.destroyed) return;
       self.state.blocksLoading = false;
       self.state.blocksError = genericErrorMessage();
       self.reportError(err);
+      self.renderSection1();
+    });
+  };
+
+  // Retry-Handler für die Fehlerbox in renderSection1: lädt Infoblöcke IMMER
+  // neu, Rubriken zusätzlich, falls deren letzter Ladeversuch fehlgeschlagen
+  // war (categoriesError) — beide Fehlerzustände können unabhängig
+  // voneinander auftreten und werden hier gemeinsam aufgelöst.
+  ContactDetailInstance.prototype.retryBlocksAndCategories = function () {
+    var self = this;
+    this.state.blocksLoading = true;
+    this.renderSection1();
+    var tasks = [
+      request('GET', infoBlocksUrl(this.contactId)).then(function (blocks) {
+        self.state.blocks = Array.isArray(blocks) ? blocks : [];
+        self.state.blocksError = null;
+      }).catch(function (err) {
+        self.state.blocksError = genericErrorMessage();
+        self.reportError(err);
+      })
+    ];
+    if (this.state.categoriesError) {
+      tasks.push(request('GET', categoriesUrl()).then(function (cats) {
+        self.state.categories = Array.isArray(cats) ? cats : [];
+        self.state.categoriesLoaded = true;
+        self.state.categoriesError = null;
+      }).catch(function (err) {
+        self.state.categoriesError = genericErrorMessage();
+        self.reportError(err);
+      }));
+    }
+    return Promise.all(tasks).then(function () {
+      if (self.destroyed) return;
+      self.state.blocksLoading = false;
       self.renderSection1();
     });
   };
@@ -537,7 +656,18 @@
       byId[cat.id] = g;
       groups.push(g);
     });
-    var orphan = { category: { id: null, label: 'Ohne Rubrik' }, blocks: [] };
+    var orphan = {
+      category: { id: null, label: 'Ohne Rubrik' },
+      blocks: [],
+      // Sicherheitsnetz (Code-Review-Fund): wenn die Rubrikenliste zuletzt
+      // NICHT erfolgreich geladen wurde (state.categoriesLoaded === false),
+      // kann diese Gruppe auch Blöcke enthalten, deren tatsächliche Rubrik
+      // schlicht unbekannt ist (z.B. "Privates") — nicht zwingend Blöcke
+      // ohne Rubrik. Diese Gruppe wird dann eingeklappt gerendert statt wie
+      // sonst üblich sofort sichtbar, damit sensible Inhalte im
+      // Rubriken-Fehlerfall nicht ungewollt im Klartext erscheinen.
+      forceCollapsed: !this.state.categoriesLoaded
+    };
     this.state.blocks.forEach(function (b) {
       var g = byId[b.categoryId];
       if (g) g.blocks.push(b);
@@ -550,6 +680,7 @@
   ContactDetailInstance.prototype.startAddBlock = function () {
     this.state.editingBlockId = 'new';
     this.state.editorCategory = null;
+    this.state.editingBlockUpdatedAt = undefined;
     this.state.conflict = null;
     this.renderSection1();
     var editor = this.section1El.querySelector('[data-role="tsc-block-editor"]');
@@ -565,6 +696,10 @@
     this.state.editingBlockId = blockId;
     var cat = this.state.categories.filter(function (c) { return c.id === block.categoryId; })[0] || null;
     this.state.editorCategory = cat;
+    // Für den normalen Speicherpfad mitgeführt, damit der Server einen
+    // Zwischenzeit-Konflikt (409 block_conflict) überhaupt erkennen kann
+    // (Code-Review-Fund: expectedUpdatedAt wurde zuvor nie gesendet).
+    this.state.editingBlockUpdatedAt = block.updatedAt;
     this.state.conflict = null;
     this.renderSection1();
   };
@@ -572,6 +707,7 @@
   ContactDetailInstance.prototype.cancelEditBlock = function () {
     this.state.editingBlockId = null;
     this.state.editorCategory = null;
+    this.state.editingBlockUpdatedAt = undefined;
     this.state.conflict = null;
     this.renderSection1();
   };
@@ -626,6 +762,7 @@
       if (self.destroyed) return;
       self.state.editingBlockId = null;
       self.state.editorCategory = null;
+      self.state.editingBlockUpdatedAt = undefined;
       self.state.conflict = null;
       self.toastFn(isNew ? 'Infoblock hinzugefügt' : 'Infoblock gespeichert');
       return self.reloadBlocksAndContact();
@@ -661,6 +798,7 @@
     if (action === 'discard') {
       this.state.editingBlockId = null;
       this.state.editorCategory = null;
+      this.state.editingBlockUpdatedAt = undefined;
       this.state.conflict = null;
       this.reloadBlocksAndContact();
       return;
@@ -673,6 +811,7 @@
         if (self.destroyed) return;
         self.state.editingBlockId = null;
         self.state.editorCategory = null;
+        self.state.editingBlockUpdatedAt = undefined;
         self.state.conflict = null;
         self.toastFn('Infoblock gespeichert');
         return self.reloadBlocksAndContact();
@@ -820,8 +959,9 @@
     wrap._comboHandle = comboHandle;
     if (categoryHint) this.state.editorCategory = categoryHint;
 
+    var toolbarId = editorId + '-tb';
     var rtWrap = el('div', { class: 'rt-wrapper' });
-    rtWrap.appendChild(el('div', { class: 'rt-toolbar', id: editorId + '-tb' }));
+    rtWrap.appendChild(el('div', { class: 'rt-toolbar', id: toolbarId }));
     var rtContent = el('div', { class: 'rt-content', id: editorId, contenteditable: 'true', 'data-placeholder': 'Inhalt des Infoblocks …' });
     rtWrap.appendChild(rtContent);
     wrap.appendChild(rtWrap);
@@ -833,10 +973,14 @@
     wrap.appendChild(footer);
 
     // Initialbefüllung über den Host-Adapter (rt.setRT), NACH dem Einfügen
-    // in den zurückgegebenen wrap, damit der Host ggf. Toolbar-Wiring für
-    // die neu erzeugte editorId vornehmen kann (siehe Abschlussbericht:
-    // offener Punkt für W2 — initRtToolbar() für dynamisch erzeugte
-    // Infoblock-Editoren ist nicht Teil des Vertrags-Adapters `rt`).
+    // in den zurückgegebenen wrap, damit der Host das Toolbar-Wiring für die
+    // neu erzeugte editorId zuerst vornehmen kann. rt.initToolbar(editorId,
+    // toolbarId) ist ein OPTIONALER Adapter (Fallback: No-Op, siehe
+    // Konstruktor) — Hosts, die ihre Rich-Text-Toolbar für dynamisch
+    // erzeugte Editoren separat verdrahten müssen (z.B. Buttons/Handler pro
+    // #<toolbarId>), können ihn bereitstellen; ohne ihn bleibt die Toolbar
+    // leer (kein Rich-Text-Editing über Toolbar-Buttons), Freitexteingabe im
+    // rt-content-Feld selbst funktioniert unabhängig davon weiter.
     // Bei einem Konflikt (409 block_conflict) wird beim Re-Render NICHT der
     // Server-/Ausgangsstand geladen, sondern die eigene, noch ungespeicherte
     // Eingabe (conflict.pendingBodyHtml) — "Editor bleibt mit eigener
@@ -844,6 +988,7 @@
     var initialHtml = isNew ? '' : (block.bodyHtml || '');
     if (conflict) initialHtml = conflict.pendingBodyHtml;
     setTimeout(function () {
+      self.initToolbarFn(editorId, toolbarId);
       self.rt.setRT(editorId, initialHtml);
     }, 0);
 
@@ -861,8 +1006,9 @@
     head.appendChild(manageLink);
     root.appendChild(head);
 
-    if (this.state.blocksError) {
-      renderErrorBox(root, this.state.blocksError, 'Erneut versuchen', function () { self.reloadBlocks(); });
+    if (this.state.blocksError || this.state.categoriesError) {
+      var errMsg = this.state.blocksError || this.state.categoriesError;
+      renderErrorBox(root, errMsg, 'Erneut versuchen', function () { self.retryBlocksAndCategories(); });
       return;
     }
 
@@ -887,9 +1033,12 @@
             list.appendChild(self.renderBlockReadRow(block, { isFirst: blockIdx === 0, isLast: blockIdx === group.blocks.length - 1 }));
           }
         });
-        if (priv) {
-          var details = el('details', { class: 'tsc-category-group tsc-category-private' });
-          var summary = el('summary', { class: 'tsc-category-summary' }, '🔒 Privates (' + group.blocks.length + ')');
+        if (priv || group.forceCollapsed) {
+          var details = el('details', { class: 'tsc-category-group' + (priv ? ' tsc-category-private' : ' tsc-category-unresolved') });
+          var summaryText = priv
+            ? '🔒 Privates (' + group.blocks.length + ')'
+            : escHtml(group.category.label || '') + ' (' + group.blocks.length + ')';
+          var summary = el('summary', { class: 'tsc-category-summary' }, summaryText);
           details.appendChild(summary);
           details.appendChild(list);
           root.appendChild(details);
@@ -1147,7 +1296,7 @@
     if (action === 'cancel-block') { this.cancelEditBlock(); return; }
     if (action === 'tsc-save-block') {
       var editorEl = t.closest('[data-role="tsc-block-editor"]');
-      if (editorEl) this.saveBlockEditor(editorEl);
+      if (editorEl) this.saveBlockEditor(editorEl, this.state.editingBlockUpdatedAt);
       return;
     }
     if (action === 'move-up') { this.moveBlock(t.getAttribute('data-block-id'), 'up'); return; }
@@ -1159,17 +1308,18 @@
     if (action === 'assign-topic') {
       if (this.openThemeLinkModalFn) {
         var contact = this.state.contact;
-        this.openThemeLinkModalFn({ refType: 'contact', refId: this.contactId, title: contact ? contact.name : '' });
-        // Der bestehende Theme-Link-Dialog aktualisiert seinen eigenen
-        // Zustand selbst; wir laden nach einer kurzen Verzögerung neu, damit
-        // frisch gesetzte Verknüpfungen in Abschnitt 3 sichtbar werden,
-        // sobald der Dialog geschlossen wird (kein Vertrags-Callback dafür
-        // vorgesehen — siehe Abschlussbericht).
         var self = this;
-        this._topicPoll = setInterval(function () {
-          if (self.destroyed) { clearInterval(self._topicPoll); return; }
-          self.loadTopics();
-        }, 1500);
+        // Der Host MUSS den zweiten Parameter (onClosed) genau einmal
+        // aufrufen, sobald der Theme-Link-Dialog schließt — siehe
+        // Modulkopf-Kommentar. Ersetzt ein zuvor genutztes, dauerhaft
+        // laufendes Polling von GET /api/themes (Code-Review-Fund: Leak +
+        // unnötige Serverlast).
+        this.openThemeLinkModalFn(
+          { refType: 'contact', refId: this.contactId, title: contact ? contact.name : '' },
+          function () {
+            if (!self.destroyed) self.loadTopics();
+          }
+        );
       }
       return;
     }
@@ -1190,10 +1340,8 @@
   ContactDetailInstance.prototype.destroy = function () {
     if (this.destroyed) return;
     this.destroyed = true;
-    if (this._topicPoll) clearInterval(this._topicPoll);
     this.rootEl.removeEventListener('click', this._onClick);
-    if (this._composerHandle) this._composerHandle.destroy();
-    if (this._timelineHandle) this._timelineHandle.destroy();
+    this.teardownNotes();
     if (this.container) this.container.innerHTML = '';
   };
 
@@ -1226,8 +1374,12 @@
     var categories = opts.categories.slice();
     var previousActive = document.activeElement;
 
-    var overlay = el('div', { class: 'tsc-modal-overlay' });
-    var dialog = el('div', { class: 'tsc-modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Rubriken verwalten' });
+    // Bestehendes, app.js-weites Dialog-Muster (.modal-overlay/.modal/
+    // .modal-header/.modal-body/.modal-footer/.modal-close, siehe index.html)
+    // wiederverwendet statt eines zweiten, eigenen (Code-Review-Fund) — nur
+    // die Picker-Liste/Rubrik-Verwaltung selbst bleibt "tsc-"-spezifisch.
+    var overlay = el('div', { class: 'modal-overlay' });
+    var dialog = el('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Rubriken verwalten' });
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
@@ -1237,14 +1389,14 @@
 
     function render() {
       dialog.innerHTML = '';
-      var head = el('div', { class: 'tsc-modal-head' });
+      var head = el('div', { class: 'modal-header' });
       head.appendChild(el('h3', {}, 'Rubriken verwalten'));
-      var closeBtn = el('button', { type: 'button', class: 'tsc-icon-btn', 'aria-label': 'Schließen' }, '×');
+      var closeBtn = el('button', { type: 'button', class: 'modal-close tsc-icon-btn', 'aria-label': 'Schließen' }, '×');
       closeBtn.addEventListener('click', closeFn);
       head.appendChild(closeBtn);
       dialog.appendChild(head);
 
-      var body = el('div', { class: 'tsc-modal-body' });
+      var body = el('div', { class: 'modal-body' });
       var list = el('ul', { class: 'tsc-category-manage-list' });
       categories.forEach(function (cat, idx) {
         var li = el('li', { class: 'tsc-category-manage-row' });
@@ -1348,8 +1500,8 @@
     var previousActive = document.activeElement;
     var state = { search: '', selected: {}, saving: false, loaded: false };
 
-    var overlay = el('div', { class: 'tsc-modal-overlay' });
-    var dialog = el('div', { class: 'tsc-modal tsc-assignment-picker', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Ansprechpartner zuordnen' });
+    var overlay = el('div', { class: 'modal-overlay' });
+    var dialog = el('div', { class: 'modal tsc-assignment-picker', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Ansprechpartner zuordnen' });
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
@@ -1369,14 +1521,55 @@
       });
     }
 
+    // listEl/countEl/loadingHintEl werden von render() (einmaliger Aufbau
+    // der Dialog-Chrome) gesetzt und von renderList() (reines Neuzeichnen
+    // der Kontaktliste, z.B. nach Checkbox-Toggle ODER nach Eintreffen der
+    // Vorbelegung) wiederverwendet — dadurch reißt das Eintreffen der
+    // asynchronen Vorbelegung NICHT mehr die komplette Dialog-Chrome (inkl.
+    // Sucheingabe samt Fokus/Cursorposition) ein zweites Mal ein
+    // (Code-Review-Fund: vorher rief die Vorbelegung volles render() auf).
+    var listEl = null;
+    var countEl = null;
+    var loadingHintEl = null;
+
+    function renderList() {
+      if (!listEl) return; // Leerzustand ohne Kontakte: keine Liste vorhanden.
+      if (loadingHintEl) loadingHintEl.hidden = state.loaded;
+      listEl.innerHTML = '';
+      var atMax = selectedCount() >= ASSIGNMENT_MAX;
+      filteredContacts().forEach(function (c) {
+        var isSel = !!state.selected[c.id];
+        var li = el('li', { class: 'tsc-picker-row' + (isSel ? ' tsc-picker-row-selected' : '') });
+        var cb = el('input', { type: 'checkbox', id: 'tsc-pick-' + c.id });
+        cb.checked = isSel;
+        if (!isSel && atMax) {
+          cb.disabled = true;
+          cb.setAttribute('aria-disabled', 'true');
+          cb.title = 'Maximal 20 Ansprechpartner pro Vorhaben.';
+        }
+        cb.addEventListener('change', function () {
+          if (cb.checked) state.selected[c.id] = true; else delete state.selected[c.id];
+          renderList();
+        });
+        var label = el('label', { for: 'tsc-pick-' + c.id, class: 'tsc-picker-label' });
+        if (isSel) label.appendChild(el('span', { class: 'tsc-picker-check', 'aria-hidden': 'true' }, '✓'));
+        label.appendChild(el('span', { class: 'tsc-picker-name' }, escHtml(c.name || '')));
+        if (c.role) label.appendChild(el('span', { class: 'tsc-picker-role' }, ' · ' + escHtml(c.role)));
+        li.appendChild(cb); li.appendChild(label);
+        listEl.appendChild(li);
+      });
+      if (countEl) countEl.textContent = selectedCount() + ' / ' + ASSIGNMENT_MAX + ' ausgewählt';
+    }
+
     function render() {
       dialog.innerHTML = '';
-      var head = el('div', { class: 'tsc-modal-head' });
+      listEl = null; countEl = null; loadingHintEl = null;
+      var head = el('div', { class: 'modal-header' });
       head.appendChild(el('h3', {}, 'Ansprechpartner zuordnen'));
       dialog.appendChild(head);
 
       var typeLabel = refType === 'topic' ? 'Thema' : 'Todo';
-      dialog.appendChild(el('p', { class: 'tsc-picker-context' }, 'Für „' + title + '" (' + typeLabel + ')'));
+      dialog.appendChild(el('p', { class: 'tsc-picker-context' }, 'Für „' + escHtml(title) + '" (' + typeLabel + ')'));
 
       if (!allContacts.length) {
         dialog.appendChild(el('p', { class: 'tsc-empty-hint' }, 'Noch keine Ansprechpartner vorhanden. Lege zuerst einen Ansprechpartner in der Ansicht „Ansprechpartner" an.'));
@@ -1392,11 +1585,15 @@
       searchInput.addEventListener('input', function () { state.search = searchInput.value; renderList(); });
       dialog.appendChild(searchInput);
 
-      var listEl = el('ul', { class: 'tsc-picker-list' });
+      loadingHintEl = el('p', { class: 'tsc-loading-hint' }, 'Aktuelle Zuordnung wird geladen …');
+      loadingHintEl.hidden = state.loaded;
+      dialog.appendChild(loadingHintEl);
+
+      listEl = el('ul', { class: 'tsc-picker-list' });
       dialog.appendChild(listEl);
 
-      var footer = el('div', { class: 'tsc-modal-footer' });
-      var countEl = el('span', { class: 'tsc-picker-count' });
+      var footer = el('div', { class: 'modal-footer' });
+      countEl = el('span', { class: 'tsc-picker-count' });
       var cancelBtn = el('button', { type: 'button', class: 'tsc-btn tsc-btn-secondary' }, 'Abbrechen');
       var doneBtn = el('button', { type: 'button', class: 'tsc-btn tsc-btn-primary' }, 'Fertig');
       footer.appendChild(countEl); footer.appendChild(cancelBtn); footer.appendChild(doneBtn);
@@ -1405,32 +1602,6 @@
       cancelBtn.addEventListener('click', closeFn);
       doneBtn.addEventListener('click', save);
 
-      function renderList() {
-        listEl.innerHTML = '';
-        var atMax = selectedCount() >= ASSIGNMENT_MAX;
-        filteredContacts().forEach(function (c) {
-          var isSel = !!state.selected[c.id];
-          var li = el('li', { class: 'tsc-picker-row' + (isSel ? ' tsc-picker-row-selected' : '') });
-          var cb = el('input', { type: 'checkbox', id: 'tsc-pick-' + c.id });
-          cb.checked = isSel;
-          if (!isSel && atMax) {
-            cb.disabled = true;
-            cb.setAttribute('aria-disabled', 'true');
-            cb.title = 'Maximal 20 Ansprechpartner pro Vorhaben.';
-          }
-          cb.addEventListener('change', function () {
-            if (cb.checked) state.selected[c.id] = true; else delete state.selected[c.id];
-            renderList();
-          });
-          var label = el('label', { for: 'tsc-pick-' + c.id, class: 'tsc-picker-label' });
-          if (isSel) label.appendChild(el('span', { class: 'tsc-picker-check', 'aria-hidden': 'true' }, '✓'));
-          label.appendChild(el('span', { class: 'tsc-picker-name' }, escHtml(c.name || '')));
-          if (c.role) label.appendChild(el('span', { class: 'tsc-picker-role' }, ' · ' + escHtml(c.role)));
-          li.appendChild(cb); li.appendChild(label);
-          listEl.appendChild(li);
-        });
-        countEl.textContent = selectedCount() + ' / ' + ASSIGNMENT_MAX + ' ausgewählt';
-      }
       renderList();
       setTimeout(function () { searchInput.focus(); }, 0);
     }
@@ -1459,14 +1630,18 @@
     }
 
     // Aktuelle Zuordnung vorbelegen (best effort — Fehler blockieren die
-    // Nutzung des Dialogs nicht, Auswahl startet dann einfach leer).
+    // Nutzung des Dialogs nicht, Auswahl startet dann einfach leer). Nur
+    // renderList() statt eines vollen render() (Code-Review-Fund: verhinderte
+    // zuvor ein sichtbares Flackern/den Verlust von Fokus+Eingabe in der
+    // Sucheingabe, sobald die Vorbelegung eintraf) — state.loaded steuert
+    // zusätzlich einen kurzen Lade-Hinweis oberhalb der Liste.
     request('GET', assignmentsForRefUrl(refType, refId)).then(function (ids) {
       (Array.isArray(ids) ? ids : []).forEach(function (id) { state.selected[id] = true; });
       state.loaded = true;
-      render();
+      renderList();
     }).catch(function () {
       state.loaded = true;
-      render();
+      renderList();
     });
 
     render();

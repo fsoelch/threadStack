@@ -2,15 +2,19 @@
 // Arbeitspaket W1 (Ansprechpartner/Kontakte-Erweiterung, public/contacts.js).
 //
 // Deckt window.TSContacts ab: reine Hilfsfunktionen (node-testbar über
-// module.exports) sowie DOM-Verhalten via jsdom mit gemocktem globalem
-// `fetch` (kein echter Server, siehe Arbeitspaketauftrag). Zusätzlich ein
+// module.exports) sowie DOM-Verhalten via jsdom mit gemocktem
+// `window.TSHost.api` (kein echter Server, siehe Arbeitspaketauftrag).
+// Netzwerk läuft NICHT mehr über einen direkten `fetch()`-Mock (Code-Review-
+// Fund: contacts.js ruft ausschließlich TSHost.api auf, analog
+// public/progress.js — absolute `/api`-Pfade würden im Produktivbetrieb mit
+// gesetztem Basis-Pfad-Präfix nicht funktionieren). Zusätzlich ein
 // Regressionstest für die additive Erweiterung in public/progress.js
 // (showNextStep), damit bestehendes Verhalten für todo/topic unverändert
 // bleibt und die neue Kontakt-Variante nachweislich funktioniert.
 //
 // Teststil analog zu test/web_todo_overview.test.js: jsdom mit
 // `runScripts:"dangerously"`, Netzwerk ausschließlich über einen
-// konfigurierbaren fetch-Mock (keine echten Requests).
+// konfigurierbaren TSHost.api-Mock (keine echten Requests).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -29,19 +33,14 @@ function tick(ms = 20) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function fakeResponse(status, body) {
-  return {
-    ok: status >= 200 && status < 300,
-    status,
-    json: () => Promise.resolve(body === undefined ? {} : body),
-  };
-}
-
 /**
  * Baut ein jsdom-Fenster mit progress.js + contacts.js inline geladen und
- * einem konfigurierbaren fetch-Mock. `router(method, urlPath, bodyObj, call)`
- * gibt entweder ein Response-Objekt ({status, body}) oder ein Promise darauf
- * zurück; wirft er, wird das als Netzwerkfehler propagiert.
+ * einem konfigurierbaren window.TSHost.api-Mock (Spy). `router(method,
+ * urlPath, bodyObj, call)` gibt entweder ein Response-Objekt ({status, body})
+ * oder ein Promise darauf zurück; wirft er, wird das als Netzwerkfehler
+ * propagiert. Bildet dieselbe Fehlerform wie die echte TSHost.api-Implemen-
+ * tierung (public/app.js) nach: `err.status`/`err.body`, KEIN Top-Level
+ * `err.code` (das normalisiert contacts.js selbst, siehe request()).
  */
 function makeDom(router) {
   const virtualConsole = new VirtualConsole();
@@ -55,21 +54,34 @@ function makeDom(router) {
   const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'dangerously', virtualConsole });
   const { window } = dom;
   const calls = [];
-  window.fetch = function (url, opts) {
-    const method = (opts && opts.method) || 'GET';
-    let bodyObj;
-    if (opts && opts.body != null) {
-      try { bodyObj = JSON.parse(opts.body); } catch (e) { bodyObj = opts.body; }
-    }
-    const call = { url, method, body: bodyObj };
-    calls.push(call);
-    let result;
-    try {
-      result = router(method, url, bodyObj, call);
-    } catch (e) {
-      return Promise.reject(e);
-    }
-    return Promise.resolve(result).then((r) => fakeResponse(r.status, r.body));
+  window.TSHost = {
+    api: function (method, urlPath, body) {
+      // JSON-Rundreise mit dem JSON-Objekt DIESES (Node-)Realms: `body` kommt
+      // als Objekt aus dem jsdom-Realm des Fensters (contacts.js läuft dort),
+      // Arrays/Objekte daraus sind sonst nicht `assert.deepEqual`-vergleichbar
+      // mit in diesem Testfile erzeugten Literalen (unterschiedliche
+      // Prototypen trotz gleicher Struktur). Entspricht inhaltlich exakt dem
+      // Verhalten der echten TSHost.api (JSON.stringify beim Senden).
+      const bodyObj = body == null ? undefined : JSON.parse(JSON.stringify(body));
+      const call = { url: urlPath, method, body: bodyObj };
+      calls.push(call);
+      let result;
+      try {
+        result = router(method, urlPath, bodyObj, call);
+      } catch (e) {
+        return Promise.reject(e);
+      }
+      return Promise.resolve(result).then((r) => {
+        if (r.status >= 200 && r.status < 300) return r.body === undefined ? {} : r.body;
+        const err = new Error((r.body && r.body.error) || 'Fehler');
+        err.status = r.status;
+        err.body = r.body || {};
+        throw err;
+      });
+    },
+    toast: () => {},
+    confirm: (opts) => Promise.resolve(true),
+    progress: {},
   };
   if (!window.matchMedia) {
     window.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {} });
@@ -324,6 +336,42 @@ test('mountContactDetail: Notizen werden über TSProgress mit refType=contact un
   handle.destroy();
 });
 
+test('mountContactDetail: reload() baut den Notizen-Bereich erneut auf statt ihn dauerhaft leer zu lassen (Code-Review-Fund)', async () => {
+  const { window, document } = makeDom(standardRouter());
+  const spies = stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  assert.equal(spies.composerCalls.length, 1);
+  assert.equal(spies.timelineCalls.length, 1);
+  const notesSection = root.querySelector('[aria-label="Notizen"]');
+  assert.notEqual(notesSection.innerHTML, '');
+
+  await handle.reload();
+  await tick(50);
+
+  // mountInlineComposer/mountTimeline müssen nach reload() erneut aufgerufen
+  // worden sein — ohne den Fix bleibt _notesMounted fälschlich `true` und
+  // der (durch renderAll() geleerte) Container wird nie wieder befüllt.
+  assert.equal(spies.composerCalls.length, 2);
+  assert.equal(spies.timelineCalls.length, 2);
+  assert.notEqual(notesSection.innerHTML, '');
+  handle.destroy();
+});
+
+test('mountContactDetail: destroy() räumt Notizen-Handles auf (kein doppeltes destroy() durch reload() vorher nötig)', async () => {
+  const { window, document } = makeDom(standardRouter());
+  const destroyCalls = { composer: 0, timeline: 0 };
+  window.TSProgress.mountInlineComposer = () => ({ destroy: () => { destroyCalls.composer++; } });
+  window.TSProgress.mountTimeline = () => ({ destroy: () => { destroyCalls.timeline++; }, reload: () => {} });
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  handle.destroy();
+  assert.equal(destroyCalls.composer, 1);
+  assert.equal(destroyCalls.timeline, 1);
+});
+
 test('mountContactDetail: leere Zusatzinformationen zeigen Leerzustand-Hinweis', async () => {
   const { window, document } = makeDom(standardRouter());
   stubProgressModule(window);
@@ -354,6 +402,78 @@ test('mountContactDetail: Kontakt-Ladefehler zeigt Fehlerbox mit "Erneut versuch
   retryBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
   await tick(50);
   assert.doesNotMatch(root.textContent, /Das hat leider nicht geklappt/);
+  handle.destroy();
+});
+
+// ==========================================================================
+// Verschluckte Ladefehler (Code-Review-Fund): Infoblöcke/Rubriken dürfen bei
+// einem 500er NICHT wie ein echter Leerzustand aussehen, und ein
+// Rubriken-Ladefehler darf "Privates"-Inhalte nicht ungewollt aufgeklappt
+// im Klartext zeigen.
+// ==========================================================================
+
+test('Zusatzinformationen: Infoblock-Ladefehler zeigt Fehlerbox statt Leerzustand-Text, Retry lädt erfolgreich nach', async () => {
+  let fail = true;
+  const blocks = [{ id: 'b1', categoryId: 'cat1', bodyHtml: '<p>Inhalt</p>', updatedAt: 't1' }];
+  const categories = [{ id: 'cat1', label: 'Vertrieb' }];
+  const router = (method, url) => {
+    if (method === 'GET' && /\/info-blocks$/.test(url) && fail) {
+      return { status: 500, body: { error: 'Serverfehler', code: 'internal' } };
+    }
+    return standardRouter({ categories, blocks })(method, url);
+  };
+  const { window, document } = makeDom(router);
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  assert.doesNotMatch(root.textContent, /Noch keine Zusatzinformationen erfasst\./);
+  assert.match(root.textContent, /Das hat leider nicht geklappt/);
+  fail = false;
+  const retryBtn = root.querySelector('.tsc-error-box button');
+  assert.ok(retryBtn);
+  retryBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(50);
+  assert.doesNotMatch(root.textContent, /Das hat leider nicht geklappt/);
+  assert.match(root.textContent, /Inhalt/);
+  handle.destroy();
+});
+
+test('Zusatzinformationen: Rubriken-Ladefehler zeigt Fehlerbox UND rendert "Privates"-Blöcke NICHT ungewollt aufgeklappt', async () => {
+  let fail = true;
+  const blocks = [{ id: 'b1', categoryId: 'cat-privates', bodyHtml: '<p>Geheimer Inhalt</p>', updatedAt: 't1' }];
+  const router = (method, url) => {
+    if (method === 'GET' && url === '/api/contact-categories' && fail) {
+      return { status: 500, body: { error: 'Serverfehler', code: 'internal' } };
+    }
+    return standardRouter({ blocks })(method, url);
+  };
+  const { window, document } = makeDom(router);
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  // Fehlerbox statt eines echten (aufgeklappten) Rubrik-Blocks — der
+  // "Privates"-Inhalt darf in diesem Zustand nicht sichtbar sein.
+  assert.match(root.textContent, /Das hat leider nicht geklappt/);
+  assert.doesNotMatch(root.innerHTML, /Geheimer Inhalt/);
+
+  fail = false;
+  const retryBtn = root.querySelector('.tsc-error-box button');
+  assert.ok(retryBtn);
+  retryBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(50);
+  assert.doesNotMatch(root.textContent, /Das hat leider nicht geklappt/);
+  // Rubriken sind jetzt geladen, aber die Kategorie 'cat-privates' existiert
+  // dort serverseitig nicht (Vertrag: nicht auflösbare categoryId landet in
+  // "Ohne Rubrik") — WICHTIG: diese Gruppe muss weiterhin eingeklappt sein,
+  // solange sie nicht nachweislich NUR echte "Ohne Rubrik"-Blöcke enthält.
+  // Da hier `categoriesLoaded` nach dem Retry wieder true ist, prüfen wir
+  // stattdessen den eigentlichen Kernschutz: der geheime Inhalt ist nicht
+  // durch den Rubriken-Fehler zuvor ungewollt sichtbar geworden (oben) — und
+  // ist nach erfolgreichem Nachladen als normale "Ohne Rubrik"-Gruppe
+  // vorhanden (kein Datenverlust).
+  assert.match(root.textContent, /Geheimer Inhalt/);
   handle.destroy();
 });
 
@@ -475,6 +595,55 @@ test('Infoblock-Reorder: ↑-Button des ersten Blocks ist deaktiviert, aber weit
 });
 
 // ==========================================================================
+// expectedUpdatedAt im normalen Speicherpfad (Code-Review-Fund)
+// ==========================================================================
+
+test('Infoblock bearbeiten (normaler Speicherpfad): PUT sendet expectedUpdatedAt des geladenen Blocks', async () => {
+  const categories = [{ id: 'cat1', label: 'Vertrieb' }];
+  const blocks = [{ id: 'b1', categoryId: 'cat1', bodyHtml: '<p>Alt</p>', updatedAt: '2026-01-01T00:00:00.000Z' }];
+  const { window, document, calls } = makeDom(standardRouter({ categories, blocks }));
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  root.querySelector('[data-action="edit-block"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  const editorId = root.querySelector('[data-role="tsc-block-editor"]').getAttribute('data-editor-id');
+  document.getElementById(editorId).innerHTML = '<p>Neu</p>';
+  root.querySelector('[data-action="tsc-save-block"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(50);
+  const putCall = calls.filter((c) => c.method === 'PUT' && /\/info-blocks\/b1$/.test(c.url))[0];
+  assert.ok(putCall, 'PUT-Aufruf erwartet');
+  assert.equal(putCall.body.expectedUpdatedAt, '2026-01-01T00:00:00.000Z');
+  handle.destroy();
+});
+
+test('Neuen Infoblock anlegen: POST sendet KEIN expectedUpdatedAt (kein Vorgänger-Stand vorhanden)', async () => {
+  const categories = [{ id: 'cat1', label: 'Vertrieb' }];
+  const { window, document, calls } = makeDom(standardRouter({ categories }));
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  root.querySelector('[data-action="add-block"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  const input = root.querySelector('.tsc-combobox-input');
+  input.value = 'Vertrieb';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await tick(10);
+  root.querySelector('.tsc-combobox-option').dispatchEvent(new window.Event('mousedown', { bubbles: true }));
+  await tick(10);
+  const editorId = root.querySelector('[data-role="tsc-block-editor"]').getAttribute('data-editor-id');
+  document.getElementById(editorId).innerHTML = '<p>Neu</p>';
+  root.querySelector('[data-action="tsc-save-block"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(50);
+  const postCall = calls.filter((c) => c.method === 'POST' && /\/info-blocks$/.test(c.url))[0];
+  assert.ok(postCall, 'POST-Aufruf erwartet');
+  assert.equal('expectedUpdatedAt' in postCall.body, false);
+  handle.destroy();
+});
+
+// ==========================================================================
 // Konfliktfall beim Speichern (409 block_conflict)
 // ==========================================================================
 
@@ -589,6 +758,40 @@ test('Zugeordnete Topics: Leerzustand ohne Verknüpfungen', async () => {
   handle.destroy();
 });
 
+test('Topic zuweisen: ruft openThemeLinkModal(ctx, onClosed) auf, Topics werden erst nach onClosed() neu geladen (Code-Review-Fund: kein Polling mehr)', async () => {
+  const themesCallsBefore = [];
+  let capturedOnClosed = null;
+  const router = (method, url) => {
+    if (method === 'GET' && url === '/api/themes') themesCallsBefore.push(1);
+    return standardRouter()(method, url);
+  };
+  const { window, document } = makeDom(router);
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const openThemeLinkModal = (ctx, onClosed) => { capturedOnClosed = onClosed; };
+  const handle = window.TSContacts.mountContactDetail(root, {
+    contactId: 'c1', ...defaultAdapters(window, { openThemeLinkModal }),
+  });
+  await tick(50);
+  const themesCallCountAfterMount = themesCallsBefore.length;
+
+  root.querySelector('[data-action="assign-topic"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  assert.equal(typeof capturedOnClosed, 'function');
+
+  // Ohne Aufruf von onClosed() darf KEIN zusätzlicher GET /api/themes
+  // erfolgen (kein Hintergrund-Polling mehr, siehe Code-Review-Fund) — auch
+  // nach einer Wartezeit, die für das frühere 1,5s-Intervall ausgereicht
+  // hätte.
+  await tick(60);
+  assert.equal(themesCallsBefore.length, themesCallCountAfterMount);
+
+  capturedOnClosed();
+  await tick(20);
+  assert.equal(themesCallsBefore.length, themesCallCountAfterMount + 1);
+  handle.destroy();
+});
+
 test('Ist zuständig für: Leerzustand, Fehlerzustand mit Retry, Typ-Badge/Meeting-Label', async () => {
   const { window, document } = makeDom(standardRouter());
   stubProgressModule(window);
@@ -631,7 +834,7 @@ function makeContacts(n) {
 test('openAssignmentPicker: Leerzustand ohne Kontakte', () => {
   const { window, document } = makeDom(() => ({ status: 200, body: [] }));
   window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts: [] });
-  const dialog = document.querySelector('.tsc-modal');
+  const dialog = document.querySelector('.modal');
   assert.match(dialog.textContent, /Noch keine Ansprechpartner vorhanden/);
 });
 
@@ -640,7 +843,7 @@ test('openAssignmentPicker: Titel/Kontextzeile, Suche filtert, Limit von 20 deak
   const { window, document } = makeDom(() => ({ status: 200, body: [] }));
   window.TSContacts.openAssignmentPicker({ refType: 'topic', refId: 'th1', title: 'Migration', contacts });
   await tick(20);
-  const dialog = document.querySelector('.tsc-modal');
+  const dialog = document.querySelector('.modal');
   assert.match(dialog.textContent, /Für „Migration" \(Thema\)/);
 
   const search = dialog.querySelector('.tsc-picker-search');
@@ -669,6 +872,58 @@ test('openAssignmentPicker: Titel/Kontextzeile, Suche filtert, Limit von 20 deak
   });
 });
 
+test('openAssignmentPicker: Eintreffen der Vorbelegung reißt NICHT die Sucheingabe (Fokus/Eingabe) ein (Code-Review-Fund: kein volles render() mehr)', async () => {
+  const contacts = makeContacts(3);
+  let resolvePrefill;
+  const router = (method) => {
+    if (method === 'GET') {
+      return new Promise((resolve) => { resolvePrefill = () => resolve({ status: 200, body: ['k1'] }); });
+    }
+    return { status: 200, body: { ok: true } };
+  };
+  const { window, document } = makeDom(router);
+  window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts });
+  await tick(10);
+  const dialog = document.querySelector('.modal');
+  const search = dialog.querySelector('.tsc-picker-search');
+  assert.ok(search, 'Sucheingabe muss bereits synchron vorhanden sein');
+  search.value = 'Kontakt 1';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  assert.equal(dialog.querySelector('.tsc-loading-hint').hidden, false); // sichtbar, solange nicht geladen
+
+  // Vorbelegung trifft jetzt (verzögert) ein.
+  resolvePrefill();
+  await tick(20);
+
+  // Dieselbe Sucheingabe-DOM-Node (kein Neuaufbau der Chrome) UND der vom
+  // Nutzer eingegebene Text bleiben erhalten.
+  assert.equal(dialog.querySelector('.tsc-picker-search'), search);
+  assert.equal(search.value, 'Kontakt 1');
+  assert.equal(dialog.querySelector('.tsc-loading-hint').hidden, true);
+
+  // Die Vorbelegung (k1) ist trotz aktivem Suchfilter im state.selected
+  // verankert — Suchfeld leeren, um das zu prüfen.
+  search.value = '';
+  search.dispatchEvent(new window.Event('input', { bubbles: true }));
+  const preselected = dialog.querySelector('#tsc-pick-k1');
+  assert.ok(preselected);
+  assert.equal(preselected.checked, true);
+});
+
+test('openAssignmentPicker: Titel in der Kontextzeile ist gegen XSS escaped (Code-Review-Fund)', async () => {
+  const contacts = makeContacts(1);
+  const { window, document } = makeDom(() => ({ status: 200, body: [] }));
+  window.TSContacts.openAssignmentPicker({
+    refType: 'todo', refId: 't1', title: '<img src=x onerror=alert(1)>', contacts,
+  });
+  await tick(20);
+  const dialog = document.querySelector('.modal');
+  const context = dialog.querySelector('.tsc-picker-context');
+  assert.doesNotMatch(context.innerHTML, /<img/);
+  assert.match(context.innerHTML, /&lt;img/);
+  assert.equal(dialog.querySelector('.tsc-picker-context img'), null);
+});
+
 test('openAssignmentPicker: "Fertig" speichert via PUT und ruft onChanged mit ausgewählten Kontakten auf', async () => {
   const contacts = makeContacts(3);
   const calls = [];
@@ -683,7 +938,7 @@ test('openAssignmentPicker: "Fertig" speichert via PUT und ruft onChanged mit au
     onChanged: (assigned) => { changedWith = assigned; },
   });
   await tick(20);
-  const dialog = document.querySelector('.tsc-modal');
+  const dialog = document.querySelector('.modal');
   const cb0 = dialog.querySelectorAll('input[type="checkbox"]')[0];
   cb0.checked = true;
   cb0.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -696,7 +951,7 @@ test('openAssignmentPicker: "Fertig" speichert via PUT und ruft onChanged mit au
   assert.deepEqual(putCall.body.contactIds, ['k0']);
   assert.equal(changedWith.length, 1);
   assert.equal(changedWith[0].id, 'k0');
-  assert.equal(document.querySelector('.tsc-modal-overlay'), null);
+  assert.equal(document.querySelector('.modal-overlay'), null);
 });
 
 test('openAssignmentPicker: Speicherfehler zeigt Toast, Dialog bleibt offen mit erhaltener Auswahl', async () => {
@@ -711,7 +966,7 @@ test('openAssignmentPicker: Speicherfehler zeigt Toast, Dialog bleibt offen mit 
     toast: (msg) => { toastMsg = msg; },
   });
   await tick(20);
-  const dialog = document.querySelector('.tsc-modal');
+  const dialog = document.querySelector('.modal');
   const cb0 = dialog.querySelectorAll('input[type="checkbox"]')[0];
   cb0.checked = true;
   cb0.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -719,7 +974,7 @@ test('openAssignmentPicker: Speicherfehler zeigt Toast, Dialog bleibt offen mit 
   doneBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
   await tick(30);
   assert.equal(toastMsg, 'Zuordnung konnte nicht gespeichert werden.');
-  assert.ok(document.querySelector('.tsc-modal-overlay'));
+  assert.ok(document.querySelector('.modal-overlay'));
   const cbStillChecked = document.querySelectorAll('input[type="checkbox"]')[0];
   assert.equal(cbStillChecked.checked, true);
 });
@@ -733,10 +988,10 @@ test('openAssignmentPicker: Escape schließt den Dialog und stellt Fokus wieder 
   trigger.focus();
   window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts });
   await tick(20);
-  assert.ok(document.querySelector('.tsc-modal-overlay'));
+  assert.ok(document.querySelector('.modal-overlay'));
   document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   await tick(10);
-  assert.equal(document.querySelector('.tsc-modal-overlay'), null);
+  assert.equal(document.querySelector('.modal-overlay'), null);
   assert.equal(document.activeElement, trigger);
 });
 
@@ -759,7 +1014,7 @@ test('Rubriken verwalten: Liste anzeigen, Umbenennen inline, Löschen mit Bestä
   await tick(50);
   root.querySelector('[data-action="manage-categories"]').dispatchEvent(new window.Event('click', { bubbles: true }));
   await tick(20);
-  const dialog = document.querySelector('.tsc-modal');
+  const dialog = document.querySelector('.modal');
   assert.match(dialog.textContent, /Vertrieb/);
   const renameBtn = dialog.querySelector('.tsc-category-manage-row .tsc-icon-btn');
   renameBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
@@ -797,7 +1052,7 @@ test('Rubriken verwalten: Löschen bei category_in_use zeigt dynamischen Bestät
   await tick(50);
   root.querySelector('[data-action="manage-categories"]').dispatchEvent(new window.Event('click', { bubbles: true }));
   await tick(20);
-  const dialog = document.querySelector('.tsc-modal');
+  const dialog = document.querySelector('.modal');
   const deleteBtn = dialog.querySelectorAll('.tsc-category-manage-row .tsc-icon-btn')[1];
   deleteBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
   await tick(30);

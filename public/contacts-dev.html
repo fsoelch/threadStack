@@ -31,6 +31,18 @@
   .rt-toolbar:empty::before { content: "(Toolbar wird vom Host verdrahtet — hier leer)"; }
   .rt-content { min-height:80px; padding:8px 10px; font-size:.875rem; }
   .rt-display { font-size:.875rem; }
+  /* Minimaler Ersatz für das globale Dialog-Chrome aus index.html
+     (.modal-overlay/.modal/.modal-header/.modal-body/.modal-footer/
+     .modal-close) — im echten Host (index.html) übernimmt dessen
+     bestehendes, projektweites Stylesheet die volle Gestaltung; contacts.js
+     definiert absichtlich KEINE eigene Dialog-Optik (siehe Kopf-Kommentar
+     in contacts.css). */
+  .modal-overlay { position:fixed; inset:0; background:rgba(16,22,30,.4); display:flex; align-items:center; justify-content:center; z-index:1000; }
+  .modal { background:#fff; border-radius:12px; max-width:480px; width:90%; max-height:85vh; overflow-y:auto; }
+  .modal-header { display:flex; align-items:center; justify-content:space-between; padding:1rem 1.25rem; border-bottom:1px solid #E8E7E2; }
+  .modal-body { padding:1rem 1.25rem; }
+  .modal-footer { display:flex; align-items:center; justify-content:flex-end; gap:.5rem; padding:.75rem 1.25rem; border-top:1px solid #E8E7E2; }
+  .modal-close { background:none; border:none; font-size:1.125rem; cursor:pointer; line-height:1; }
 </style>
 <link rel="stylesheet" href="progress.css">
 <link rel="stylesheet" href="contacts.css">
@@ -103,58 +115,75 @@
   };
   var picks = { todo: { t1: ['anna'] } };
 
-  function jr(status, body) { return { status: status, json: function () { return Promise.resolve(body); }, ok: status < 400 }; }
+  // Antwort-Hüllen wie die echte TSHost.api (public/app.js): bei Erfolg wird
+  // der Body direkt aufgelöst, bei Fehlern wird ein Error mit status/body
+  // geworfen (KEIN Top-Level `code` — contacts.js normalisiert `err.code`
+  // selbst aus `err.body.code`, siehe request() dort).
+  function ok(body) { return Promise.resolve(body === undefined ? {} : body); }
+  function fail(status, body) {
+    var err = new Error((body && body.error) || 'Fehler');
+    err.status = status;
+    err.body = body || {};
+    return Promise.reject(err);
+  }
 
-  window.fetch = function (url, opts) {
-    var method = (opts && opts.method) || 'GET';
-    var body = opts && opts.body ? JSON.parse(opts.body) : undefined;
-    log(method + ' ' + url + (body ? ' ' + JSON.stringify(body) : ''));
-    return new Promise(function (resolve) {
-      setTimeout(function () {
-        var m;
-        if ((m = url.match(/^\/api\/contacts\/([^/]+)$/)) && method === 'GET') { resolve(jr(200, contacts[m[1]])); return; }
-        if (url === '/api/contact-categories' && method === 'GET') { resolve(jr(200, categories)); return; }
-        if (url === '/api/contact-categories' && method === 'POST') {
-          var cat = { id: 'cat-' + Date.now(), label: body.label };
-          categories.push(cat);
-          resolve(jr(201, cat));
-          return;
-        }
-        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'GET') { resolve(jr(200, blocks[m[1]] || [])); return; }
-        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'POST') {
-          var nb = { id: 'b' + Date.now(), categoryId: body.categoryId, bodyHtml: body.bodyHtml, updatedAt: new Date().toISOString() };
-          (blocks[m[1]] = blocks[m[1]] || []).push(nb);
-          resolve(jr(201, nb));
-          return;
-        }
-        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'PUT') {
-          var list = blocks[m[1]] || [];
-          var b = list.filter(function (x) { return x.id === m[2]; })[0];
-          if (b) { b.categoryId = body.categoryId; b.bodyHtml = body.bodyHtml; b.updatedAt = new Date().toISOString(); }
-          resolve(jr(200, b));
-          return;
-        }
-        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'DELETE') {
-          blocks[m[1]] = (blocks[m[1]] || []).filter(function (x) { return x.id !== m[2]; });
-          resolve(jr(200, { ok: true }));
-          return;
-        }
-        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/reorder$/)) && method === 'PUT') { resolve(jr(200, { ok: true })); return; }
-        if (url === '/api/themes' && method === 'GET') { resolve(jr(200, themes)); return; }
-        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/assignments/)) && method === 'GET') { resolve(jr(200, assignments[m[1]] || [])); return; }
-        if ((m = url.match(/^\/api\/assignments\/([^/]+)\/([^/?]+)$/)) && method === 'GET') {
-          resolve(jr(200, (picks[m[1]] && picks[m[1]][m[2]]) || []));
-          return;
-        }
-        if ((m = url.match(/^\/api\/assignments\/([^/]+)\/([^/?]+)$/)) && method === 'PUT') {
-          picks[m[1]] = picks[m[1]] || {};
-          picks[m[1]][m[2]] = body.contactIds;
-          resolve(jr(200, { ok: true }));
-          return;
-        }
-        resolve(jr(404, { error: 'Unbekannter Mock-Pfad: ' + method + ' ' + url, code: 'not_found' }));
-      }, 150 + Math.random() * 150);
-    });
+  window.TSHost = {
+    // Ersetzt einen früher hier vorhandenen direkten `window.fetch`-Mock
+    // (Code-Review-Fund: contacts.js ruft ausschließlich TSHost.api auf,
+    // absolute `/api`-Pfade per fetch() wären im Produktivbetrieb mit
+    // gesetztem Basis-Pfad-Präfix funktionsunfähig, siehe Modulkopf-
+    // Kommentar in contacts.js).
+    api: function (method, url, body) {
+      log(method + ' ' + url + (body ? ' ' + JSON.stringify(body) : ''));
+      return new Promise(function (resolve, reject) {
+        setTimeout(function () {
+          var m;
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)$/)) && method === 'GET') { resolve(ok(contacts[m[1]])); return; }
+          if (url === '/api/contact-categories' && method === 'GET') { resolve(ok(categories)); return; }
+          if (url === '/api/contact-categories' && method === 'POST') {
+            var cat = { id: 'cat-' + Date.now(), label: body.label };
+            categories.push(cat);
+            resolve(ok(cat));
+            return;
+          }
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'GET') { resolve(ok(blocks[m[1]] || [])); return; }
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'POST') {
+            var nb = { id: 'b' + Date.now(), categoryId: body.categoryId, bodyHtml: body.bodyHtml, updatedAt: new Date().toISOString() };
+            (blocks[m[1]] = blocks[m[1]] || []).push(nb);
+            resolve(ok(nb));
+            return;
+          }
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'PUT') {
+            var list = blocks[m[1]] || [];
+            var b = list.filter(function (x) { return x.id === m[2]; })[0];
+            if (b) { b.categoryId = body.categoryId; b.bodyHtml = body.bodyHtml; b.updatedAt = new Date().toISOString(); }
+            resolve(ok(b));
+            return;
+          }
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'DELETE') {
+            blocks[m[1]] = (blocks[m[1]] || []).filter(function (x) { return x.id !== m[2]; });
+            resolve(ok({ ok: true }));
+            return;
+          }
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/reorder$/)) && method === 'PUT') { resolve(ok({ ok: true })); return; }
+          if (url === '/api/themes' && method === 'GET') { resolve(ok(themes)); return; }
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/assignments/)) && method === 'GET') { resolve(ok(assignments[m[1]] || [])); return; }
+          if ((m = url.match(/^\/api\/assignments\/([^/]+)\/([^/?]+)$/)) && method === 'GET') {
+            resolve(ok((picks[m[1]] && picks[m[1]][m[2]]) || []));
+            return;
+          }
+          if ((m = url.match(/^\/api\/assignments\/([^/]+)\/([^/?]+)$/)) && method === 'PUT') {
+            picks[m[1]] = picks[m[1]] || {};
+            picks[m[1]][m[2]] = body.contactIds;
+            resolve(ok({ ok: true }));
+            return;
+          }
+          resolve(fail(404, { error: 'Unbekannter Mock-Pfad: ' + method + ' ' + url, code: 'not_found' }));
+        }, 150 + Math.random() * 150);
+      });
+    },
+    toast: function (msg) { log('TOAST: ' + msg); },
+    confirm: function (opts) { return Promise.resolve(window.confirm((opts.title || '') + '\n\n' + (opts.message || ''))); },
   };
 
   window.addEventListener('load', function () {
@@ -163,7 +192,11 @@
 
     var rt = {
       setRT: function (id, val) { var e = document.getElementById(id); if (e) e.innerHTML = val || ''; },
-      getRT: function (id) { var e = document.getElementById(id); return e ? e.innerHTML : ''; }
+      getRT: function (id) { var e = document.getElementById(id); return e ? e.innerHTML : ''; },
+      // Optionaler Adapter (siehe Modulkopf-Kommentar in contacts.js) — im
+      // Dev-Harness nur protokolliert, echtes Toolbar-Wiring übernimmt der
+      // reale Host (W2/index.html).
+      initToolbar: function (editorId, toolbarId) { log('initToolbar(' + editorId + ', ' + toolbarId + ')'); }
     };
 
     function mount(contactId) {
@@ -171,7 +204,14 @@
       handle = window.TSContacts.mountContactDetail(detailRoot, {
         contactId: contactId,
         rt: rt,
-        openThemeLinkModal: function (ctx) { log('openThemeLinkModal(Mock) ' + JSON.stringify(ctx)); alert('Mock: Theme-Link-Dialog würde sich hier öffnen (Host-Integration in W2).'); },
+        openThemeLinkModal: function (ctx, onClosed) {
+          log('openThemeLinkModal(Mock) ' + JSON.stringify(ctx));
+          alert('Mock: Theme-Link-Dialog würde sich hier öffnen (Host-Integration in W2).');
+          // Der reale Host (W2) MUSS onClosed() aufrufen, sobald sein Dialog
+          // schließt (siehe Modulkopf-Kommentar in contacts.js). Im Mock hier
+          // direkt nach dem alert(), da kein echter Dialog existiert.
+          if (typeof onClosed === 'function') onClosed();
+        },
         confirm: function (opts) { return Promise.resolve(window.confirm((opts.title || '') + '\n\n' + (opts.message || ''))); },
         toast: function (msg) { log('TOAST: ' + msg); },
         onContactChanged: function (c) { log('onContactChanged(' + (c && c.name) + ')'); },
