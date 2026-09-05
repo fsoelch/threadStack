@@ -38,3 +38,12 @@ Backends lesen (nicht nur den ursprünglichen Schnittstellenvertrag), dann
 Web-Modul UND zugehörige Tests (Mocks!) in einem Schritt anpassen — sonst
 bilden die Tests weiterhin den falschen Vertrag ab und geben falsche
 Sicherheit.
+
+**Nachtrag (2026-09-05, Folgereview):** Beim ersten Fix wurde die manuelle
+Dev-Testseite `public/contacts-dev.html` vergessen — ihr `TSHost`-Mock bildete
+weiterhin das alte flache Format ab, obwohl `contacts.js` schon korrigiert
+war. Lehre verallgemeinert: bei einem Formatkonflikt-Fix IMMER alle drei
+Stellen in einem Schritt pruefen/anpassen — Produktivmodul, Unit-Test-Mocks
+UND jede manuelle Dev-/Test-Harness-Seite (falls vorhanden) — sonst bleibt
+genau die Flaeche falsch, die eigentlich als Absicherung gegen diese
+Bugklasse dienen soll.
