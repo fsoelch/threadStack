@@ -1074,7 +1074,7 @@ test('openAssignmentPicker: Prefill entpackt B3-Format {contacts:[{contactId,...
 
 test('openAssignmentPicker: fehlgeschlagene Vorbelegung meldet onError, zeigt sichtbaren Hinweis und deaktiviert "Fertig"', async () => {
   const contacts = makeContacts(3);
-  const { window, document } = makeDom((method) => {
+  const { window, document, calls } = makeDom((method) => {
     if (method === 'GET') return { status: 500, body: { error: 'Serverfehler', code: 'internal' } };
     return { status: 200, body: { ok: true } };
   });
@@ -1100,6 +1100,11 @@ test('openAssignmentPicker: fehlgeschlagene Vorbelegung meldet onError, zeigt si
   doneBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
   await tick(20);
   assert.ok(document.querySelector('.modal-overlay'), 'Dialog muss offen bleiben');
+  assert.equal(
+    calls.filter((c) => c.method === 'PUT').length,
+    0,
+    'ein Klick auf den deaktivierten "Fertig"-Button darf keinen PUT auslösen (würde sonst die bestehende Zuordnung durch eine leere Auswahl ersetzen)'
+  );
 });
 
 test('openAssignmentPicker: erfolgreiche Vorbelegung zeigt KEINEN Warnhinweis, "Fertig" bleibt aktiv', async () => {

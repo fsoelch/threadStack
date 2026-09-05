@@ -467,8 +467,7 @@
       editorCategory: null,   // aktuell in der Combobox gewählte Rubrik
       conflict: null,         // { blockId, pendingBodyHtml, pendingCategoryId, serverBlock, showServer }
       topics: [], topicsLoading: true, topicsError: null,
-      assignments: [], assignmentsLoading: true, assignmentsError: null,
-      assignmentsPage: null, assignmentsCounts: null
+      assignments: [], assignmentsLoading: true, assignmentsError: null
     };
 
     this.rootEl = el('div', { class: 'tsc-detail' });
@@ -1180,16 +1179,13 @@
     // B3-Backend (lib/contacts/assignments/router.js) validiert limit auf den
     // Bereich 1..50 (400 INVALID_LIMIT außerhalb dieses Bereichs) und liefert
     // ein verschachteltes Objekt { items, page:{limit,offset,total,hasMore},
-    // counts:{open,done} } statt eines flachen Arrays. `page.hasMore` wird
-    // hier bewusst nur gemerkt (this.state.assignmentsPage), ein "weitere
-    // laden"-UI ist im bestehenden Vertrag für Abschnitt 4 noch nicht
-    // vorgesehen — spätere Erweiterung kann darauf aufsetzen, ohne den
-    // Response-Parsing-Code erneut anzufassen.
+    // counts:{open,done} } statt eines flachen Arrays. `page`/`counts` werden
+    // aktuell nicht in state gehalten, da Abschnitt 4 noch kein "weitere
+    // laden"-UI vorsieht — eine spätere Erweiterung kann sie bei Bedarf aus
+    // `res` erneut auslesen, ohne dass hier Vorratshaltung nötig ist.
     request('GET', contactAssignmentsUrl(this.contactId, { limit: 50, offset: 0 })).then(function (res) {
       if (self.destroyed) return;
       self.state.assignments = (res && Array.isArray(res.items)) ? res.items : [];
-      self.state.assignmentsPage = (res && res.page) || null;
-      self.state.assignmentsCounts = (res && res.counts) || null;
       self.state.assignmentsLoading = false;
       self.renderSection4();
     }).catch(function (err) {
