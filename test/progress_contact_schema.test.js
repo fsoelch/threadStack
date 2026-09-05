@@ -261,6 +261,63 @@ test('migrateProgressRefTypeContact: laeuft mit foreign_keys=OFF, damit eine kue
   assert.deepEqual(violations, [], 'foreign_key_check darf nach dem Rebuild keine Inkonsistenzen melden');
 });
 
+test('migrateProgressRefTypeContact: Trigger AUF EINER ANDEREN Tabelle, dessen Rumpf progress_entries referenziert, ueberlebt den Rebuild dank legacy_alter_table=ON (Nachbesserung Fund 1)', (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => cleanup(dir));
+  runProgressMigrations(db);
+  db.prepare("INSERT INTO users VALUES ('u1','u1',datetime('now'))").run();
+
+  // Fremdtrigger AUF todos, dessen Rumpf progress_entries referenziert -
+  // genau der Fall, der ohne PRAGMA legacy_alter_table=ON empirisch mit
+  // "SqliteError: no such table: main.progress_entries" scheitert.
+  db.exec(`
+    CREATE TRIGGER trg_todos_progress_mirror
+    AFTER INSERT ON todos
+    BEGIN
+      INSERT INTO progress_entries(id,user_id,ref_type,ref_id,body_html,body_text,created_at)
+      VALUES ('mirror-' || NEW.id, NEW.user_id, 'todo', NEW.id, '', 'auto', datetime('now'));
+    END;
+  `);
+
+  assert.doesNotThrow(() => migrateProgressRefTypeContact(db), 'Rebuild darf trotz Fremdtrigger auf anderer Tabelle nicht scheitern');
+
+  const trigger = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_todos_progress_mirror'"
+  ).get();
+  assert.ok(trigger, 'Fremdtrigger muss den Rebuild unversehrt ueberstehen');
+
+  // Trigger muss nach dem Rebuild weiterhin tatsaechlich feuern.
+  db.prepare("INSERT INTO todos(id,user_id,title,created_at) VALUES ('t-new','u1','Neues Todo',datetime('now'))").run();
+  const mirrored = db.prepare('SELECT id FROM progress_entries WHERE id=?').get('mirror-t-new');
+  assert.ok(mirrored, 'Fremdtrigger muss nach dem Rebuild weiterhin korrekt feuern');
+});
+
+test('migrateProgressRefTypeContact: eine vorbestehende FK-Altlast in einer unverbundenen Tabelle darf die Migration nicht faelschlich scheitern lassen (Code-Review-Fund, Mittel)', (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => cleanup(dir));
+  runProgressMigrations(db);
+  db.prepare("INSERT INTO users VALUES ('u1','u1',datetime('now'))").run();
+
+  // Voellig unverbundene Tabelle mit einer vorbestehenden FK-Verletzung.
+  // Ein datenbankweiter foreign_key_check (ohne Tabellenargument) wuerde
+  // das faelschlich als Migrationsfehler melden.
+  db.pragma('foreign_keys = OFF');
+  db.exec(`
+    CREATE TABLE other_child (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id)
+    );
+  `);
+  db.prepare("INSERT INTO other_child(id, user_id) VALUES ('oc1', 'does-not-exist')").run();
+  db.pragma('foreign_keys = ON');
+
+  const preExistingViolations = db.pragma('foreign_key_check');
+  assert.ok(preExistingViolations.length >= 1, 'Testaufbau muss eine bestehende, unabhaengige FK-Verletzung erzeugen');
+
+  const result = migrateProgressRefTypeContact(db);
+  assert.deepEqual(result, { migrated: true }, 'Migration darf trotz unabhaengiger FK-Altlast in anderer Tabelle nicht fehlschlagen');
+});
+
 test('purgeProgressOrphans: entfernt verwaiste contact-Zeilen, wenn contacts-Tabelle existiert', (t) => {
   const { db, dir } = tempDb({ withContacts: true });
   t.after(() => cleanup(dir));
