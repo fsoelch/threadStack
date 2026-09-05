@@ -61,8 +61,37 @@ enum ContactAssignmentPickerLogic {
     /// serverseitig löschen. Als reine, aus `save()` extrahierte
     /// Entscheidungsfunktion testbar (analog zu `TodoSaveTarget`/
     /// `TopicSaveTarget`).
-    static func shouldCommitAssignments(savedId: String?, assignmentsLoaded: Bool) -> Bool {
-        savedId != nil && assignmentsLoaded
+    ///
+    /// Niedrig-Fund (Code-Review): der `savedId`-Parameter war redundant, da
+    /// jede Aufrufstelle ohnehin zusätzlich per `let savedId` prüft/entpackt —
+    /// die Signatur hier deckt nur noch die eigentliche Lade-Bedingung ab.
+    static func shouldCommitAssignments(assignmentsLoaded: Bool) -> Bool {
+        assignmentsLoaded
+    }
+
+    /// Hoch-Fund (Code-Review): entscheidet, ob der Auswahl-Button in
+    /// `ContactAssignmentSection` gesperrt bleibt. Im Bearbeiten-Modus
+    /// (`refId != nil`) darf das Picker-Sheet erst geöffnet werden, sobald
+    /// die bestehende Zuordnung nachweislich geladen wurde (`loaded == true`)
+    /// — sonst könnte ein Tap auf "Fertig" ohne jede Änderung (bei
+    /// fehlgeschlagenem oder noch laufendem Laden) `save()` mit einer
+    /// fälschlich leeren Auswahl committen lassen. Im Anlegen-Modus
+    /// (`refId == nil`) ist `loaded` bereits sofort über den bestehenden
+    /// `.success([])`-Pfad `true`, der Button bleibt dort also nutzbar. Als
+    /// reine, testbare Funktion (analog zu `shouldCommitAssignments`) aus dem
+    /// View extrahiert.
+    static func isPickerEntryDisabled(refId: String?, loaded: Bool) -> Bool {
+        refId != nil && !loaded
+    }
+
+    /// Hoch-Fund (Code-Review, Fall c): entscheidet, ob ein (ggf. verspätet
+    /// zurückkommender) erfolgreicher Ladevorgang die lokale Auswahl in
+    /// `TodoFormView`/`TopicFormView.loadContactAssignments()` überschreiben
+    /// darf — NICHT, sobald der Nutzer bereits aktiv eine Auswahl im
+    /// Picker-Sheet bestätigt hat (`userConfirmedSelection == true`). Als
+    /// reine, testbare Funktion aus den beiden Formularen extrahiert.
+    static func shouldApplyLoadedSelection(userConfirmedSelection: Bool) -> Bool {
+        !userConfirmedSelection
     }
 }
 
@@ -283,17 +312,36 @@ struct ContactAssignmentSection: View {
     let refId: String?
     @Binding var selection: Set<String>
     /// Wird NUR nach erfolgreichem Laden der bestehenden Zuordnung (durch das
-    /// `.task` im Aufrufer, siehe `TodoFormView`/`TopicFormView`) ODER durch
-    /// eine aktive, vom Nutzer bestätigte Auswahl in diesem Sheet auf `true`
+    /// `.task` im Aufrufer, siehe `TodoFormView`/`TopicFormView`) auf `true`
     /// gesetzt — steuert im Aufrufer, ob `save()` `setAssignments` committen
     /// darf (Blocker-Fix: nie mit einer nie geladenen/fehlgeschlagenen leeren
     /// Menge überschreiben).
+    ///
+    /// Review-Nachbesserung (Hoch-Fund): eine Bestätigung im Picker-Sheet
+    /// ("Fertig") setzt dieses Flag NICHT mehr selbst — solange `refId` (also
+    /// Bearbeiten-Modus) gesetzt und `loaded` noch `false` ist, bleibt der
+    /// Auswahl-Button unten (`Button { showContactPicker = true }`) über
+    /// `.disabled(refId != nil && !loaded)` gesperrt. Damit kann das Sheet in
+    /// diesem Modus überhaupt erst geöffnet werden, NACHDEM das Laden bereits
+    /// erfolgreich war — ein Tap auf "Fertig" ohne bekannte Ausgangsbasis
+    /// (fehlgeschlagenes oder noch laufendes Laden) ist so grundsätzlich
+    /// ausgeschlossen, statt sich (wie zuvor) allein auf einen weiteren,
+    /// unabhängigen `loaded = true`-Pfad im `onDone`-Callback zu verlassen.
     @Binding var loaded: Bool
+    /// Review-Nachbesserung (Hoch-Fund, Fall c): wird im `onDone`-Callback
+    /// dieses Views auf `true` gesetzt, sobald der Nutzer aktiv eine Auswahl
+    /// im Picker-Sheet bestätigt hat. Verhindert im Aufrufer
+    /// (`TodoFormView`/`TopicFormView.loadContactAssignments()`), dass ein
+    /// (ggf. verspätet zurückkommender, dann veralteter) erfolgreicher
+    /// Ladevorgang die gerade getroffene Auswahl kommentarlos überschreibt.
+    @Binding var userConfirmedSelection: Bool
     /// Inline-Fehlermeldung eines fehlgeschlagenen Ladeversuchs (`nil` = kein
     /// Fehler). Wird vom Aufrufer gesetzt, da das Laden selbst dort passiert.
     let loadError: String?
-    /// Optionaler erneuter Ladeversuch nach einem Fehler.
-    var onRetryLoad: (() -> Void)? = nil
+    /// Erneuter Ladeversuch nach einem Fehler — beide Aufrufstellen
+    /// (`TodoFormView`/`TopicFormView`) übergeben diesen ohnehin immer
+    /// (Niedrig-Fund, Code-Review: kein optionaler Default mehr nötig).
+    let onRetryLoad: () -> Void
 
     @EnvironmentObject var state: AppState
     @State private var showContactPicker = false
@@ -314,17 +362,27 @@ struct ContactAssignmentSection: View {
                     Image(systemName: "chevron.right").foregroundStyle(.secondary)
                 }
             }
+            // Hoch-Fund (Code-Review): im Bearbeiten-Modus (`refId != nil`)
+            // erst nutzbar, sobald die bestehende Zuordnung nachweislich
+            // geladen wurde. Im Anlegen-Modus (`refId == nil`) ist `loaded`
+            // sofort über den bestehenden `.success([])`-Pfad `true`, dort
+            // bleibt der Button also durchgehend nutzbar.
+            .disabled(ContactAssignmentPickerLogic.isPickerEntryDisabled(refId: refId, loaded: loaded))
             .accessibilityLabel("Ansprechpartner: \(summaryText)")
             .accessibilityHint("Öffnet die Ansprechpartner-Auswahl.")
             if let loadError {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(loadError).scaledFont(.footnote).foregroundStyle(.secondary)
-                    if let onRetryLoad {
-                        Button("Erneut versuchen") { onRetryLoad() }
-                            .buttonStyle(.borderless)
-                            .scaledFont(.footnote)
-                    }
+                    Button("Erneut versuchen") { onRetryLoad() }
+                        .buttonStyle(.borderless)
+                        .scaledFont(.footnote)
                 }
+            } else if !loaded {
+                // Hoch-Fund (Code-Review): sichtbares Feedback für den
+                // gesperrten Zustand oben, statt eines stummen, deaktivierten
+                // Buttons ohne jede Erklärung.
+                Text("Ansprechpartner werden geladen …")
+                    .scaledFont(.footnote).foregroundStyle(.secondary)
             }
             if !assignedContacts.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -339,9 +397,18 @@ struct ContactAssignmentSection: View {
         .sheet(isPresented: $showContactPicker) {
             ContactAssignmentPickerSheet(initialSelection: selection) { newSelection in
                 selection = newSelection
-                // Explizite Nutzerbestätigung überschreibt bewusst einen
-                // etwaigen "nicht geladen"-Zustand (siehe Doku an `loaded`).
-                loaded = true
+                // Hoch-Fund (Code-Review): setzt bewusst NICHT mehr `loaded`
+                // — das ist an dieser Stelle nicht mehr nötig (der
+                // Anlegen-Modus setzt es bereits vorher via `.success([])`,
+                // der Bearbeiten-Modus kann diesen Callback dank
+                // `.disabled(refId != nil && !loaded)` oben ohnehin erst nach
+                // erfolgreichem Laden erreichen) und war zuvor der einzige
+                // Weg, der den Datenverlustpfad trotz fehlgeschlagenem/nicht
+                // abgeschlossenem Laden ermöglichte. Stattdessen wird hier
+                // nur die aktive Nutzerbestätigung markiert, damit ein
+                // (ggf. verspätet zurückkommender) Ladevorgang diese frische
+                // Auswahl im Aufrufer nicht überschreibt (Fall c).
+                userConfirmedSelection = true
             }
         }
         .sheet(item: $contactDetailTarget) { ContactDetailView(contact: $0) }

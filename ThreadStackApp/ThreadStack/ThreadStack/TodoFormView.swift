@@ -125,6 +125,12 @@ struct TodoFormView: View {
     // übersprungen statt zu löschen.
     @State private var assignmentsLoaded = false
     @State private var assignmentsLoadError: String?
+    // Hoch-Fund (Code-Review, Fall c): wird im `onDone`-Callback des Pickers
+    // (über `ContactAssignmentSection`) gesetzt, sobald der Nutzer aktiv eine
+    // Auswahl bestätigt hat — verhindert in `loadContactAssignments()`, dass
+    // ein (ggf. verspätet zurückkommender) erfolgreicher Ladevorgang diese
+    // frische Auswahl kommentarlos überschreibt.
+    @State private var userConfirmedSelection = false
 
     private var detailsSummaryText: String? {
         TodoFormDetailsSummary.summaryText(
@@ -161,7 +167,8 @@ struct TodoFormView: View {
                 Section("Ansprechpartner") {
                     ContactAssignmentSection(
                         refType: "todo", refId: todo?.id, selection: $contactIds,
-                        loaded: $assignmentsLoaded, loadError: assignmentsLoadError,
+                        loaded: $assignmentsLoaded, userConfirmedSelection: $userConfirmedSelection,
+                        loadError: assignmentsLoadError,
                         onRetryLoad: { Task { await loadContactAssignments() } }
                     )
                 }
@@ -225,7 +232,13 @@ struct TodoFormView: View {
     private func loadContactAssignments() async {
         switch await loadAssignedContactIds(state: state, refType: "todo", refId: todo?.id) {
         case .success(let ids):
-            contactIds = ids
+            // Hoch-Fund (Code-Review, Fall c): ein (ggf. verspätet
+            // zurückkommender) erfolgreicher Ladevorgang darf eine bereits
+            // vom Nutzer aktiv im Picker bestätigte Auswahl NICHT mehr
+            // kommentarlos überschreiben.
+            if ContactAssignmentPickerLogic.shouldApplyLoadedSelection(userConfirmedSelection: userConfirmedSelection) {
+                contactIds = ids
+            }
             assignmentsLoaded = true
             assignmentsLoadError = nil
         case .failure(let message):
@@ -455,7 +468,7 @@ struct TodoFormView: View {
                 // einfach übersprungen, bestehende Zuordnungen bleiben
                 // serverseitig unangetastet.
                 var assignmentErrorText: String?
-                if ContactAssignmentPickerLogic.shouldCommitAssignments(savedId: savedId, assignmentsLoaded: assignmentsLoaded), let savedId {
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId {
                     do { try await state.setAssignments(refType: "todo", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

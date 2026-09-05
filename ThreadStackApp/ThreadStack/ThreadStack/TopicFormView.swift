@@ -89,6 +89,9 @@ struct TopicFormView: View {
     // `setAssignments` nur dann.
     @State private var assignmentsLoaded = false
     @State private var assignmentsLoadError: String?
+    // Hoch-Fund (Code-Review, Fall c): siehe `TodoFormView` (identisches
+    // Verhalten, Feature-Parität).
+    @State private var userConfirmedSelection = false
 
     private var detailsSummaryText: String? {
         TopicFormDetailsSummary.summaryText(
@@ -121,7 +124,8 @@ struct TopicFormView: View {
                 Section("Ansprechpartner") {
                     ContactAssignmentSection(
                         refType: "topic", refId: topic?.id, selection: $contactIds,
-                        loaded: $assignmentsLoaded, loadError: assignmentsLoadError,
+                        loaded: $assignmentsLoaded, userConfirmedSelection: $userConfirmedSelection,
+                        loadError: assignmentsLoadError,
                         onRetryLoad: { Task { await loadContactAssignments() } }
                     )
                 }
@@ -175,7 +179,11 @@ struct TopicFormView: View {
     private func loadContactAssignments() async {
         switch await loadAssignedContactIds(state: state, refType: "topic", refId: topic?.id) {
         case .success(let ids):
-            contactIds = ids
+            // Hoch-Fund (Code-Review, Fall c): siehe `TodoFormView`
+            // (identisches Verhalten).
+            if ContactAssignmentPickerLogic.shouldApplyLoadedSelection(userConfirmedSelection: userConfirmedSelection) {
+                contactIds = ids
+            }
             assignmentsLoaded = true
             assignmentsLoadError = nil
         case .failure(let message):
@@ -352,7 +360,7 @@ struct TopicFormView: View {
                 // Zuordnung serverseitig unangetastet statt gelöscht zu
                 // werden.
                 var assignmentErrorText: String?
-                if ContactAssignmentPickerLogic.shouldCommitAssignments(savedId: savedId, assignmentsLoaded: assignmentsLoaded), let savedId {
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId {
                     do { try await state.setAssignments(refType: "topic", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

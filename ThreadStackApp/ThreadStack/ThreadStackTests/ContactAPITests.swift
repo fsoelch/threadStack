@@ -15,61 +15,15 @@
 //  `KnowledgeAPITests.swift` — `AppState(session:)` direkt verwendet, keine
 //  zusätzliche Test-Seam nötig.
 //
+//  `makeMockAppState`/`mockJSONData`/`requestBodyJSON`/`HandlerCallBox`: siehe
+//  `TestNetworkHelpers.swift` (Fund 3, Code-Review — zuvor hier UND in
+//  `ContactAssignmentLoadTimingTests.swift` wörtlich dupliziert und bereits
+//  auseinandergelaufen; jetzt EINE gemeinsame Implementierung).
+//
 
 import Testing
 import Foundation
 @testable import ThreadStack
-
-@MainActor
-private func makeAppState(handler: @escaping (URLRequest) -> (Int, Data)) -> AppState {
-    let host = "contact-mock-\(UUID().uuidString).invalid"
-    KnowledgeMockURLProtocol.register(host: host, handler: handler)
-    let cfg = URLSessionConfiguration.ephemeral
-    cfg.protocolClasses = [KnowledgeMockURLProtocol.self]
-    let session = URLSession(configuration: cfg)
-    let s = AppState(session: session)
-    s.serverURL = "https://\(host)"
-    return s
-}
-
-private func jsonData(_ obj: Any) -> Data {
-    (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
-}
-
-/// `URLSession` liefert den Request-Body an ein `URLProtocol` je nach OS-Version/
-/// Session-Konfiguration entweder über `httpBody` ODER als `httpBodyStream` —
-/// dieser Helper deckt beide Fälle ab (analoges Muster bereits in
-/// `ProgressAPITests.swift`/`ProgressComposerTests.swift`, hier je Testdatei
-/// bewusst dupliziert statt gemeinsam exportiert: die Originale sind dort
-/// `private`, ein gemeinsamer Export würde eine bestehende, unbeteiligte
-/// Testdatei anfassen, was außerhalb dieses Arbeitspakets liegt).
-private func requestBodyJSON(_ req: URLRequest) -> [String: Any] {
-    var data = req.httpBody
-    if data == nil, let stream = req.httpBodyStream {
-        stream.open()
-        defer { stream.close() }
-        var collected = Data()
-        let bufferSize = 4096
-        var buffer = [UInt8](repeating: 0, count: bufferSize)
-        while stream.hasBytesAvailable {
-            let read = stream.read(&buffer, maxLength: bufferSize)
-            if read <= 0 { break }
-            collected.append(buffer, count: read)
-        }
-        data = collected.isEmpty ? nil : collected
-    }
-    guard let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
-    return obj
-}
-
-/// Erfasst, ob der Mock-Handler tatsächlich aufgerufen wurde — die reine
-/// `#expect`-Prüfung INNERHALB des Handler-Closures reicht nicht aus (Fund 3,
-/// Code-Review): würde der Handler nie aufgerufen, liefe der Test leer/grün
-/// durch, ohne je etwas geprüft zu haben. Der Wert wird daher zusätzlich
-/// NACH dem `await` außerhalb des Closures nochmal geprüft.
-private final class HandlerCallBox: @unchecked Sendable {
-    var wasCalled = false
-}
 
 // MARK: - Model-Decoding (Altserver-Toleranz)
 
@@ -79,7 +33,7 @@ struct ContactModelDecodingTests {
         // Alte Server-Antwort ohne `categories`/`infoBlockCount`/`snippet` —
         // darf die Dekodierung NICHT zum Absturz bringen (alle drei Felder
         // sind additiv-optional, siehe `Models.swift`).
-        let json = jsonData([
+        let json = mockJSONData([
             "id": "c1", "name": "Anna Müller", "role": "PL", "email": "a@x.de",
             "description": "<p>alt</p>", "createdAt": "2026-01-01T00:00:00.000Z"
         ])
@@ -91,7 +45,7 @@ struct ContactModelDecodingTests {
     }
 
     @Test func decodesContactWithNewFields() throws {
-        let json = jsonData([
+        let json = mockJSONData([
             "id": "c1", "name": "Anna Müller", "role": "PL", "email": "a@x.de",
             "description": "", "createdAt": "2026-01-01T00:00:00.000Z",
             "categories": [["id": "cat1", "label": "Allgemein", "isDefault": true, "sortOrder": 0, "usageCount": 2]],
@@ -106,7 +60,7 @@ struct ContactModelDecodingTests {
     }
 
     @Test func decodesContactInfoBlock() throws {
-        let json = jsonData([
+        let json = mockJSONData([
             "id": "b1", "contactId": "c1", "categoryId": "cat1", "categoryLabel": "Allgemein",
             "bodyHtml": "<p>x</p>", "excerpt": "x", "sortOrder": 0,
             "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"
@@ -117,7 +71,7 @@ struct ContactModelDecodingTests {
     }
 
     @Test func decodesAssignedContact() throws {
-        let json = jsonData([
+        let json = mockJSONData([
             "contactId": "c1", "name": "Anna", "role": "PL", "email": "a@x.de",
             "assignedAt": "2026-01-01T00:00:00.000Z"
         ])
@@ -126,7 +80,7 @@ struct ContactModelDecodingTests {
     }
 
     @Test func decodesAssignmentTargetWithOptionalMeetingFields() throws {
-        let json = jsonData([
+        let json = mockJSONData([
             "refType": "todo", "refId": "t1", "title": "Aufgabe", "done": false,
             "meetingId": NSNull(), "meetingTitle": NSNull(), "assignedAt": "2026-01-01T00:00:00.000Z"
         ])
@@ -142,24 +96,24 @@ struct ContactModelDecodingTests {
 struct ContactCategoryAPITests {
 
     @Test func loadContactCategoriesPopulatesPublishedState() async {
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/contact-categories")
-            return (200, jsonData([["id": "cat1", "label": "Allgemein"]]))
+            return (200, mockJSONData([["id": "cat1", "label": "Allgemein"]]))
         }
         await state.loadContactCategories()
         #expect(state.contactCategories.count == 1)
     }
 
     @Test func loadContactCategoriesToleratesLegacyServer404() async {
-        let state = makeAppState { _ in (404, Data()) }
+        let state = makeMockAppState { _ in (404, Data()) }
         await state.loadContactCategories()
         #expect(state.contactCategories.isEmpty)
     }
 
     @Test func createContactCategoryAppendsToPublishedState() async throws {
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             #expect(req.httpMethod == "POST")
-            return (200, jsonData(["id": "cat2", "label": "Interessen"]))
+            return (200, mockJSONData(["id": "cat2", "label": "Interessen"]))
         }
         let created = try await state.createContactCategory(label: "Interessen")
         #expect(created.label == "Interessen")
@@ -167,8 +121,8 @@ struct ContactCategoryAPITests {
     }
 
     @Test func deleteContactCategoryThrowsInUseErrorWithUsageCountOn409() async throws {
-        let state = makeAppState { _ in
-            (409, jsonData(["error": "Rubrik wird verwendet", "code": "category_in_use", "usageCount": 3]))
+        let state = makeMockAppState { _ in
+            (409, mockJSONData(["error": "Rubrik wird verwendet", "code": "category_in_use", "usageCount": 3]))
         }
         do {
             try await state.deleteContactCategory(id: "cat1")
@@ -181,11 +135,11 @@ struct ContactCategoryAPITests {
 
     @Test func deleteContactCategorySucceedsAndRemovesFromState() async throws {
         let box = HandlerCallBox()
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             box.wasCalled = true
             #expect(req.httpMethod == "DELETE")
             #expect(req.url?.path == "/api/contact-categories/cat1")
-            return (200, jsonData(["ok": true]))
+            return (200, mockJSONData(["ok": true]))
         }
         // Vorher befüllen, damit die im Testnamen behauptete Entfernung aus
         // `state.contactCategories` tatsächlich beobachtbar ist (Fund 3,
@@ -205,9 +159,9 @@ struct ContactCategoryAPITests {
 struct ContactInfoBlockAPITests {
 
     @Test func loadContactInfoBlocksBuildsExpectedPath() async throws {
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/contacts/c1/info-blocks")
-            return (200, jsonData([]))
+            return (200, mockJSONData([]))
         }
         let blocks = try await state.loadContactInfoBlocks(contactId: "c1")
         #expect(blocks.isEmpty)
@@ -215,14 +169,14 @@ struct ContactInfoBlockAPITests {
 
     @Test func createContactInfoBlockSendsExpectedBody() async throws {
         let box = HandlerCallBox()
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             box.wasCalled = true
             #expect(req.httpMethod == "POST")
             let body = requestBodyJSON(req)
             #expect(body["categoryId"] as? String == "cat1")
             #expect(body["categoryLabel"] as? String == "Allgemein")
             #expect(body["bodyHtml"] as? String == "<p>x</p>")
-            return (200, jsonData([
+            return (200, mockJSONData([
                 "id": "b1", "contactId": "c1", "categoryId": "cat1", "categoryLabel": "Allgemein",
                 "bodyHtml": "<p>x</p>", "excerpt": "x", "sortOrder": 0,
                 "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"
@@ -239,8 +193,8 @@ struct ContactInfoBlockAPITests {
             "bodyHtml": "<p>server-stand</p>", "excerpt": "server-stand", "sortOrder": 0,
             "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-02T00:00:00.000Z"
         ]
-        let state = makeAppState { _ in
-            (409, jsonData(["error": "Konflikt", "code": "block_conflict", "block": currentBlockJSON]))
+        let state = makeMockAppState { _ in
+            (409, mockJSONData(["error": "Konflikt", "code": "block_conflict", "block": currentBlockJSON]))
         }
         do {
             _ = try await state.updateContactInfoBlock(
@@ -256,7 +210,7 @@ struct ContactInfoBlockAPITests {
 
     @Test func updateContactInfoBlockSucceedsWithoutConflict() async throws {
         let box = HandlerCallBox()
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             box.wasCalled = true
             #expect(req.httpMethod == "PUT")
             #expect(req.url?.path == "/api/contacts/c1/info-blocks/b1")
@@ -268,7 +222,7 @@ struct ContactInfoBlockAPITests {
             #expect(body["expectedUpdatedAt"] as? String == "2026-01-01T00:00:00.000Z")
             #expect(body["categoryId"] as? String == "cat1")
             #expect(body["bodyHtml"] as? String == "<p>neu</p>")
-            return (200, jsonData([
+            return (200, mockJSONData([
                 "id": "b1", "contactId": "c1", "categoryId": "cat1", "categoryLabel": "Allgemein",
                 "bodyHtml": "<p>neu</p>", "excerpt": "neu", "sortOrder": 0,
                 "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-03T00:00:00.000Z"
@@ -284,24 +238,24 @@ struct ContactInfoBlockAPITests {
 
     @Test func reorderContactInfoBlocksSendsExpectedPathAndBody() async throws {
         let box = HandlerCallBox()
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             box.wasCalled = true
             #expect(req.httpMethod == "PUT")
             #expect(req.url?.path == "/api/contacts/c1/info-blocks/reorder")
             let body = requestBodyJSON(req)
             #expect(body["categoryId"] as? String == "cat1")
             #expect(body["orderedIds"] as? [String] == ["b2", "b1"])
-            return (200, jsonData(["ok": true]))
+            return (200, mockJSONData(["ok": true]))
         }
         try await state.reorderContactInfoBlocks(contactId: "c1", categoryId: "cat1", orderedIds: ["b2", "b1"])
         #expect(box.wasCalled == true)
     }
 
     @Test func deleteContactInfoBlockSucceeds() async throws {
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             #expect(req.httpMethod == "DELETE")
             #expect(req.url?.path == "/api/contacts/c1/info-blocks/b1")
-            return (200, jsonData(["ok": true]))
+            return (200, mockJSONData(["ok": true]))
         }
         try await state.deleteContactInfoBlock(contactId: "c1", blockId: "b1")
     }
@@ -313,9 +267,9 @@ struct ContactInfoBlockAPITests {
 struct ContactAssignmentAPITests {
 
     @Test func loadAssignmentsBuildsExpectedPath() async throws {
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/assignments/todo/t1")
-            return (200, jsonData([]))
+            return (200, mockJSONData([]))
         }
         let list = try await state.loadAssignments(refType: "todo", refId: "t1")
         #expect(list.isEmpty)
@@ -323,13 +277,13 @@ struct ContactAssignmentAPITests {
 
     @Test func setAssignmentsSendsContactIdsAndDecodesResult() async throws {
         let box = HandlerCallBox()
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             box.wasCalled = true
             #expect(req.httpMethod == "PUT")
             #expect(req.url?.path == "/api/assignments/todo/t1")
             let body = requestBodyJSON(req)
             #expect(body["contactIds"] as? [String] == ["c1"])
-            return (200, jsonData([
+            return (200, mockJSONData([
                 ["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]
             ]))
         }
@@ -339,8 +293,8 @@ struct ContactAssignmentAPITests {
     }
 
     @Test func setAssignmentsThrowsLimitErrorOn409() async throws {
-        let state = makeAppState { _ in
-            (409, jsonData(["error": "Limit erreicht", "code": "assignment_limit_reached"]))
+        let state = makeMockAppState { _ in
+            (409, mockJSONData(["error": "Limit erreicht", "code": "assignment_limit_reached"]))
         }
         do {
             _ = try await state.setAssignments(refType: "todo", refId: "t1", contactIds: Array(repeating: "c", count: 21))
@@ -351,19 +305,19 @@ struct ContactAssignmentAPITests {
     }
 
     @Test func loadContactAssignmentsIncludesQueryParams() async throws {
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/contacts/c1/assignments")
             #expect(req.url?.query?.contains("limit=20") == true)
             #expect(req.url?.query?.contains("status=open") == true)
-            return (200, jsonData([]))
+            return (200, mockJSONData([]))
         }
         _ = try await state.loadContactAssignments(contactId: "c1", status: "open")
     }
 
     @Test func removeContactAssignmentUsesExpectedPath() async throws {
-        let state = makeAppState { req in
+        let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/contacts/c1/assignments/topic/t9")
-            return (200, jsonData(["ok": true]))
+            return (200, mockJSONData(["ok": true]))
         }
         try await state.removeContactAssignment(contactId: "c1", refType: "topic", refId: "t9")
     }
@@ -387,7 +341,7 @@ struct ContactAssignmentAPITests {
     }
 
     @Test func serverErrorIsNotClassifiedAsTransportFailure() async {
-        let state = makeAppState { _ in (500, jsonData(["error": "Interner Fehler"])) }
+        let state = makeMockAppState { _ in (500, mockJSONData(["error": "Interner Fehler"])) }
         do {
             _ = try await state.loadAssignments(refType: "todo", refId: "t1")
             Issue.record("expected a thrown error")
