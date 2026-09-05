@@ -1,0 +1,1 @@
+- [Xcode project format](xcode_project_format.md) — pbxproj uses synchronized groups, no manual file entries needed for new Swift files
