@@ -76,6 +76,10 @@ struct ContactsView: View {
     }
 }
 
+// isTransportFailure(_:) und friendlyAssignmentErrorMessage(_:) liegen in
+// `Extensions.swift` (siehe dortiger Kommentar) — von mehreren Contact-Views
+// gemeinsam genutzte freie Helfer, keine Feature-View-spezifische Logik.
+
 // MARK: - Contact Card Row
 
 struct ContactCardView: View {
@@ -242,17 +246,3 @@ struct ContactFormView: View {
     }
 }
 
-/// Erkennt sowohl `APIError.network`/`.invalidURL` als auch rohe
-/// `URLError`-Transportfehler (siehe `AppState.performRequest`: reine
-/// Verbindungsfehler werden dort NICHT in `APIError` verpackt, sondern
-/// unverändert durchgereicht) — wiederverwendet von allen neuen
-/// Contact-Sheets dieses Arbeitspakets für ein konsistentes Offline-Verhalten.
-func isTransportFailure(_ error: Error) -> Bool {
-    if let apiError = error as? APIError {
-        switch apiError {
-        case .network, .invalidURL: return true
-        default: return false
-        }
-    }
-    return error is URLError
-}

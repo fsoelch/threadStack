@@ -36,6 +36,41 @@ private func jsonData(_ obj: Any) -> Data {
     (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
 }
 
+/// `URLSession` liefert den Request-Body an ein `URLProtocol` je nach OS-Version/
+/// Session-Konfiguration entweder über `httpBody` ODER als `httpBodyStream` —
+/// dieser Helper deckt beide Fälle ab (analoges Muster bereits in
+/// `ProgressAPITests.swift`/`ProgressComposerTests.swift`, hier je Testdatei
+/// bewusst dupliziert statt gemeinsam exportiert: die Originale sind dort
+/// `private`, ein gemeinsamer Export würde eine bestehende, unbeteiligte
+/// Testdatei anfassen, was außerhalb dieses Arbeitspakets liegt).
+private func requestBodyJSON(_ req: URLRequest) -> [String: Any] {
+    var data = req.httpBody
+    if data == nil, let stream = req.httpBodyStream {
+        stream.open()
+        defer { stream.close() }
+        var collected = Data()
+        let bufferSize = 4096
+        var buffer = [UInt8](repeating: 0, count: bufferSize)
+        while stream.hasBytesAvailable {
+            let read = stream.read(&buffer, maxLength: bufferSize)
+            if read <= 0 { break }
+            collected.append(buffer, count: read)
+        }
+        data = collected.isEmpty ? nil : collected
+    }
+    guard let data, let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return [:] }
+    return obj
+}
+
+/// Erfasst, ob der Mock-Handler tatsächlich aufgerufen wurde — die reine
+/// `#expect`-Prüfung INNERHALB des Handler-Closures reicht nicht aus (Fund 3,
+/// Code-Review): würde der Handler nie aufgerufen, liefe der Test leer/grün
+/// durch, ohne je etwas geprüft zu haben. Der Wert wird daher zusätzlich
+/// NACH dem `await` außerhalb des Closures nochmal geprüft.
+private final class HandlerCallBox: @unchecked Sendable {
+    var wasCalled = false
+}
+
 // MARK: - Model-Decoding (Altserver-Toleranz)
 
 struct ContactModelDecodingTests {
@@ -145,12 +180,22 @@ struct ContactCategoryAPITests {
     }
 
     @Test func deleteContactCategorySucceedsAndRemovesFromState() async throws {
+        let box = HandlerCallBox()
         let state = makeAppState { req in
+            box.wasCalled = true
             #expect(req.httpMethod == "DELETE")
             #expect(req.url?.path == "/api/contact-categories/cat1")
             return (200, jsonData(["ok": true]))
         }
+        // Vorher befüllen, damit die im Testnamen behauptete Entfernung aus
+        // `state.contactCategories` tatsächlich beobachtbar ist (Fund 3,
+        // Code-Review: der Test prüfte das zuvor gar nicht).
+        state.contactCategories = [
+            ContactCategory(id: "cat1", label: "Allgemein", isDefault: nil, sortOrder: 0, usageCount: nil)
+        ]
         try await state.deleteContactCategory(id: "cat1")
+        #expect(box.wasCalled == true)
+        #expect(state.contactCategories.isEmpty)
     }
 }
 
@@ -169,8 +214,14 @@ struct ContactInfoBlockAPITests {
     }
 
     @Test func createContactInfoBlockSendsExpectedBody() async throws {
+        let box = HandlerCallBox()
         let state = makeAppState { req in
+            box.wasCalled = true
             #expect(req.httpMethod == "POST")
+            let body = requestBodyJSON(req)
+            #expect(body["categoryId"] as? String == "cat1")
+            #expect(body["categoryLabel"] as? String == "Allgemein")
+            #expect(body["bodyHtml"] as? String == "<p>x</p>")
             return (200, jsonData([
                 "id": "b1", "contactId": "c1", "categoryId": "cat1", "categoryLabel": "Allgemein",
                 "bodyHtml": "<p>x</p>", "excerpt": "x", "sortOrder": 0,
@@ -179,6 +230,7 @@ struct ContactInfoBlockAPITests {
         }
         let block = try await state.createContactInfoBlock(contactId: "c1", categoryId: "cat1", categoryLabel: "Allgemein", bodyHtml: "<p>x</p>")
         #expect(block.id == "b1")
+        #expect(box.wasCalled == true)
     }
 
     @Test func updateContactInfoBlockThrowsConflictErrorWithCurrentBlockOn409() async throws {
@@ -203,9 +255,19 @@ struct ContactInfoBlockAPITests {
     }
 
     @Test func updateContactInfoBlockSucceedsWithoutConflict() async throws {
+        let box = HandlerCallBox()
         let state = makeAppState { req in
+            box.wasCalled = true
             #expect(req.httpMethod == "PUT")
             #expect(req.url?.path == "/api/contacts/c1/info-blocks/b1")
+            // `expectedUpdatedAt` ist der Wert, an dem das gesamte
+            // 409-Konflikt-Handling hängt (Fund 3, Code-Review) — muss also
+            // nachweislich im Request landen, nicht nur clientseitig geprüft
+            // werden.
+            let body = requestBodyJSON(req)
+            #expect(body["expectedUpdatedAt"] as? String == "2026-01-01T00:00:00.000Z")
+            #expect(body["categoryId"] as? String == "cat1")
+            #expect(body["bodyHtml"] as? String == "<p>neu</p>")
             return (200, jsonData([
                 "id": "b1", "contactId": "c1", "categoryId": "cat1", "categoryLabel": "Allgemein",
                 "bodyHtml": "<p>neu</p>", "excerpt": "neu", "sortOrder": 0,
@@ -217,15 +279,22 @@ struct ContactInfoBlockAPITests {
             bodyHtml: "<p>neu</p>", expectedUpdatedAt: "2026-01-01T00:00:00.000Z"
         )
         #expect(block.bodyHtml == "<p>neu</p>")
+        #expect(box.wasCalled == true)
     }
 
     @Test func reorderContactInfoBlocksSendsExpectedPathAndBody() async throws {
+        let box = HandlerCallBox()
         let state = makeAppState { req in
+            box.wasCalled = true
             #expect(req.httpMethod == "PUT")
             #expect(req.url?.path == "/api/contacts/c1/info-blocks/reorder")
+            let body = requestBodyJSON(req)
+            #expect(body["categoryId"] as? String == "cat1")
+            #expect(body["orderedIds"] as? [String] == ["b2", "b1"])
             return (200, jsonData(["ok": true]))
         }
         try await state.reorderContactInfoBlocks(contactId: "c1", categoryId: "cat1", orderedIds: ["b2", "b1"])
+        #expect(box.wasCalled == true)
     }
 
     @Test func deleteContactInfoBlockSucceeds() async throws {
@@ -253,14 +322,20 @@ struct ContactAssignmentAPITests {
     }
 
     @Test func setAssignmentsSendsContactIdsAndDecodesResult() async throws {
+        let box = HandlerCallBox()
         let state = makeAppState { req in
+            box.wasCalled = true
             #expect(req.httpMethod == "PUT")
+            #expect(req.url?.path == "/api/assignments/todo/t1")
+            let body = requestBodyJSON(req)
+            #expect(body["contactIds"] as? [String] == ["c1"])
             return (200, jsonData([
                 ["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]
             ]))
         }
         let result = try await state.setAssignments(refType: "todo", refId: "t1", contactIds: ["c1"])
         #expect(result.count == 1)
+        #expect(box.wasCalled == true)
     }
 
     @Test func setAssignmentsThrowsLimitErrorOn409() async throws {
@@ -273,15 +348,6 @@ struct ContactAssignmentAPITests {
         } catch is ContactAssignmentLimitError {
             // erwartet
         }
-    }
-
-    @Test func removeAssignmentUsesExpectedPath() async throws {
-        let state = makeAppState { req in
-            #expect(req.httpMethod == "DELETE")
-            #expect(req.url?.path == "/api/assignments/todo/t1/c1")
-            return (200, jsonData(["ok": true]))
-        }
-        try await state.removeAssignment(refType: "todo", refId: "t1", contactId: "c1")
     }
 
     @Test func loadContactAssignmentsIncludesQueryParams() async throws {
@@ -303,8 +369,8 @@ struct ContactAssignmentAPITests {
     }
 
     /// Reiner Transportfehler (kein Handler registriert -> `URLError`) wird
-    /// von `isTransportFailure` (siehe `ContactsView.swift`) erkannt — das
-    /// ist die Grundlage für die Story-14-Offline-Meldungen in allen neuen
+    /// von `isTransportFailure` (siehe `Extensions.swift`) erkannt — das ist
+    /// die Grundlage für die Story-14-Offline-Meldungen in allen neuen
     /// Contact-Sheets.
     @Test func transportFailureIsRecognizedByIsTransportFailure() async {
         let host = "contact-mock-unregistered-\(UUID().uuidString).invalid"
@@ -369,6 +435,40 @@ struct ContactDetailLogicTests {
         #expect(ContactDetailLogic.isPrivateCategory("Privates") == true)
         #expect(ContactDetailLogic.isPrivateCategory("  privates  ") == true)
         #expect(ContactDetailLogic.isPrivateCategory("Allgemein") == false)
+    }
+
+    private func makeBlock(_ id: String, _ categoryId: String) -> ContactInfoBlock {
+        ContactInfoBlock(id: id, contactId: "c1", categoryId: categoryId, categoryLabel: categoryId,
+                          bodyHtml: "", excerpt: "", sortOrder: 0, isLegacyDescription: nil, createdAt: "", updatedAt: "")
+    }
+
+    @Test func applyReorderReordersOnlyTheAffectedCategory() {
+        let blocks = [makeBlock("b1", "cat1"), makeBlock("b2", "cat1"), makeBlock("b3", "cat1")]
+        let reordered = ContactDetailLogic.applyReorder(infoBlocks: blocks, categoryId: "cat1", orderedIds: ["b3", "b1", "b2"])
+        #expect(reordered.map(\.id) == ["b3", "b1", "b2"])
+    }
+
+    /// Rubrik-Isolation: Blöcke ANDERER Rubriken bleiben an ihrer bisherigen
+    /// Position, auch wenn sie zwischen den umsortierten Blöcken liegen.
+    @Test func applyReorderKeepsOtherCategoriesUntouchedAndAtTheirPosition() {
+        let blocks = [makeBlock("a1", "catA"), makeBlock("b1", "cat1"), makeBlock("a2", "catA"), makeBlock("b2", "cat1")]
+        let reordered = ContactDetailLogic.applyReorder(infoBlocks: blocks, categoryId: "cat1", orderedIds: ["b2", "b1"])
+        #expect(reordered.map(\.id) == ["a1", "b2", "a2", "b1"])
+    }
+
+    /// Längen-/Mengen-Mismatch (z.B. eine `orderedIds`-ID gehört nicht mehr
+    /// zu dieser Rubrik, oder es fehlt eine) — defensiv: `infoBlocks` bleibt
+    /// unverändert statt Blöcke stillschweigend zu verlieren/duplizieren.
+    @Test func applyReorderReturnsUnchangedOnLengthMismatch() {
+        let blocks = [makeBlock("b1", "cat1"), makeBlock("b2", "cat1")]
+        let reordered = ContactDetailLogic.applyReorder(infoBlocks: blocks, categoryId: "cat1", orderedIds: ["b1"])
+        #expect(reordered.map(\.id) == ["b1", "b2"])
+    }
+
+    @Test func applyReorderReturnsUnchangedOnUnknownIdInOrderedIds() {
+        let blocks = [makeBlock("b1", "cat1"), makeBlock("b2", "cat1")]
+        let reordered = ContactDetailLogic.applyReorder(infoBlocks: blocks, categoryId: "cat1", orderedIds: ["b1", "b-does-not-exist"])
+        #expect(reordered.map(\.id) == ["b1", "b2"])
     }
 }
 

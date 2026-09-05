@@ -46,7 +46,7 @@ struct ContactCategorySheet: View {
                             .disabled(newLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || creating)
                     }
                 }
-                Section("Rubriken") {
+                Section(header: rubrikenHeader) {
                     if state.contactCategories.isEmpty {
                         Text("Noch keine Rubriken angelegt.")
                             .foregroundStyle(.secondary)
@@ -103,6 +103,20 @@ struct ContactCategorySheet: View {
         return "Rubrik „\(cat.label)“ löschen?"
     }
 
+    /// Zeigt einen `ProgressView`-Indikator, solange ein Umbenennen/Löschen
+    /// noch läuft (Code-Review Fund 7: `renaming`/`deleting` wurden zuvor
+    /// gesetzt, aber nirgends in der UI ausgewertet).
+    @ViewBuilder
+    private var rubrikenHeader: some View {
+        HStack {
+            Text("Rubriken")
+            if renaming || deleting {
+                Spacer()
+                ProgressView().controlSize(.small)
+            }
+        }
+    }
+
     private func categoryRow(_ cat: ContactCategory) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
@@ -122,6 +136,7 @@ struct ContactCategorySheet: View {
                 Image(systemName: "pencil")
             }
             .buttonStyle(.plain).foregroundStyle(.secondary)
+            .disabled(renaming || deleting)
             .accessibilityLabel("\(cat.label) umbenennen")
 
             if cat.isDefault != true {
@@ -131,6 +146,7 @@ struct ContactCategorySheet: View {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.plain)
+                .disabled(renaming || deleting)
                 .accessibilityLabel("\(cat.label) löschen")
             }
         }
@@ -164,6 +180,14 @@ struct ContactCategorySheet: View {
         renamingCategory = nil
         guard !label.isEmpty, label != cat.label else { return }
         renaming = true
+        error = nil
+        // Code-Review Fund 7: `isOffline` steuert den "Erneut versuchen"-
+        // Button im `error`-Abschnitt, der IMMER `createCategory()` erneut
+        // aufruft (siehe unten) — muss daher hier zurückgesetzt werden,
+        // sonst würde ein späterer Umbenennen-Fehler fälschlich den
+        // "Erneut versuchen"-Button für das (ggf. gar nicht mehr aktuelle)
+        // Anlegen-Formular anzeigen.
+        isOffline = false
         Task {
             do { _ = try await state.updateContactCategory(id: cat.id, label: label) }
             catch {
@@ -192,6 +216,12 @@ struct ContactCategorySheet: View {
         guard let cat = deleteCandidate else { return }
         deleteCandidate = nil
         deleting = true
+        error = nil
+        // Siehe Kommentar in `commitRename()` (Code-Review Fund 7): verhindert,
+        // dass ein stehen gebliebenes `isOffline == true` aus einem früheren
+        // Anlegen-Fehlschlag den "Erneut versuchen"-Button hier fälschlich
+        // erneut `createCategory()` statt des Löschversuchs aufrufen lässt.
+        isOffline = false
         Task {
             do { try await state.deleteContactCategory(id: cat.id) }
             catch let inUse as ContactCategoryInUseError {

@@ -57,6 +57,38 @@ enum ContactDetailLogic {
         let known = Set(categories.map(\.id))
         return infoBlocks.filter { !known.contains($0.categoryId) }
     }
+
+    /// Reine Merge-Logik für `persistReorder` (optimistisches lokales
+    /// Reordering nach einem `.onMove`/"Nach oben"/"Nach unten"): ersetzt
+    /// innerhalb von `infoBlocks` NUR die Positionen der Rubrik `categoryId`
+    /// durch die neue Reihenfolge `orderedIds` — alle Einträge anderer
+    /// Rubriken bleiben unverändert an ihrer bisherigen Stelle
+    /// (Rubrik-Isolation, kein versehentliches Vermischen der Reihenfolgen
+    /// verschiedener Rubriken).
+    ///
+    /// Defensiv gegen einen Längen-/Mengen-Mismatch zwischen `orderedIds` und
+    /// den tatsächlich zu dieser Rubrik gehörenden Blöcken (z.B. ein Block
+    /// wurde zwischenzeitlich durch ein anderes Gerät gelöscht/umkategorisiert,
+    /// bevor die Reorder-Geste committed wurde): in diesem Fall wird
+    /// `infoBlocks` UNVERÄNDERT zurückgegeben statt Blöcke stillschweigend zu
+    /// verlieren oder zu duplizieren.
+    static func applyReorder(infoBlocks: [ContactInfoBlock], categoryId: String, orderedIds: [String]) -> [ContactInfoBlock] {
+        let categoryBlockIds = Set(infoBlocks.filter { $0.categoryId == categoryId }.map(\.id))
+        guard orderedIds.count == categoryBlockIds.count, Set(orderedIds) == categoryBlockIds else {
+            return infoBlocks
+        }
+        var remaining = orderedIds.compactMap { id in infoBlocks.first(where: { $0.id == id }) }
+        var reordered: [ContactInfoBlock] = []
+        reordered.reserveCapacity(infoBlocks.count)
+        for existing in infoBlocks {
+            if existing.categoryId == categoryId {
+                reordered.append(remaining.removeFirst())
+            } else {
+                reordered.append(existing)
+            }
+        }
+        return reordered
+    }
 }
 
 // MARK: - View
@@ -132,7 +164,8 @@ struct ContactDetailView: View {
         NavigationStack {
             Form {
                 Section("Stammdaten") { stammdatenSection }
-                Section(header: infoBlocksSectionHeader) { infoBlocksSection }
+                Section(header: infoBlocksSectionHeader) { infoBlocksStatusSection }
+                infoBlockCategorySections
                 Section("Notizen") { notesSection }
                 Section("Zugeordnete Topics") { topicsSection }
                 Section("Ist zuständig für") { assignmentsSection }
@@ -151,6 +184,14 @@ struct ContactDetailView: View {
             .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
+                // Code-Review Fund 1: zwingend für funktionierendes `.onMove`
+                // (siehe `blocksList(_:categoryId:attachOnMove:)`) — ohne
+                // `EditButton()` bietet SwiftUI im Formular gar keinen
+                // Editier-Modus an, in dem Drag-Handles erscheinen könnten
+                // (analog zu `MeetingDetailView`/`ContactsView`).
+                #if os(iOS)
+                ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
+                #endif
                 ToolbarItem(placement: .confirmationAction) {
                     Button {
                         saveBasicsAndClose()
@@ -270,8 +311,13 @@ struct ContactDetailView: View {
         ContactDetailLogic.ungrouped(infoBlocks: infoBlocks, categories: contact.categories ?? [])
     }
 
+    /// Nur Lade-/Fehler-/Leerzustand der Zusatzinformationen — die eigentlichen
+    /// Rubrik-Gruppen werden NICHT hier, sondern in `infoBlockCategorySections`
+    /// gerendert (siehe dortiger Kommentar: Code-Review Fund 1, `.onMove`
+    /// braucht ein `ForEach` als DIREKTES Kind einer `Section`, nicht
+    /// verschachtelt in einem `VStack` innerhalb dieser Section).
     @ViewBuilder
-    private var infoBlocksSection: some View {
+    private var infoBlocksStatusSection: some View {
         if infoBlocksLoading {
             ProgressView("Lädt Zusatzinformationen…").frame(maxWidth: .infinity).padding()
         } else if let infoBlocksError {
@@ -284,33 +330,57 @@ struct ContactDetailView: View {
         } else if infoBlocks.isEmpty {
             Text("Noch keine Zusatzinformationen — tippe oben auf „+“, um die erste hinzuzufügen.")
                 .scaledFont(.subheadline).foregroundStyle(.secondary)
-        } else {
+        }
+    }
+
+    /// EIN `Section` PRO Rubrik (plus ggf. eine Sammel-`Section` "Weitere") —
+    /// zwingend nötig, damit `.onMove` in `blocksList` tatsächlich ein
+    /// funktionierendes Drag-Handle liefert (SwiftUI-Bedingung: `ForEach` mit
+    /// `.onMove` muss DIREKTES Kind einer `Section`/`List` sein). Vorher
+    /// steckten alle Rubriken in EINER gemeinsamen Section, verschachtelt in
+    /// einem `VStack`/`DisclosureGroup` — dort war `.onMove` zur Laufzeit
+    /// wirkungslos (Code-Review Fund 1, "tote Feature-Behauptung").
+    @ViewBuilder
+    private var infoBlockCategorySections: some View {
+        if !infoBlocksLoading && infoBlocksError == nil && !infoBlocks.isEmpty {
             ForEach(groupedInfoBlocks, id: \.category.id) { group in
-                categoryGroup(group.category, group.blocks)
+                categorySection(group.category, group.blocks)
             }
             if !ungroupedInfoBlocks.isEmpty {
-                categoryGroupPlain(label: "Weitere", blocks: ungroupedInfoBlocks, categoryId: nil)
+                // Sammelgruppe für nicht (mehr) bekannte Rubriken: kein
+                // wohldefiniertes Reorder-Ziel (keine echte Rubrik zum
+                // Persistieren) — `attachOnMove: false`, siehe `blocksList`.
+                Section(header: Text("Weitere").scaledFont(.subheadline).fontWeight(.semibold)) {
+                    blocksList(ungroupedInfoBlocks, categoryId: nil, attachOnMove: false)
+                }
             }
         }
     }
 
     @ViewBuilder
-    private func categoryGroup(_ category: ContactCategory, _ blocks: [ContactInfoBlock]) -> some View {
+    private func categorySection(_ category: ContactCategory, _ blocks: [ContactInfoBlock]) -> some View {
         if ContactDetailLogic.isPrivateCategory(category.label) {
-            DisclosureGroup(isExpanded: $privateExpanded) {
-                blocksList(blocks, categoryId: category.id)
-            } label: {
-                Label(category.label, systemImage: "lock").scaledFont(.subheadline).fontWeight(.semibold)
+            // "Privates" bleibt bewusst eingeklappt (Datenschutz-Rücksicht,
+            // siehe `ContactDetailLogic.isPrivateCategory`) — das dafür
+            // nötige `DisclosureGroup` verschachtelt sein `ForEach` aber
+            // zwangsläufig NICHT als direktes Kind der `Section` (sondern
+            // eine Ebene tiefer im `DisclosureGroup`-Inhalt), wodurch
+            // SwiftUI dort kein funktionierendes `.onMove`-Drag-Handle
+            // anbietet (Code-Review Fund 1, dokumentierter Fallback statt
+            // eines nur scheinbar funktionierenden Handles): NUR die
+            // Kontextmenü-Variante ("Nach oben"/"Nach unten") bleibt hier als
+            // Sortier-Weg, `attachOnMove: false`.
+            Section {
+                DisclosureGroup(isExpanded: $privateExpanded) {
+                    blocksList(blocks, categoryId: category.id, attachOnMove: false)
+                } label: {
+                    Label(category.label, systemImage: "lock").scaledFont(.subheadline).fontWeight(.semibold)
+                }
             }
         } else {
-            categoryGroupPlain(label: category.label, blocks: blocks, categoryId: category.id)
-        }
-    }
-
-    private func categoryGroupPlain(label: String, blocks: [ContactInfoBlock], categoryId: String?) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(label).scaledFont(.subheadline).fontWeight(.semibold)
-            blocksList(blocks, categoryId: categoryId)
+            Section(header: Text(category.label).scaledFont(.subheadline).fontWeight(.semibold)) {
+                blocksList(blocks, categoryId: category.id, attachOnMove: true)
+            }
         }
     }
 
@@ -318,8 +388,18 @@ struct ContactDetailView: View {
     /// siehe `ungroupedInfoBlocks`): Reorder/"Nach oben"/"Nach unten" ergeben
     /// dort keinen wohldefinierten Sinn (keine echte Rubrik zum Persistieren)
     /// und werden für diesen Randfall nicht angeboten.
-    private func blocksList(_ blocks: [ContactInfoBlock], categoryId: String?) -> some View {
-        ForEach(blocks) { block in
+    ///
+    /// `attachOnMove` steuert NUR das SwiftUI-Drag-Handle (`.onMove`):
+    /// `false` für die "Weitere"-Sammelgruppe (`categoryId == nil`, s.o.) UND
+    /// für die "Privates"-Rubrik (dort bricht das umschließende
+    /// `DisclosureGroup` die "direktes Kind einer Section"-Bedingung, siehe
+    /// `categorySection`). Der Modifier wird in diesen Fällen GAR NICHT
+    /// angehängt statt nur intern zu einem No-op zu führen — ein angehängtes,
+    /// aber wirkungsloses `.onMove` würde sonst ein Drag-Handle zeigen, das
+    /// beim Loslassen kommentarlos auf die alte Position zurückspringt.
+    @ViewBuilder
+    private func blocksList(_ blocks: [ContactInfoBlock], categoryId: String?, attachOnMove: Bool) -> some View {
+        let rows = ForEach(blocks) { block in
             infoBlockRow(block)
                 .contextMenu {
                     Button { editingBlock = block } label: { Label("Bearbeiten", systemImage: "pencil") }
@@ -336,11 +416,14 @@ struct ContactDetailView: View {
                     Button(role: .destructive) { deleteBlock(block) } label: { Label("Löschen", systemImage: "trash") }
                 }
         }
-        .onMove { indices, newOffset in
-            guard let categoryId else { return }
-            var arr = blocks
-            arr.move(fromOffsets: indices, toOffset: newOffset)
-            Task { await persistReorder(categoryId: categoryId, orderedIds: arr.map(\.id)) }
+        if attachOnMove, let categoryId {
+            rows.onMove { indices, newOffset in
+                var arr = blocks
+                arr.move(fromOffsets: indices, toOffset: newOffset)
+                Task { await persistReorder(categoryId: categoryId, orderedIds: arr.map(\.id)) }
+            }
+        } else {
+            rows
         }
     }
 
@@ -398,24 +481,13 @@ struct ContactDetailView: View {
         Task { await persistReorder(categoryId: categoryId, orderedIds: arr.map(\.id)) }
     }
 
-    /// Optimistisches lokales Reordering: ersetzt innerhalb von `infoBlocks`
-    /// NUR die Positionen der betroffenen Rubrik durch die neue Reihenfolge
-    /// (1:1, gleiche Anzahl Positionen) — alle anderen Einträge bleiben
-    /// unverändert an ihrer Stelle. Bei einem Fehler wird der vorherige Stand
-    /// wiederhergestellt (kein stiller Datenverlust der Sortierung).
+    /// Optimistisches lokales Reordering (reine Merge-Logik in
+    /// `ContactDetailLogic.applyReorder`, dort testbar isoliert). Bei einem
+    /// Fehler wird der vorherige Stand wiederhergestellt (kein stiller
+    /// Datenverlust der Sortierung).
     private func persistReorder(categoryId: String, orderedIds: [String]) async {
         let previous = infoBlocks
-        var remaining = orderedIds.compactMap { id in infoBlocks.first(where: { $0.id == id }) }
-        var reordered: [ContactInfoBlock] = []
-        reordered.reserveCapacity(infoBlocks.count)
-        for existing in infoBlocks {
-            if existing.categoryId == categoryId {
-                if !remaining.isEmpty { reordered.append(remaining.removeFirst()) }
-            } else {
-                reordered.append(existing)
-            }
-        }
-        infoBlocks = reordered
+        infoBlocks = ContactDetailLogic.applyReorder(infoBlocks: infoBlocks, categoryId: categoryId, orderedIds: orderedIds)
         do {
             try await state.reorderContactInfoBlocks(contactId: contactId, categoryId: categoryId, orderedIds: orderedIds)
         } catch {

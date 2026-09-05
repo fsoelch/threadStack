@@ -189,3 +189,108 @@ struct ContactAssignmentPickerSheet: View {
         }
     }
 }
+
+// MARK: - Gemeinsame Ansprechpartner-Zuordnungs-Sektion (Fund 2, Code-Review)
+//
+// War zuvor byte-identisch (bis auf den `refType`-String) in `TodoFormView`
+// UND `TopicFormView` dupliziert (`contactsSection`, `assignedContacts`,
+// `contactsSummaryText`, `contactChip(_:)`, `loadInitialAssignments()`) —
+// bereits sichtbarer Divergenz-Vorbote: die Sektion stand an unterschiedlicher
+// Position im jeweiligen Formular. EINE Stelle für "Anzeige zugeordneter
+// Kontakte als Chips + Navigation zur Kontaktansicht + Öffnen des
+// `ContactAssignmentPickerSheet`" (CLAUDE.md "Wiederverwendung vor
+// Neuentwicklung") — hier neben dem zugehörigen Auswahl-Sheet abgelegt.
+//
+// Bewusst NICHT für den eigentlichen Server-Commit zuständig: das bleibt wie
+// zuvor Aufgabe des jeweiligen Formulars (`TodoFormView`/`TopicFormView`
+// `save()`), da der Commit erst NACH dem Speichern des Todos/Themas erfolgen
+// kann (dessen `refId` bei Neuanlage vorher noch nicht existiert) — siehe
+// Kopfkommentar dieser Datei ("Committing"-Absatz).
+struct ContactAssignmentSection: View {
+    /// "todo" oder "topic" — wird 1:1 an `AppState.loadAssignments`/
+    /// `setAssignments` durchgereicht.
+    let refType: String
+    /// `nil` im Anlegen-Modus (noch keine Server-ID) — dann bleibt `selection`
+    /// bis zum ersten Speichern die rein lokale Auswahl (analog zur
+    /// Themen-Zuordnung `themeIds`).
+    let refId: String?
+    @Binding var selection: Set<String>
+
+    @EnvironmentObject var state: AppState
+    @State private var showContactPicker = false
+    /// Ziel eines Chip-Taps — öffnet die Ansprechpartner-Ansicht (Vertrag:
+    /// "Anzeige zugeordneter Kontakte als Chips/Liste mit Navigation zur
+    /// Kontaktansicht").
+    @State private var contactDetailTarget: Contact?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                showContactPicker = true
+            } label: {
+                HStack {
+                    Text(summaryText)
+                        .foregroundStyle(selection.isEmpty ? .secondary : .primary)
+                    Spacer()
+                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityLabel("Ansprechpartner: \(summaryText)")
+            .accessibilityHint("Öffnet die Ansprechpartner-Auswahl.")
+            if !assignedContacts.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(assignedContacts) { contact in
+                            chip(contact)
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showContactPicker) {
+            ContactAssignmentPickerSheet(initialSelection: selection) { newSelection in
+                selection = newSelection
+            }
+        }
+        .sheet(item: $contactDetailTarget) { ContactDetailView(contact: $0) }
+        .task { await loadInitialAssignments() }
+    }
+
+    /// Nur lokal bereits geladene Kontakte (`state.contacts`) werden
+    /// angezeigt/verlinkt, analog zu `assignedContactNames`-Muster anderer
+    /// Zuordnungen.
+    private var assignedContacts: [Contact] {
+        selection.compactMap { id in state.contacts.first(where: { $0.id == id }) }
+    }
+
+    private var summaryText: String {
+        selection.isEmpty ? "Keine Ansprechpartner ausgewählt" : "\(selection.count) Ansprechpartner"
+    }
+
+    private func chip(_ contact: Contact) -> some View {
+        Button {
+            contactDetailTarget = contact
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "person.fill").font(.system(size: 8))
+                Text(contact.name)
+            }
+            .scaledFont(.caption2).fontWeight(.medium)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(DS.pink.opacity(0.1))
+            .foregroundStyle(DS.pink)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(contact.name) öffnen")
+        .accessibilityHint("Öffnet die Ansprechpartner-Ansicht.")
+    }
+
+    /// Lädt die bereits bestehende Zuständigkeits-Zuordnung EINMALIG beim
+    /// Öffnen eines bestehenden Todos/Themas (Neuanlage ohne `refId`: die
+    /// Auswahl bleibt die vom Aufrufer übergebene, i.d.R. leere Menge).
+    private func loadInitialAssignments() async {
+        guard let refId else { return }
+        selection = Set((try? await state.loadAssignments(refType: refType, refId: refId))?.map(\.contactId) ?? [])
+    }
+}

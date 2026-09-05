@@ -47,7 +47,7 @@ struct ArchiveConflictError: LocalizedError {
 /// ("Anderen Stand ansehen"/"Meine Version speichern"/"Verwerfen und neu
 /// laden") anbieten kann — ein generischer `APIError.server(String)` würde
 /// diesen strukturierten Konfliktstand verwerfen.
-struct ContactInfoBlockConflictError: Error, LocalizedError, Equatable {
+struct ContactInfoBlockConflictError: Error, LocalizedError {
     let currentBlock: ContactInfoBlock
     var errorDescription: String? {
         "Dieser Infoblock wurde zwischenzeitlich an anderer Stelle geändert."
@@ -58,7 +58,7 @@ struct ContactInfoBlockConflictError: Error, LocalizedError, Equatable {
 /// `409 category_in_use` meldet — trägt die Nutzungsanzahl mit, damit
 /// `ContactCategorySheet` einen konkreten Bestätigungstext zeigen kann
 /// (Vertrag: "Text abhängig von `usageCount` aus der `category_in_use`-Antwort").
-struct ContactCategoryInUseError: Error, LocalizedError, Equatable {
+struct ContactCategoryInUseError: Error, LocalizedError {
     let usageCount: Int
     var errorDescription: String? {
         usageCount == 1
@@ -72,7 +72,7 @@ struct ContactCategoryInUseError: Error, LocalizedError, Equatable {
 /// zusätzlichen Daten, das Limit (20) ist bereits clientseitig in
 /// `ContactAssignmentPickerSheet` durchgesetzt; dieser Fehler ist ein
 /// Fail-Safe für den Fall eines Wettlaufs mit einem anderen Gerät.
-struct ContactAssignmentLimitError: Error, LocalizedError, Equatable {
+struct ContactAssignmentLimitError: Error, LocalizedError {
     var errorDescription: String? { "Maximal 20 Ansprechpartner pro Vorhaben." }
 }
 
@@ -1055,10 +1055,6 @@ final class AppState: ObservableObject {
         }
         if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
         return try decoder.decode([AssignedContact].self, from: data)
-    }
-
-    func removeAssignment(refType: String, refId: String, contactId: String) async throws {
-        try await requestOK("DELETE", "/assignments/\(refType)/\(refId)/\(contactId)")
     }
 
     /// `status` ist optional (z.B. "open"/"done") — `nil` liefert laut

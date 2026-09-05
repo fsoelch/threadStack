@@ -243,6 +243,10 @@ struct Contact: Identifiable, Codable, Equatable {
     /// Gruppierungs-Reihenfolge der Infoblöcke in `ContactDetailView` (dort
     /// bewusst NICHT selbst neu sortiert, siehe Vertrag).
     var categories: [ContactCategory]?
+    /// Aktuell in keiner View gelesen (Stand Code-Review) — bleibt trotzdem
+    /// Teil des dekodierten Server-Vertrags (additiv-optional, siehe oben),
+    /// damit ein künftiger UI-Bedarf (z.B. eine Kurzanzeige "N Infoblöcke" in
+    /// `ContactsView`) ohne erneute Server-/Modell-Änderung auskommt.
     var infoBlockCount: Int?
     var snippet: String?
 }
@@ -267,6 +271,10 @@ struct ContactInfoBlock: Identifiable, Codable, Equatable {
     var bodyHtml: String
     var excerpt: String
     var sortOrder: Int
+    /// Aktuell in keiner View gelesen (Stand Code-Review) — Teil des
+    /// Server-Vertrags: markiert einen Infoblock, der aus der Migration der
+    /// alten, freitextigen `Contact.description` entstanden ist (z.B. für
+    /// eine spätere "automatisch übernommen"-Kennzeichnung in der UI).
     var isLegacyDescription: Bool?
     var createdAt: String
     var updatedAt: String
