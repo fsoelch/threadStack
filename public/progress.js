@@ -41,9 +41,13 @@
   // ==========================================================================
 
   var MONTHS_ABBR = ['Jan.', 'Feb.', 'März', 'Apr.', 'Mai', 'Juni', 'Juli', 'Aug.', 'Sep.', 'Okt.', 'Nov.', 'Dez.'];
-  var VALID_REF_TYPES = { todo: true, topic: true };
+  // 'contact' (Arbeitspaket W1, Ansprechpartner-Erweiterung): Kontakte nutzen
+  // denselben Zwischenstand-Mechanismus für ihre chronologischen Notizen wie
+  // Todos/Topics, haben aber keinen "Nächster Schritt" (siehe showNextStep in
+  // TimelineInstance) und keinen next-step-Endpunkt server-seitig.
+  var VALID_REF_TYPES = { todo: true, topic: true, contact: true };
 
-  function isValidRefType(t) { return t === 'todo' || t === 'topic'; }
+  function isValidRefType(t) { return t === 'todo' || t === 'topic' || t === 'contact'; }
 
   function isValidRefId(id) {
     return typeof id === 'string' && id.length > 0 && id.length <= 200;
@@ -368,6 +372,12 @@
     // Redesign "Übersichtlichere Todos und Tasks": ersetzt das entfallene
     // Zielbild als Kontextzeile im Zwischenstand-Dialog (siehe openEntryDialogFor).
     this.descriptionHtml = typeof opts.descriptionHtml === 'string' ? opts.descriptionHtml : '';
+    // Arbeitspaket W1 (Ansprechpartner-Erweiterung): Kontakte haben keinen
+    // "Nächster Schritt" (kein next-step-Endpunkt, result bleibt ''). Ohne
+    // explizite Angabe leitet sich showNextStep aus refType ab (nur
+    // 'contact' unterdrückt die Kopfzeile) — bestehende Aufrufer für
+    // todo/topic, die diese Option nicht kennen, sind unverändert.
+    this.showNextStep = (typeof opts.showNextStep === 'boolean') ? opts.showNextStep : (this.refType !== 'contact');
     this.destroyed = false;
     this.state = {
       loading: true,
@@ -697,6 +707,12 @@
   TimelineInstance.prototype.renderHead = function () {
     var head = this.headEl;
     head.innerHTML = '';
+
+    // Arbeitspaket W1 (Ansprechpartner-Erweiterung): Kontakte (und jeder
+    // andere Aufrufer mit showNextStep:false) haben keine "Nächster
+    // Schritt"-Kopfzeile — der Kopfbereich bleibt dann schlicht leer,
+    // renderBody()/der Verlauf darunter ist davon unberührt.
+    if (!this.showNextStep) return;
 
     var nextRow = el('div', { class: 'progress-nextstep-row' });
     nextRow.appendChild(el('span', { class: 'progress-row-label' }, '➡️ Nächster Schritt'));
@@ -1179,7 +1195,9 @@
     var code = err && err.code;
     if (status === 429 || code === 'rate_limited') return 'Zu viele Änderungen. Bitte kurz warten.';
     if (status === 404 || code === 'ref_not_found') {
-      return this.refType === 'topic' ? 'Dieses Thema wurde inzwischen gelöscht.' : 'Dieses Todo wurde inzwischen gelöscht.';
+      if (this.refType === 'topic') return 'Dieses Thema wurde inzwischen gelöscht.';
+      if (this.refType === 'contact') return 'Dieser Ansprechpartner wurde inzwischen gelöscht.';
+      return 'Dieses Todo wurde inzwischen gelöscht.';
     }
     if (status === 409 && code === 'ARCHIVED_READONLY') return 'Dieses Meeting ist archiviert. Zum Bearbeiten bitte wiederherstellen.';
     if (status === 409 && code === 'ref_done') return 'Dieses Vorhaben ist bereits erledigt.';

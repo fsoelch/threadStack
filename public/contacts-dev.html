@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ThreadStack — Ansprechpartner Dev Harness (W1)</title>
+<style>
+  html, body { margin:0; padding:0; font-family: 'DM Sans', -apple-system, system-ui, sans-serif; background:#F5F5F2; color:#111210; }
+  #dev-toolbar {
+    display:flex; gap:8px; align-items:center; padding:8px 12px; background:#0D0F11; color:#fff; font-size:12px; flex-wrap:wrap;
+    position:sticky; top:0; z-index:50;
+  }
+  #dev-toolbar button {
+    background:#1e293b; color:#fff; border:1px solid #334155; border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px;
+    font-family:inherit;
+  }
+  #dev-toolbar button:hover { background:#334155; }
+  #dev-status { margin-left:auto; opacity:.8; }
+  #dev-layout { max-width:760px; margin:24px auto; padding:0 16px; }
+  #detail-panel { background:#fff; border:1px solid #E8E7E2; border-radius:12px; padding:16px; box-shadow:0 1px 2px rgba(16,22,30,.05); }
+  #dev-log {
+    position:fixed; bottom:0; left:0; right:0; max-height:140px; overflow-y:auto;
+    background:#0f172a; color:#a7f3d0; font-family:monospace; font-size:11px; padding:6px 10px; display:none; z-index:100;
+  }
+  #dev-log.open { display:block; }
+  /* Minimaler rt-wrapper/-toolbar/-content-Ersatz fürs Dev-Harness — im
+     echten Host (index.html) übernimmt initRtToolbar()/CSS die volle
+     Gestaltung, siehe Abschlussbericht (offener Punkt für W2). */
+  .rt-wrapper { border:1px solid #E8E7E2; border-radius:8px; overflow:hidden; margin-bottom:.5rem; }
+  .rt-toolbar { background:#FBFBF9; border-bottom:1px solid #E8E7E2; min-height:28px; padding:4px; font-size:11px; color:#9A9890; }
+  .rt-toolbar:empty::before { content: "(Toolbar wird vom Host verdrahtet — hier leer)"; }
+  .rt-content { min-height:80px; padding:8px 10px; font-size:.875rem; }
+  .rt-display { font-size:.875rem; }
+</style>
+<link rel="stylesheet" href="progress.css">
+<link rel="stylesheet" href="contacts.css">
+</head>
+<body>
+
+<div id="dev-toolbar">
+  <strong>Ansprechpartner Dev Harness (W1)</strong>
+  <button id="btn-mount">Mount (Kontakt „Anna Müller")</button>
+  <button id="btn-mount-empty">Mount (Kontakt „Neuer Kontakt", leer)</button>
+  <button id="btn-unmount">Unmount</button>
+  <button id="btn-picker">Ansprechpartner-Dialog öffnen</button>
+  <button id="btn-toggle-log">Log ein/aus</button>
+  <span id="dev-status">bereit</span>
+</div>
+
+<div id="dev-layout">
+  <div id="detail-panel">
+    <div id="detail-root"></div>
+  </div>
+</div>
+
+<div id="dev-log"></div>
+
+<script>
+(function () {
+  'use strict';
+  var logEl = document.getElementById('dev-log');
+  function log(msg) {
+    var line = document.createElement('div');
+    line.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  document.getElementById('btn-toggle-log').addEventListener('click', function () {
+    logEl.classList.toggle('open');
+  });
+
+  // =========================================================================
+  // Mock-Datenmodell (In-Memory) — simuliert das Backend aus dem Vertrag
+  // (Pakete B1/B2/B3, parallel entstehend).
+  // =========================================================================
+
+  var categories = [
+    { id: 'cat-vertrieb', label: 'Vertrieb' },
+    { id: 'cat-technik', label: 'Technik' },
+    { id: 'cat-privates', label: 'Privates', isPrivate: true }
+  ];
+  var contacts = {
+    'anna': { id: 'anna', name: 'Anna Müller', role: 'Projektleitung', email: 'anna@example.com', categories: [categories[0], categories[2]], infoBlockCount: 2, snippet: 'Zuständig für die APAC-Region, bevorzugt Kommunikation per E-Mail.' },
+    'neu': { id: 'neu', name: 'Neuer Kontakt', role: '', email: '', categories: [], infoBlockCount: 0, snippet: '' }
+  };
+  var blocks = {
+    anna: [
+      { id: 'b1', categoryId: 'cat-vertrieb', bodyHtml: '<p>Bevorzugt Kommunikation per E-Mail, meldet sich meist erst nach 14 Uhr zurück.</p>', updatedAt: '2026-08-01T10:00:00.000Z' },
+      { id: 'b2', categoryId: 'cat-privates', bodyHtml: '<p>Hat im September Geburtstag.</p>', updatedAt: '2026-08-01T10:00:00.000Z' }
+    ],
+    neu: []
+  };
+  var themes = [
+    { id: 'th1', title: 'Kundenprojekt X', links: [{ id: 'l1', refType: 'contact', refId: 'anna' }] }
+  ];
+  var assignments = {
+    anna: [
+      { refType: 'todo', refId: 't1', title: 'Angebot finalisieren', done: false },
+      { refType: 'topic', refId: 'th1', title: 'Kickoff-Thema', done: false, meetingLabel: 'Montagsrunde' },
+      { refType: 'todo', refId: 't2', title: 'Altes Angebot archivieren', done: true }
+    ],
+    neu: []
+  };
+  var picks = { todo: { t1: ['anna'] } };
+
+  function jr(status, body) { return { status: status, json: function () { return Promise.resolve(body); }, ok: status < 400 }; }
+
+  window.fetch = function (url, opts) {
+    var method = (opts && opts.method) || 'GET';
+    var body = opts && opts.body ? JSON.parse(opts.body) : undefined;
+    log(method + ' ' + url + (body ? ' ' + JSON.stringify(body) : ''));
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        var m;
+        if ((m = url.match(/^\/api\/contacts\/([^/]+)$/)) && method === 'GET') { resolve(jr(200, contacts[m[1]])); return; }
+        if (url === '/api/contact-categories' && method === 'GET') { resolve(jr(200, categories)); return; }
+        if (url === '/api/contact-categories' && method === 'POST') {
+          var cat = { id: 'cat-' + Date.now(), label: body.label };
+          categories.push(cat);
+          resolve(jr(201, cat));
+          return;
+        }
+        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'GET') { resolve(jr(200, blocks[m[1]] || [])); return; }
+        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'POST') {
+          var nb = { id: 'b' + Date.now(), categoryId: body.categoryId, bodyHtml: body.bodyHtml, updatedAt: new Date().toISOString() };
+          (blocks[m[1]] = blocks[m[1]] || []).push(nb);
+          resolve(jr(201, nb));
+          return;
+        }
+        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'PUT') {
+          var list = blocks[m[1]] || [];
+          var b = list.filter(function (x) { return x.id === m[2]; })[0];
+          if (b) { b.categoryId = body.categoryId; b.bodyHtml = body.bodyHtml; b.updatedAt = new Date().toISOString(); }
+          resolve(jr(200, b));
+          return;
+        }
+        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'DELETE') {
+          blocks[m[1]] = (blocks[m[1]] || []).filter(function (x) { return x.id !== m[2]; });
+          resolve(jr(200, { ok: true }));
+          return;
+        }
+        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/reorder$/)) && method === 'PUT') { resolve(jr(200, { ok: true })); return; }
+        if (url === '/api/themes' && method === 'GET') { resolve(jr(200, themes)); return; }
+        if ((m = url.match(/^\/api\/contacts\/([^/]+)\/assignments/)) && method === 'GET') { resolve(jr(200, assignments[m[1]] || [])); return; }
+        if ((m = url.match(/^\/api\/assignments\/([^/]+)\/([^/?]+)$/)) && method === 'GET') {
+          resolve(jr(200, (picks[m[1]] && picks[m[1]][m[2]]) || []));
+          return;
+        }
+        if ((m = url.match(/^\/api\/assignments\/([^/]+)\/([^/?]+)$/)) && method === 'PUT') {
+          picks[m[1]] = picks[m[1]] || {};
+          picks[m[1]][m[2]] = body.contactIds;
+          resolve(jr(200, { ok: true }));
+          return;
+        }
+        resolve(jr(404, { error: 'Unbekannter Mock-Pfad: ' + method + ' ' + url, code: 'not_found' }));
+      }, 150 + Math.random() * 150);
+    });
+  };
+
+  window.addEventListener('load', function () {
+    var detailRoot = document.getElementById('detail-root');
+    var handle = null;
+
+    var rt = {
+      setRT: function (id, val) { var e = document.getElementById(id); if (e) e.innerHTML = val || ''; },
+      getRT: function (id) { var e = document.getElementById(id); return e ? e.innerHTML : ''; }
+    };
+
+    function mount(contactId) {
+      if (handle) handle.destroy();
+      handle = window.TSContacts.mountContactDetail(detailRoot, {
+        contactId: contactId,
+        rt: rt,
+        openThemeLinkModal: function (ctx) { log('openThemeLinkModal(Mock) ' + JSON.stringify(ctx)); alert('Mock: Theme-Link-Dialog würde sich hier öffnen (Host-Integration in W2).'); },
+        confirm: function (opts) { return Promise.resolve(window.confirm((opts.title || '') + '\n\n' + (opts.message || ''))); },
+        toast: function (msg) { log('TOAST: ' + msg); },
+        onContactChanged: function (c) { log('onContactChanged(' + (c && c.name) + ')'); },
+        onNavigate: function (ref) { log('onNavigate(' + JSON.stringify(ref) + ')'); },
+        onError: function (err) { log('onError: ' + (err && err.message)); }
+      });
+      document.getElementById('dev-status').textContent = 'gemountet: ' + contactId;
+    }
+
+    document.getElementById('btn-mount').addEventListener('click', function () { mount('anna'); });
+    document.getElementById('btn-mount-empty').addEventListener('click', function () { mount('neu'); });
+    document.getElementById('btn-unmount').addEventListener('click', function () {
+      if (handle) handle.destroy();
+      handle = null;
+      document.getElementById('dev-status').textContent = 'unmounted';
+    });
+    document.getElementById('btn-picker').addEventListener('click', function () {
+      window.TSContacts.openAssignmentPicker({
+        refType: 'todo', refId: 't1', title: 'Angebot finalisieren',
+        contacts: Object.keys(contacts).map(function (k) { return contacts[k]; }),
+        onChanged: function (assigned) { log('onChanged: ' + assigned.map(function (c) { return c.name; }).join(', ')); },
+        onError: function (err) { log('onError: ' + (err && err.message)); },
+        toast: function (msg) { log('TOAST: ' + msg); }
+      });
+    });
+
+    mount('anna');
+  });
+
+  log('Dev-Harness bereit. fetch gemockt, In-Memory-Store aktiv.');
+})();
+</script>
+<script src="progress.js"></script>
+<script src="contacts.js"></script>
+</body>
+</html>
