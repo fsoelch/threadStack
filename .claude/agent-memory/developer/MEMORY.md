@@ -1,0 +1,3 @@
+- [Resumed session verification](workflow_resumed_session.md) — check git status/diff first, prior run may already be complete
+- [Progress module ref_type extension pattern](project_progress_module.md) — SQLite CHECK rebuild pattern, ownership split lib/progress vs server.js
+- [progress_web_helpers time-bomb test](pitfall_progress_web_helpers_timebomb.md) — hardcoded dates cause future unrelated failures
