@@ -270,6 +270,26 @@ test('moveAssignments: ohne bestehende Zuordnungen liefert {moved:0}', () => {
   assert.deepEqual(result, { moved: 0 });
 });
 
+test('moveAssignments: identisches from/to (No-Op) löscht bestehende Zuordnungen NICHT (Verifikations-Review Fund 1)', () => {
+  const db = buildDb();
+  const u = seedUser(db);
+  const topic = seedTopic(db, u);
+  const c1 = seedContact(db, u);
+  const c2 = seedContact(db, u);
+  assign(db, u, c1, 'topic', topic);
+  assign(db, u, c2, 'topic', topic);
+
+  const result = moveAssignments(db, { refType: 'topic', refId: topic }, { refType: 'topic', refId: topic });
+  assert.deepEqual(result, { moved: 0 });
+
+  const rows = db.prepare('SELECT ref_type, ref_id, contact_id FROM contact_assignments').all();
+  assert.equal(rows.length, 2, 'Zuordnungen dürfen bei identischem from/to nicht verloren gehen');
+  assert.deepEqual(
+    rows.map((r) => r.contact_id).sort(),
+    [c1, c2].sort()
+  );
+});
+
 test('moveAssignments: wirft bei ungültigem refType', () => {
   const db = buildDb();
   assert.throws(() => moveAssignments(db, { refType: 'contact', refId: 'x' }, { refType: 'todo', refId: 'y' }));
