@@ -467,7 +467,8 @@
       editorCategory: null,   // aktuell in der Combobox gewählte Rubrik
       conflict: null,         // { blockId, pendingBodyHtml, pendingCategoryId, serverBlock, showServer }
       topics: [], topicsLoading: true, topicsError: null,
-      assignments: [], assignmentsLoading: true, assignmentsError: null
+      assignments: [], assignmentsLoading: true, assignmentsError: null,
+      assignmentsPage: null, assignmentsCounts: null
     };
 
     this.rootEl = el('div', { class: 'tsc-detail' });
@@ -1176,9 +1177,19 @@
     this.state.assignmentsLoading = true;
     this.state.assignmentsError = null;
     this.renderSection4();
-    request('GET', contactAssignmentsUrl(this.contactId, { limit: 100, offset: 0 })).then(function (items) {
+    // B3-Backend (lib/contacts/assignments/router.js) validiert limit auf den
+    // Bereich 1..50 (400 INVALID_LIMIT außerhalb dieses Bereichs) und liefert
+    // ein verschachteltes Objekt { items, page:{limit,offset,total,hasMore},
+    // counts:{open,done} } statt eines flachen Arrays. `page.hasMore` wird
+    // hier bewusst nur gemerkt (this.state.assignmentsPage), ein "weitere
+    // laden"-UI ist im bestehenden Vertrag für Abschnitt 4 noch nicht
+    // vorgesehen — spätere Erweiterung kann darauf aufsetzen, ohne den
+    // Response-Parsing-Code erneut anzufassen.
+    request('GET', contactAssignmentsUrl(this.contactId, { limit: 50, offset: 0 })).then(function (res) {
       if (self.destroyed) return;
-      self.state.assignments = Array.isArray(items) ? items : [];
+      self.state.assignments = (res && Array.isArray(res.items)) ? res.items : [];
+      self.state.assignmentsPage = (res && res.page) || null;
+      self.state.assignmentsCounts = (res && res.counts) || null;
       self.state.assignmentsLoading = false;
       self.renderSection4();
     }).catch(function (err) {
@@ -1229,8 +1240,8 @@
       main.appendChild(el('span', { class: 'tsc-badge-type' }, typeLabel));
       main.appendChild(el('span', { class: 'tsc-assignment-title' }, escHtml(item.title || '')));
       if (item.done) main.appendChild(el('span', { class: 'tsc-assignment-status' }, 'erledigt'));
-      if (item.refType === 'topic' && item.meetingLabel) {
-        main.appendChild(el('span', { class: 'tsc-assignment-meeting' }, escHtml(item.meetingLabel)));
+      if (item.refType === 'topic' && item.meetingTitle) {
+        main.appendChild(el('span', { class: 'tsc-assignment-meeting' }, escHtml(item.meetingTitle)));
       }
       li.appendChild(main);
       var rm = el('button', {
@@ -1390,7 +1401,7 @@
     function render() {
       dialog.innerHTML = '';
       var head = el('div', { class: 'modal-header' });
-      head.appendChild(el('h3', {}, 'Rubriken verwalten'));
+      head.appendChild(el('h2', {}, 'Rubriken verwalten'));
       var closeBtn = el('button', { type: 'button', class: 'modal-close tsc-icon-btn', 'aria-label': 'Schließen' }, '×');
       closeBtn.addEventListener('click', closeFn);
       head.appendChild(closeBtn);
@@ -1498,7 +1509,7 @@
     }
 
     var previousActive = document.activeElement;
-    var state = { search: '', selected: {}, saving: false, loaded: false };
+    var state = { search: '', selected: {}, saving: false, loaded: false, prefillError: false };
 
     var overlay = el('div', { class: 'modal-overlay' });
     var dialog = el('div', { class: 'modal tsc-assignment-picker', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Ansprechpartner zuordnen' });
@@ -1531,10 +1542,26 @@
     var listEl = null;
     var countEl = null;
     var loadingHintEl = null;
+    var warningEl = null;
+    var doneBtnEl = null;
 
     function renderList() {
       if (!listEl) return; // Leerzustand ohne Kontakte: keine Liste vorhanden.
       if (loadingHintEl) loadingHintEl.hidden = state.loaded;
+      // Fund A (Review): ein fehlgeschlagenes Vorbelegungs-Laden darf nicht
+      // still bleiben — "Fertig" würde sonst per PUT {contactIds} die
+      // KOMPLETTE bestehende Zuordnung ersetzen, obwohl der Ausgangszustand
+      // gar nicht bekannt ist (destruktiver Datenverlust bei einem simplen
+      // Netzwerkfehler). Daher: sichtbarer Hinweis + "Fertig" deaktiviert,
+      // solange die Vorbelegung nicht (erfolgreich) geladen wurde.
+      if (warningEl) warningEl.hidden = !state.prefillError;
+      if (doneBtnEl) {
+        doneBtnEl.disabled = !!state.prefillError;
+        doneBtnEl.setAttribute('aria-disabled', state.prefillError ? 'true' : 'false');
+        doneBtnEl.title = state.prefillError
+          ? 'Speichern nicht möglich: aktuelle Zuordnung konnte nicht geladen werden.'
+          : '';
+      }
       listEl.innerHTML = '';
       var atMax = selectedCount() >= ASSIGNMENT_MAX;
       filteredContacts().forEach(function (c) {
@@ -1563,19 +1590,25 @@
 
     function render() {
       dialog.innerHTML = '';
-      listEl = null; countEl = null; loadingHintEl = null;
+      listEl = null; countEl = null; loadingHintEl = null; warningEl = null; doneBtnEl = null;
       var head = el('div', { class: 'modal-header' });
-      head.appendChild(el('h3', {}, 'Ansprechpartner zuordnen'));
+      head.appendChild(el('h2', {}, 'Ansprechpartner zuordnen'));
       dialog.appendChild(head);
 
+      // Fund B (Review): Inhalt gehört analog zum Rubriken-Verwaltungsdialog
+      // in einen .modal-body-Wrapper statt direkt am .modal-Element zu hängen
+      // (fehlendes Standard-Padding, Inhalt klebt sonst am Dialograhmen).
+      var body = el('div', { class: 'modal-body' });
+      dialog.appendChild(body);
+
       var typeLabel = refType === 'topic' ? 'Thema' : 'Todo';
-      dialog.appendChild(el('p', { class: 'tsc-picker-context' }, 'Für „' + escHtml(title) + '" (' + typeLabel + ')'));
+      body.appendChild(el('p', { class: 'tsc-picker-context' }, 'Für „' + escHtml(title) + '" (' + typeLabel + ')'));
 
       if (!allContacts.length) {
-        dialog.appendChild(el('p', { class: 'tsc-empty-hint' }, 'Noch keine Ansprechpartner vorhanden. Lege zuerst einen Ansprechpartner in der Ansicht „Ansprechpartner" an.'));
+        body.appendChild(el('p', { class: 'tsc-empty-hint' }, 'Noch keine Ansprechpartner vorhanden. Lege zuerst einen Ansprechpartner in der Ansicht „Ansprechpartner" an.'));
         var closeOnlyBtn = el('button', { type: 'button', class: 'tsc-btn tsc-btn-primary' }, 'Schließen');
         closeOnlyBtn.addEventListener('click', closeFn);
-        dialog.appendChild(closeOnlyBtn);
+        body.appendChild(closeOnlyBtn);
         setTimeout(function () { closeOnlyBtn.focus(); }, 0);
         return;
       }
@@ -1583,31 +1616,44 @@
       var searchInput = el('input', { type: 'search', class: 'tsc-picker-search', placeholder: 'Nach Name oder Rolle suchen …', 'aria-label': 'Ansprechpartner suchen' });
       searchInput.value = state.search;
       searchInput.addEventListener('input', function () { state.search = searchInput.value; renderList(); });
-      dialog.appendChild(searchInput);
+      body.appendChild(searchInput);
 
       loadingHintEl = el('p', { class: 'tsc-loading-hint' }, 'Aktuelle Zuordnung wird geladen …');
       loadingHintEl.hidden = state.loaded;
-      dialog.appendChild(loadingHintEl);
+      body.appendChild(loadingHintEl);
+
+      // Fund A (Review): sichtbarer Warnhinweis, falls die Vorbelegung nicht
+      // geladen werden konnte — "Fertig" würde sonst unbemerkt bestehende
+      // Zuordnungen löschen (siehe renderList()).
+      warningEl = el('p', { class: 'tsc-picker-warning', role: 'alert' },
+        escHtml('Aktuelle Zuordnung konnte nicht geladen werden — Speichern würde bestehende Zuordnungen ersetzen.'));
+      warningEl.hidden = !state.prefillError;
+      body.appendChild(warningEl);
 
       listEl = el('ul', { class: 'tsc-picker-list' });
-      dialog.appendChild(listEl);
+      body.appendChild(listEl);
 
       var footer = el('div', { class: 'modal-footer' });
       countEl = el('span', { class: 'tsc-picker-count' });
       var cancelBtn = el('button', { type: 'button', class: 'tsc-btn tsc-btn-secondary' }, 'Abbrechen');
-      var doneBtn = el('button', { type: 'button', class: 'tsc-btn tsc-btn-primary' }, 'Fertig');
-      footer.appendChild(countEl); footer.appendChild(cancelBtn); footer.appendChild(doneBtn);
+      doneBtnEl = el('button', { type: 'button', class: 'tsc-btn tsc-btn-primary' }, 'Fertig');
+      footer.appendChild(countEl); footer.appendChild(cancelBtn); footer.appendChild(doneBtnEl);
       dialog.appendChild(footer);
 
       cancelBtn.addEventListener('click', closeFn);
-      doneBtn.addEventListener('click', save);
+      doneBtnEl.addEventListener('click', save);
 
       renderList();
       setTimeout(function () { searchInput.focus(); }, 0);
     }
 
     function save() {
-      if (state.saving) return;
+      // Defense-in-Depth (Fund A): zusätzlich zum deaktivierten Button wird
+      // ein Speichern im Fehlerzustand auch bei programmatischem Aufruf
+      // verhindert — ein PUT {contactIds} in diesem Zustand würde bestehende
+      // Zuordnungen unbemerkt löschen, da state.selected nicht die reale
+      // Ausgangslage widerspiegelt.
+      if (state.saving || state.prefillError) return;
       state.saving = true;
       var ids = Object.keys(state.selected).filter(function (id) { return state.selected[id]; });
       request('PUT', assignmentsForRefUrl(refType, refId), { contactIds: ids }).then(function () {
@@ -1635,12 +1681,22 @@
     // zuvor ein sichtbares Flackern/den Verlust von Fokus+Eingabe in der
     // Sucheingabe, sobald die Vorbelegung eintraf) — state.loaded steuert
     // zusätzlich einen kurzen Lade-Hinweis oberhalb der Liste.
-    request('GET', assignmentsForRefUrl(refType, refId)).then(function (ids) {
-      (Array.isArray(ids) ? ids : []).forEach(function (id) { state.selected[id] = true; });
+    request('GET', assignmentsForRefUrl(refType, refId)).then(function (res) {
+      // B3-Backend (lib/contacts/assignments/router.js) liefert
+      // { contacts:[{contactId,...}], limit } — KEIN flaches ID-Array.
+      var list = (res && Array.isArray(res.contacts)) ? res.contacts : [];
+      list.forEach(function (c) { if (c && c.contactId) state.selected[c.contactId] = true; });
       state.loaded = true;
+      state.prefillError = false;
       renderList();
-    }).catch(function () {
+    }).catch(function (err) {
+      // Fund A (Review): Fehler NICHT verschlucken — wird sowohl an den Host
+      // gemeldet als auch sichtbar im Dialog angezeigt (siehe warningEl in
+      // render()/renderList()), da "Fertig" andernfalls unbemerkt bestehende
+      // Zuordnungen per PUT {contactIds} ersetzen würde.
       state.loaded = true;
+      state.prefillError = true;
+      try { onError(err); } catch (e) { /* noop */ }
       renderList();
     });
 

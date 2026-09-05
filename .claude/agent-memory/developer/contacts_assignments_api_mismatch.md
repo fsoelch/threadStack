@@ -1,39 +1,40 @@
 ---
 name: contacts-assignments-api-mismatch
-description: public/contacts.js (W1) nimmt fuer die Zustaendigkeits-API andere Response-Formen an als der (Stand 2026-09-05 noch nicht gemergte) B3-Backend-Stand liefert
+description: (BEHOBEN, 2026-09-05) public/contacts.js (W1) nahm fuer die Zustaendigkeits-API andere Response-Formen an als B3 tatsaechlich liefert — Fix + Regressionstests bereits umgesetzt
 metadata:
   type: project
 ---
 
-`public/contacts.js` (Kontakt-Detail-Modul, W1) geht bei der "Ist zustaendig
-fuer"-Sektion und beim Zuordnungsdialog (`openAssignmentPicker`) von folgenden
-Response-Formen aus:
-- `GET /api/contacts/:id/assignments` -> erwartet eine reine Liste (Array) von
-  Eintraegen direkt als Body.
-- `GET /api/assignments/:refType/:refId` -> erwartet eine reine Liste von
-  Kontakt-IDs (Strings) direkt als Body.
+**Status: behoben (2026-09-05).** Ursprünglich beschrieb dieser Eintrag einen
+noch nicht gemergten Formatkonflikt zwischen `public/contacts.js` (W1) und dem
+B3-Backend (`lib/contacts/assignments/*`, Branch
+`worktree-agent-a4fd34f05621b17d1`). Der B3-Branch wurde inzwischen fertig
+integriert; `public/contacts.js` wurde entsprechend angepasst:
 
-Der Backend-Stand fuer die Zustaendigkeits-API liegt (Stand 2026-09-05) auf dem
-separaten, noch NICHT in main/den hier bearbeiteten Branch gemergten Branch
-`worktree-agent-a4fd34f05621b17d1` (`lib/contacts/assignments/*`, Commit
-"fix(contacts): Verifikations-Review-Nachbesserungen B3 ..."). Dort liefern die
-Endpunkte tatsaechlich:
-- `GET /assignments/:refType/:refId` -> `{ contacts: [{contactId, name, role,
-  email, assignedAt}, ...], limit }` (Objekt, keine reine ID-Liste!).
-- `GET /contacts/:contactId/assignments` -> `{ items: [...], page: {limit,
-  offset, total, hasMore}, counts: {open, done} }` (Objekt, kein reines Array!).
+- `GET /api/assignments/:refType/:refId` liefert `{ contacts:[{contactId,
+  name, role, email, assignedAt}], limit }` — der Zuordnungsdialog
+  (`openAssignmentPicker`) entpackt jetzt `res.contacts.map(c => c.contactId)`
+  statt eines flachen ID-Arrays.
+- `GET /api/contacts/:contactId/assignments` liefert `{ items, page:{limit,
+  offset,total,hasMore}, counts:{open,done} }`. `loadAssignments` liest jetzt
+  `res.items` statt eines flachen Arrays UND sendet `limit:50` statt
+  `limit:100` (B3 validiert 1..50, sonst 400 INVALID_LIMIT).
+- Feldname `item.meetingLabel` → `item.meetingTitle` (B3-Projektion liefert
+  `meetingTitle`/`meetingId`).
 
-**Warum wichtig:** Sobald der B3-Branch gemergt wird, brechen die o.g.
-Annahmen in `public/contacts.js` sowie deren Tests (`test/contacts_web_module.
-test.js` mockt die Endpunkte ebenfalls als reine Arrays) still — die UI wuerde
-dann leere Listen anzeigen, da `Array.isArray(response)` fehlschlaegt statt
-`response.items`/`response.contacts` auszulesen.
+**Warum wichtig (für künftige Formatkonflikt-Situationen):** Ein Review hatte
+entdeckt, dass der Prefill-Fehler durch das Formatmismatch STILL fehlschlug
+(kein `onError`, kein sichtbarer Hinweis) und "Fertig" danach per
+`PUT {contactIds}` ALLE bestehenden Zuordnungen gelöscht hätte (destruktiver
+Bug, siehe auch [[assignment-picker-prefill-error-must-be-visible]] falls
+dieser Eintrag später angelegt wird). Muster für künftige Fälle: bei einer
+"Voll-Ersetzen"-PUT-Semantik (kein Delta-Update) MUSS ein fehlgeschlagenes
+Prefill-Laden sowohl `onError` aufrufen als auch die Aktion (hier: "Fertig")
+sichtbar/faktisch blockieren, nicht nur den Ladezustand als "leer" interpretieren.
 
-**Wie anwenden:** Beim naechsten Merge/Integrationsschritt (vermutlich B4/B5
-oder ein eigenes Anpassungspaket) muss `public/contacts.js` (Funktionen
-`loadAssignments`, `openAssignmentPicker`) UND die zugehoerigen Tests auf die
-tatsaechliche, verschachtelte Response-Form angepasst werden. Nicht
-eigenmaechtig vorab "auf Verdacht" anpassen, solange der Backend-Stand nicht
-gemergt ist (sonst driften Annahme und Realitaet moeglicherweise erneut
-auseinander) - aber beim Merge aktiv pruefen, nicht nur auf gruene Tests
-verlassen (die Mocks im W1-Testmodul bilden aktuell den FALSCHEN Vertrag ab).
+**Wie anwenden:** Falls erneut ein Formatkonflikt zwischen einem Web-Modul und
+einem Backend-Arbeitspaket auffällt: zuerst den TATSÄCHLICHEN Branch-Stand des
+Backends lesen (nicht nur den ursprünglichen Schnittstellenvertrag), dann
+Web-Modul UND zugehörige Tests (Mocks!) in einem Schritt anpassen — sonst
+bilden die Tests weiterhin den falschen Vertrag ab und geben falsche
+Sicherheit.

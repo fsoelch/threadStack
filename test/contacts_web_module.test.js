@@ -294,6 +294,21 @@ function stubProgressModule(window) {
   return { composerCalls, timelineCalls };
 }
 
+// B3-Backend (lib/contacts/assignments/router.js) liefert für
+// GET /api/contacts/:id/assignments ein verschachteltes Objekt
+// { items, page:{limit,offset,total,hasMore}, counts:{open,done} } — KEIN
+// flaches Array (siehe Review-Fund/Formatkonflikt W1<->B3).
+function assignmentsResponse(items) {
+  items = items || [];
+  var open = items.filter((i) => !i.done).length;
+  var done = items.length - open;
+  return {
+    items,
+    page: { limit: 50, offset: 0, total: items.length, hasMore: false },
+    counts: { open, done },
+  };
+}
+
 function standardRouter({ contact, categories, blocks, themes, assignments } = {}) {
   contact = contact || baseContact();
   categories = categories || [];
@@ -305,7 +320,7 @@ function standardRouter({ contact, categories, blocks, themes, assignments } = {
     if (method === 'GET' && url === '/api/contact-categories') return { status: 200, body: categories };
     if (method === 'GET' && /\/info-blocks$/.test(url)) return { status: 200, body: blocks };
     if (method === 'GET' && url === '/api/themes') return { status: 200, body: themes };
-    if (method === 'GET' && /\/assignments/.test(url)) return { status: 200, body: assignments };
+    if (method === 'GET' && /\/assignments/.test(url)) return { status: 200, body: assignmentsResponse(assignments) };
     return { status: 404, body: { error: 'Nicht gefunden', code: 'not_found' } };
   };
 }
@@ -792,7 +807,7 @@ test('Topic zuweisen: ruft openThemeLinkModal(ctx, onClosed) auf, Topics werden 
   handle.destroy();
 });
 
-test('Ist zuständig für: Leerzustand, Fehlerzustand mit Retry, Typ-Badge/Meeting-Label', async () => {
+test('Ist zuständig für: Leerzustand, Fehlerzustand mit Retry, Typ-Badge/Meeting-Titel', async () => {
   const { window, document } = makeDom(standardRouter());
   stubProgressModule(window);
   const root = document.getElementById('root');
@@ -802,7 +817,7 @@ test('Ist zuständig für: Leerzustand, Fehlerzustand mit Retry, Typ-Badge/Meeti
   handle.destroy();
 
   let fail = true;
-  const assignments = [{ refType: 'topic', refId: 'th1', title: 'Kickoff', done: false, meetingLabel: 'Montagsrunde' }];
+  const assignments = [{ refType: 'topic', refId: 'th1', title: 'Kickoff', done: false, meetingId: 'm1', meetingTitle: 'Montagsrunde' }];
   const { window: w2, document: d2 } = makeDom((method, url) => {
     if (method === 'GET' && /\/assignments/.test(url) && fail) return { status: 500, body: { error: 'x', code: 'internal' } };
     return standardRouter({ assignments })(method, url);
@@ -821,6 +836,39 @@ test('Ist zuständig für: Leerzustand, Fehlerzustand mit Retry, Typ-Badge/Meeti
   h2.destroy();
 });
 
+test('Ist zuständig für: GET sendet limit<=50 (B3 validiert 1..50, vorher fälschlich limit=100 -> 400 INVALID_LIMIT)', async () => {
+  const assignments = [{ refType: 'todo', refId: 't1', title: 'Angebot', done: false }];
+  const { window, document, calls } = makeDom(standardRouter({ assignments }));
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  const assignmentCall = calls.filter((c) => c.method === 'GET' && /\/assignments/.test(c.url))[0];
+  assert.ok(assignmentCall, 'GET .../assignments erwartet');
+  const limitMatch = assignmentCall.url.match(/limit=(\d+)/);
+  assert.ok(limitMatch, 'limit-Query-Parameter erwartet');
+  assert.ok(Number(limitMatch[1]) <= 50, 'limit muss <= 50 sein (B3-Validierung)');
+  assert.match(root.textContent, /Angebot/);
+  handle.destroy();
+});
+
+test('Ist zuständig für: entpackt B3-Antwortformat {items,page,counts} statt eines flachen Arrays', async () => {
+  const assignments = [
+    { refType: 'todo', refId: 't1', title: 'Angebot erstellen', done: false },
+    { refType: 'topic', refId: 'th2', title: 'Review', done: true, meetingId: 'm2', meetingTitle: 'Freitagsrunde' },
+  ];
+  const { window, document } = makeDom(standardRouter({ assignments }));
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  assert.match(root.textContent, /Angebot erstellen/);
+  assert.match(root.textContent, /Review/);
+  assert.match(root.textContent, /Freitagsrunde/);
+  assert.match(root.textContent, /erledigt/);
+  handle.destroy();
+});
+
 // ==========================================================================
 // openAssignmentPicker
 // ==========================================================================
@@ -832,7 +880,7 @@ function makeContacts(n) {
 }
 
 test('openAssignmentPicker: Leerzustand ohne Kontakte', () => {
-  const { window, document } = makeDom(() => ({ status: 200, body: [] }));
+  const { window, document } = makeDom(() => ({ status: 200, body: { contacts: [] } }));
   window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts: [] });
   const dialog = document.querySelector('.modal');
   assert.match(dialog.textContent, /Noch keine Ansprechpartner vorhanden/);
@@ -840,7 +888,7 @@ test('openAssignmentPicker: Leerzustand ohne Kontakte', () => {
 
 test('openAssignmentPicker: Titel/Kontextzeile, Suche filtert, Limit von 20 deaktiviert weitere Checkboxen', async () => {
   const contacts = makeContacts(25);
-  const { window, document } = makeDom(() => ({ status: 200, body: [] }));
+  const { window, document } = makeDom(() => ({ status: 200, body: { contacts: [] } }));
   window.TSContacts.openAssignmentPicker({ refType: 'topic', refId: 'th1', title: 'Migration', contacts });
   await tick(20);
   const dialog = document.querySelector('.modal');
@@ -877,7 +925,14 @@ test('openAssignmentPicker: Eintreffen der Vorbelegung reißt NICHT die Sucheing
   let resolvePrefill;
   const router = (method) => {
     if (method === 'GET') {
-      return new Promise((resolve) => { resolvePrefill = () => resolve({ status: 200, body: ['k1'] }); });
+      // B3-Backend liefert { contacts:[{contactId,...}], limit } — KEIN
+      // flaches ID-Array (Formatkonflikt-Fix).
+      return new Promise((resolve) => {
+        resolvePrefill = () => resolve({
+          status: 200,
+          body: { contacts: [{ contactId: 'k1', name: 'Kontakt 1', role: 'Vertrieb', email: '', assignedAt: '2026-01-01' }], limit: 20 },
+        });
+      });
     }
     return { status: 200, body: { ok: true } };
   };
@@ -912,7 +967,7 @@ test('openAssignmentPicker: Eintreffen der Vorbelegung reißt NICHT die Sucheing
 
 test('openAssignmentPicker: Titel in der Kontextzeile ist gegen XSS escaped (Code-Review-Fund)', async () => {
   const contacts = makeContacts(1);
-  const { window, document } = makeDom(() => ({ status: 200, body: [] }));
+  const { window, document } = makeDom(() => ({ status: 200, body: { contacts: [] } }));
   window.TSContacts.openAssignmentPicker({
     refType: 'todo', refId: 't1', title: '<img src=x onerror=alert(1)>', contacts,
   });
@@ -929,7 +984,7 @@ test('openAssignmentPicker: "Fertig" speichert via PUT und ruft onChanged mit au
   const calls = [];
   const { window, document } = makeDom((method, url, body) => {
     calls.push({ method, url, body });
-    if (method === 'GET') return { status: 200, body: [] };
+    if (method === 'GET') return { status: 200, body: { contacts: [] } };
     return { status: 200, body: { ok: true } };
   });
   let changedWith = null;
@@ -957,7 +1012,7 @@ test('openAssignmentPicker: "Fertig" speichert via PUT und ruft onChanged mit au
 test('openAssignmentPicker: Speicherfehler zeigt Toast, Dialog bleibt offen mit erhaltener Auswahl', async () => {
   const contacts = makeContacts(3);
   const { window, document } = makeDom((method) => {
-    if (method === 'GET') return { status: 200, body: [] };
+    if (method === 'GET') return { status: 200, body: { contacts: [] } };
     return { status: 500, body: { error: 'Serverfehler', code: 'internal' } };
   });
   let toastMsg = null;
@@ -981,7 +1036,7 @@ test('openAssignmentPicker: Speicherfehler zeigt Toast, Dialog bleibt offen mit 
 
 test('openAssignmentPicker: Escape schließt den Dialog und stellt Fokus wieder her', async () => {
   const contacts = makeContacts(2);
-  const { window, document } = makeDom(() => ({ status: 200, body: [] }));
+  const { window, document } = makeDom(() => ({ status: 200, body: { contacts: [] } }));
   const trigger = document.createElement('button');
   trigger.textContent = 'Öffnen';
   document.body.appendChild(trigger);
@@ -995,9 +1050,106 @@ test('openAssignmentPicker: Escape schließt den Dialog und stellt Fokus wieder 
   assert.equal(document.activeElement, trigger);
 });
 
+test('openAssignmentPicker: Prefill entpackt B3-Format {contacts:[{contactId,...}]} korrekt (Formatkonflikt-Fix)', async () => {
+  const contacts = makeContacts(3);
+  const { window, document } = makeDom((method) => {
+    if (method === 'GET') {
+      return {
+        status: 200,
+        body: { contacts: [{ contactId: 'k0', name: 'Kontakt 0', role: 'Einkauf', email: '', assignedAt: '2026-01-01' }], limit: 20 },
+      };
+    }
+    return { status: 200, body: { ok: true } };
+  });
+  window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts });
+  await tick(20);
+  const preselected = document.querySelector('#tsc-pick-k0');
+  assert.ok(preselected, 'Checkbox für k0 erwartet');
+  assert.equal(preselected.checked, true);
+});
+
+// ==========================================================================
+// Fund A (Review): stiller Prefill-Fehler trotz destruktivem Speichern
+// ==========================================================================
+
+test('openAssignmentPicker: fehlgeschlagene Vorbelegung meldet onError, zeigt sichtbaren Hinweis und deaktiviert "Fertig"', async () => {
+  const contacts = makeContacts(3);
+  const { window, document } = makeDom((method) => {
+    if (method === 'GET') return { status: 500, body: { error: 'Serverfehler', code: 'internal' } };
+    return { status: 200, body: { ok: true } };
+  });
+  let reportedErr = null;
+  window.TSContacts.openAssignmentPicker({
+    refType: 'todo', refId: 't1', title: 'Angebot', contacts,
+    onError: (err) => { reportedErr = err; },
+  });
+  await tick(20);
+  const dialog = document.querySelector('.modal');
+  assert.ok(reportedErr, 'onError muss bei einem Prefill-Fehler aufgerufen werden');
+  const warning = dialog.querySelector('.tsc-picker-warning');
+  assert.ok(warning, 'sichtbarer Warnhinweis erwartet');
+  assert.equal(warning.hidden, false);
+  assert.match(warning.textContent, /Aktuelle Zuordnung konnte nicht geladen werden/);
+  const doneBtn = Array.from(dialog.querySelectorAll('button')).filter((b) => b.textContent === 'Fertig')[0];
+  assert.equal(doneBtn.disabled, true);
+  assert.equal(doneBtn.getAttribute('aria-disabled'), 'true');
+
+  // Defense-in-Depth: selbst ein (programmatischer) Klick auf den
+  // deaktivierten Button darf keinen PUT auslösen, der die komplette
+  // Zuordnung durch eine leere/unvollständige Auswahl ersetzen würde.
+  doneBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  assert.ok(document.querySelector('.modal-overlay'), 'Dialog muss offen bleiben');
+});
+
+test('openAssignmentPicker: erfolgreiche Vorbelegung zeigt KEINEN Warnhinweis, "Fertig" bleibt aktiv', async () => {
+  const contacts = makeContacts(2);
+  const { window, document } = makeDom(() => ({ status: 200, body: { contacts: [] } }));
+  window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts });
+  await tick(20);
+  const dialog = document.querySelector('.modal');
+  assert.equal(dialog.querySelector('.tsc-picker-warning').hidden, true);
+  const doneBtn = Array.from(dialog.querySelectorAll('button')).filter((b) => b.textContent === 'Fertig')[0];
+  assert.equal(doneBtn.disabled, false);
+});
+
+// ==========================================================================
+// Fund B (Review): Modal-Chrome (modal-body-Wrapper, <h2> statt <h3>)
+// ==========================================================================
+
+test('openAssignmentPicker: Inhalt liegt in .modal-body, Überschrift ist <h2> (Modal-Chrome-Konsistenz)', async () => {
+  const contacts = makeContacts(1);
+  const { window, document } = makeDom(() => ({ status: 200, body: { contacts: [] } }));
+  window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts });
+  await tick(20);
+  const dialog = document.querySelector('.modal');
+  const body = dialog.querySelector('.modal-body');
+  assert.ok(body, '.modal-body-Wrapper erwartet');
+  assert.ok(body.querySelector('.tsc-picker-context'));
+  assert.ok(body.querySelector('.tsc-picker-search'));
+  assert.ok(body.querySelector('.tsc-picker-list'));
+  const heading = dialog.querySelector('.modal-header h2');
+  assert.ok(heading, '<h2> in .modal-header erwartet (statt <h3>)');
+  assert.equal(dialog.querySelector('.modal-header h3'), null);
+});
+
 // ==========================================================================
 // Rubrik-Verwaltungsdialog
 // ==========================================================================
+
+test('Rubriken verwalten: Modal-Header nutzt <h2> (Modal-Chrome-Konsistenz, Fund B)', async () => {
+  const { window, document } = makeDom(standardRouter());
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  root.querySelector('[data-action="manage-categories"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  const dialog = document.querySelector('.modal');
+  assert.ok(dialog.querySelector('.modal-header h2'));
+  assert.equal(dialog.querySelector('.modal-header h3'), null);
+  handle.destroy();
+});
 
 test('Rubriken verwalten: Liste anzeigen, Umbenennen inline, Löschen mit Bestätigung', async () => {
   const categories = [{ id: 'cat1', label: 'Vertrieb' }];

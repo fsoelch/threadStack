@@ -1,2 +1,2 @@
 - [Flaky-Test Datumsdrift](flaky_test_date_drift.md) — badgeHtml-Test in progress_web_helpers.test.js bricht kalenderzeitabhaengig (Tage/Wochen-Schwelle), unabhaengig von W1/contacts.js.
-- [Assignments-API-Mismatch](contacts_assignments_api_mismatch.md) — contacts.js nimmt flache Arrays an, B3-Backend (noch ungemerged) liefert verschachtelte {items/contacts, page/limit}-Objekte.
+- [Assignments-API-Mismatch (behoben 2026-09-05)](contacts_assignments_api_mismatch.md) — contacts.js jetzt an B3s {items/contacts,page/limit}-Format angepasst; Lehre: Voll-Ersetzen-PUT + stiller Prefill-Fehler = Datenverlust-Risiko.
