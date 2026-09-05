@@ -114,6 +114,17 @@ struct TodoFormView: View {
     // genutzt — Code-Review Fund 2, CLAUDE.md "Wiederverwendung vor
     // Neuentwicklung").
     @State private var contactIds: Set<String> = []
+    // Blocker-Fix (Code-Review): NUR nach erfolgreichem Laden der
+    // bestehenden Zuordnung (`.task` unten, am `NavigationStack`-Root, NICHT
+    // mehr in `ContactAssignmentSection.body` — siehe dortige Kopfkommentare)
+    // ODER nach einer vom Nutzer aktiv bestätigten Auswahl im Picker-Sheet
+    // wird dieses Flag `true`. `save()` committet `setAssignments` nur dann —
+    // so kann weder ein Rendering-Timing-Problem (Form/List-Lazy-Rendering)
+    // noch ein fehlgeschlagener Ladevorgang je bestehende Zuordnungen mit
+    // einer leeren Liste überschreiben; im Zweifel wird der Commit einfach
+    // übersprungen statt zu löschen.
+    @State private var assignmentsLoaded = false
+    @State private var assignmentsLoadError: String?
 
     private var detailsSummaryText: String? {
         TodoFormDetailsSummary.summaryText(
@@ -148,7 +159,11 @@ struct TodoFormView: View {
                 // Positionierung vereinheitlicht mit `TopicFormView`: immer
                 // direkt vor "Weitere Details" (Code-Review Fund 2).
                 Section("Ansprechpartner") {
-                    ContactAssignmentSection(refType: "todo", refId: todo?.id, selection: $contactIds)
+                    ContactAssignmentSection(
+                        refType: "todo", refId: todo?.id, selection: $contactIds,
+                        loaded: $assignmentsLoaded, loadError: assignmentsLoadError,
+                        onRetryLoad: { Task { await loadContactAssignments() } }
+                    )
                 }
                 Section {
                     DisclosureGroup(isExpanded: $detailsExpanded) {
@@ -199,6 +214,22 @@ struct TodoFormView: View {
                     themeIds = selection
                 }
             }
+            // Blocker-Fix: am NavigationStack-Root (nicht mehr innerhalb der
+            // `Form`, siehe `ContactAssignmentSection`) — läuft dadurch immer
+            // beim Öffnen des Formulars, unabhängig vom Scroll-/
+            // Sichtbarkeitszustand der Ansprechpartner-Sektion.
+            .task { await loadContactAssignments() }
+        }
+    }
+
+    private func loadContactAssignments() async {
+        switch await loadAssignedContactIds(state: state, refType: "todo", refId: todo?.id) {
+        case .success(let ids):
+            contactIds = ids
+            assignmentsLoaded = true
+            assignmentsLoadError = nil
+        case .failure(let message):
+            assignmentsLoadError = message
         }
     }
 
@@ -414,8 +445,17 @@ struct TodoFormView: View {
                 // den GESAMTEN `save()`-Ablauf (nicht nur diesen einen
                 // Schritt), das ist aber harmlos: Update-Aufrufe und der
                 // volle Ersatz-Request `setAssignments` sind beide idempotent.
+                //
+                // Blocker-Fix: nur committen, wenn die bestehende Zuordnung
+                // nachweislich geladen wurde (oder der Nutzer aktiv im
+                // Picker-Sheet bestätigt hat, siehe `assignmentsLoaded`) —
+                // sonst würde ein Rendering-Timing-Problem oder ein
+                // fehlgeschlagener Ladevorgang bestehende Ansprechpartner
+                // stillschweigend löschen. Im Zweifel wird der Commit
+                // einfach übersprungen, bestehende Zuordnungen bleiben
+                // serverseitig unangetastet.
                 var assignmentErrorText: String?
-                if let savedId {
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(savedId: savedId, assignmentsLoaded: assignmentsLoaded), let savedId {
                     do { try await state.setAssignments(refType: "todo", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

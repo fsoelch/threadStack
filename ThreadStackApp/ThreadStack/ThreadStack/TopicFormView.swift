@@ -83,6 +83,12 @@ struct TopicFormView: View {
     // genutzt — Code-Review Fund 2, CLAUDE.md "Wiederverwendung vor
     // Neuentwicklung").
     @State private var contactIds: Set<String> = []
+    // Blocker-Fix (Code-Review): siehe `TodoFormView` (identisches Verhalten,
+    // Feature-Parität) — nur nach erfolgreichem Laden ODER aktiver
+    // Nutzerbestätigung im Picker-Sheet `true`; `save()` committet
+    // `setAssignments` nur dann.
+    @State private var assignmentsLoaded = false
+    @State private var assignmentsLoadError: String?
 
     private var detailsSummaryText: String? {
         TopicFormDetailsSummary.summaryText(
@@ -113,7 +119,11 @@ struct TopicFormView: View {
                 // Positionierung vereinheitlicht mit `TodoFormView`: immer
                 // direkt vor "Weitere Details" (Code-Review Fund 2).
                 Section("Ansprechpartner") {
-                    ContactAssignmentSection(refType: "topic", refId: topic?.id, selection: $contactIds)
+                    ContactAssignmentSection(
+                        refType: "topic", refId: topic?.id, selection: $contactIds,
+                        loaded: $assignmentsLoaded, loadError: assignmentsLoadError,
+                        onRetryLoad: { Task { await loadContactAssignments() } }
+                    )
                 }
                 Section {
                     DisclosureGroup(isExpanded: $detailsExpanded) {
@@ -156,6 +166,20 @@ struct TopicFormView: View {
                     description = newHTML
                 }
             }
+            // Blocker-Fix: am NavigationStack-Root — siehe `TodoFormView`
+            // (identisches Verhalten).
+            .task { await loadContactAssignments() }
+        }
+    }
+
+    private func loadContactAssignments() async {
+        switch await loadAssignedContactIds(state: state, refType: "topic", refId: topic?.id) {
+        case .success(let ids):
+            contactIds = ids
+            assignmentsLoaded = true
+            assignmentsLoadError = nil
+        case .failure(let message):
+            assignmentsLoadError = message
         }
     }
 
@@ -321,9 +345,14 @@ struct TopicFormView: View {
                 // Zuständigkeit (Ansprechpartner) committen — siehe
                 // `TodoFormView.save()` (identisches Verhalten, Feature-
                 // Parität): Fehler hier bleiben sichtbar, Auswahl bleibt
-                // erhalten, kein stiller Verwurf (Story 14).
+                // erhalten, kein stiller Verwurf (Story 14). Blocker-Fix: nur
+                // committen, wenn die bestehende Zuordnung nachweislich
+                // geladen wurde bzw. der Nutzer aktiv bestätigt hat (siehe
+                // `assignmentsLoaded`) — sonst bleibt eine bestehende
+                // Zuordnung serverseitig unangetastet statt gelöscht zu
+                // werden.
                 var assignmentErrorText: String?
-                if let savedId {
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(savedId: savedId, assignmentsLoaded: assignmentsLoaded), let savedId {
                     do { try await state.setAssignments(refType: "topic", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

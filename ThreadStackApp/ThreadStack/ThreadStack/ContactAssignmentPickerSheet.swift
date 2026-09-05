@@ -48,6 +48,22 @@ enum ContactAssignmentPickerLogic {
     static func sorted(_ contacts: [Contact]) -> [Contact] {
         contacts.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
+
+    /// Blocker-Fix (Code-Review): `save()` in `TodoFormView`/`TopicFormView`
+    /// darf `AppState.setAssignments` NUR committen, wenn ein Todo/Thema
+    /// erfolgreich gespeichert wurde UND die bestehende Zuordnung
+    /// nachweislich geladen wurde (oder der Nutzer aktiv im Picker-Sheet
+    /// bestätigt hat, siehe `assignmentsLoaded`-Dokumentation dort). Ohne
+    /// diese Bedingung würde entweder ein Rendering-Timing-Problem (Form/
+    /// List-Lazy-Rendering des `.task`) oder ein fehlgeschlagener
+    /// Ladeversuch einen vollen Ersatz-Request mit einer leeren Auswahl
+    /// absetzen und dadurch bestehende Ansprechpartner-Zuordnungen
+    /// serverseitig löschen. Als reine, aus `save()` extrahierte
+    /// Entscheidungsfunktion testbar (analog zu `TodoSaveTarget`/
+    /// `TopicSaveTarget`).
+    static func shouldCommitAssignments(savedId: String?, assignmentsLoaded: Bool) -> Bool {
+        savedId != nil && assignmentsLoaded
+    }
 }
 
 // MARK: - View
@@ -190,6 +206,57 @@ struct ContactAssignmentPickerSheet: View {
     }
 }
 
+// MARK: - Laden der bestehenden Zuordnung (Blocker, Code-Review-Nachbesserung)
+//
+// War zuvor ein `.task` DIREKT an `ContactAssignmentSection.body` — einer
+// Zeile INNERHALB von `Form`/`List`. SwiftUI realisiert Form/List-Zeilen aber
+// erst, wenn sie tatsächlich sichtbar werden (Lazy Rendering). Liegt die
+// Sektion "Ansprechpartner" (wie inzwischen in beiden Formularen der Fall)
+// weiter unten, lief das Laden bei einem bestehenden ToDo/Thema mit genug
+// Inhalt oberhalb oft NIE, wenn der Nutzer nicht dorthin scrollte —
+// `save()` hätte dann mit der leeren Startmenge einen vollen Ersatz-Request
+// abgesetzt und serverseitig ALLE zugeordneten Ansprechpartner gelöscht.
+//
+// Fix: das Laden liegt jetzt als freie Funktion hier (EINE Implementierung,
+// weiterhin von `TodoFormView` UND `TopicFormView` geteilt), wird aber vom
+// jeweiligen Formular selbst über ein `.task` am `NavigationStack`-Root
+// aufgerufen (dort, wo vor der letzten Umstrukturierung bereits ein `.task`
+// lag) — das garantiert Ausführung beim Öffnen des Formulars, unabhängig vom
+// Scroll-/Sichtbarkeitszustand der Sektion.
+//
+// Zweite Sicherheitsebene gegen denselben Datenverlustpfad über einen
+// Ladefehler: `.failure` unterscheidet sich bewusst von `.success([])`, damit
+// der Aufrufer einen echten Fehlschlag NIE mit "wirklich keine Zuordnung"
+// verwechselt und die bestehende Auswahl im Fehlerfall unverändert lässt
+// (siehe `TodoFormView`/`TopicFormView`: `assignmentsLoaded` wird nur nach
+// `.success` gesetzt, `save()` committet nur dann).
+//
+// Abweichung von der im Review vorgeschlagenen Signatur
+// (`... async -> Set<String>`): ein einzelner `Set<String>`-Rückgabewert
+// könnte einen Ladefehler nicht von "wirklich keine Zuordnung" unterscheiden
+// — genau der Fehlerweg, der laut Fund selbst geschlossen werden soll. Daher
+// liefert diese Funktion stattdessen `ContactAssignmentLoadResult`.
+enum ContactAssignmentLoadResult: Equatable {
+    case success(Set<String>)
+    case failure(String)
+}
+
+/// Lädt die bestehende Ansprechpartner-Zuordnung für ein Todo/Thema (oder
+/// liefert sofort eine leere, erfolgreiche Auswahl im Anlegen-Modus ohne
+/// `refId`, analog zum bisherigen `loadInitialAssignments()`-Verhalten).
+func loadAssignedContactIds(state: AppState, refType: String, refId: String?) async -> ContactAssignmentLoadResult {
+    guard let refId else { return .success([]) }
+    do {
+        let assignments = try await state.loadAssignments(refType: refType, refId: refId)
+        return .success(Set(assignments.map(\.contactId)))
+    } catch {
+        let message = isTransportFailure(error)
+            ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
+            : "Ansprechpartner konnten nicht geladen werden."
+        return .failure(message)
+    }
+}
+
 // MARK: - Gemeinsame Ansprechpartner-Zuordnungs-Sektion (Fund 2, Code-Review)
 //
 // War zuvor byte-identisch (bis auf den `refType`-String) in `TodoFormView`
@@ -215,6 +282,18 @@ struct ContactAssignmentSection: View {
     /// Themen-Zuordnung `themeIds`).
     let refId: String?
     @Binding var selection: Set<String>
+    /// Wird NUR nach erfolgreichem Laden der bestehenden Zuordnung (durch das
+    /// `.task` im Aufrufer, siehe `TodoFormView`/`TopicFormView`) ODER durch
+    /// eine aktive, vom Nutzer bestätigte Auswahl in diesem Sheet auf `true`
+    /// gesetzt — steuert im Aufrufer, ob `save()` `setAssignments` committen
+    /// darf (Blocker-Fix: nie mit einer nie geladenen/fehlgeschlagenen leeren
+    /// Menge überschreiben).
+    @Binding var loaded: Bool
+    /// Inline-Fehlermeldung eines fehlgeschlagenen Ladeversuchs (`nil` = kein
+    /// Fehler). Wird vom Aufrufer gesetzt, da das Laden selbst dort passiert.
+    let loadError: String?
+    /// Optionaler erneuter Ladeversuch nach einem Fehler.
+    var onRetryLoad: (() -> Void)? = nil
 
     @EnvironmentObject var state: AppState
     @State private var showContactPicker = false
@@ -237,6 +316,16 @@ struct ContactAssignmentSection: View {
             }
             .accessibilityLabel("Ansprechpartner: \(summaryText)")
             .accessibilityHint("Öffnet die Ansprechpartner-Auswahl.")
+            if let loadError {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(loadError).scaledFont(.footnote).foregroundStyle(.secondary)
+                    if let onRetryLoad {
+                        Button("Erneut versuchen") { onRetryLoad() }
+                            .buttonStyle(.borderless)
+                            .scaledFont(.footnote)
+                    }
+                }
+            }
             if !assignedContacts.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 4) {
@@ -250,17 +339,21 @@ struct ContactAssignmentSection: View {
         .sheet(isPresented: $showContactPicker) {
             ContactAssignmentPickerSheet(initialSelection: selection) { newSelection in
                 selection = newSelection
+                // Explizite Nutzerbestätigung überschreibt bewusst einen
+                // etwaigen "nicht geladen"-Zustand (siehe Doku an `loaded`).
+                loaded = true
             }
         }
         .sheet(item: $contactDetailTarget) { ContactDetailView(contact: $0) }
-        .task { await loadInitialAssignments() }
     }
 
     /// Nur lokal bereits geladene Kontakte (`state.contacts`) werden
     /// angezeigt/verlinkt, analog zu `assignedContactNames`-Muster anderer
-    /// Zuordnungen.
+    /// Zuordnungen. Deterministisch sortiert (Code-Review, Fund "Mittel":
+    /// zuvor `selection.compactMap` über ein `Set`, nicht-deterministische
+    /// Reihenfolge) — dieselbe Sortierung wie im Picker-Sheet selbst.
     private var assignedContacts: [Contact] {
-        selection.compactMap { id in state.contacts.first(where: { $0.id == id }) }
+        ContactAssignmentPickerLogic.sorted(state.contacts.filter { selection.contains($0.id) })
     }
 
     private var summaryText: String {
@@ -284,13 +377,5 @@ struct ContactAssignmentSection: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(contact.name) öffnen")
         .accessibilityHint("Öffnet die Ansprechpartner-Ansicht.")
-    }
-
-    /// Lädt die bereits bestehende Zuständigkeits-Zuordnung EINMALIG beim
-    /// Öffnen eines bestehenden Todos/Themas (Neuanlage ohne `refId`: die
-    /// Auswahl bleibt die vom Aufrufer übergebene, i.d.R. leere Menge).
-    private func loadInitialAssignments() async {
-        guard let refId else { return }
-        selection = Set((try? await state.loadAssignments(refType: refType, refId: refId))?.map(\.contactId) ?? [])
     }
 }
