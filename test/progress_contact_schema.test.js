@@ -188,6 +188,79 @@ test('purgeProgressOrphans: bestehendes Verhalten ohne contacts-Tabelle bleibt u
   assert.deepEqual(remaining, ['e-valid']);
 });
 
+test('migrateProgressRefTypeContact: Trigger AUF progress_entries ueberlebt den Rebuild und feuert weiterhin (Code-Review-Fund, Hoch #1)', (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => cleanup(dir));
+  runProgressMigrations(db);
+  db.prepare("INSERT INTO users VALUES ('u1','u1',datetime('now'))").run();
+  db.exec(`
+    CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, msg TEXT NOT NULL);
+    CREATE TRIGGER trg_progress_entries_audit
+    AFTER INSERT ON progress_entries
+    BEGIN
+      INSERT INTO audit_log(msg) VALUES ('inserted:' || NEW.id);
+    END;
+  `);
+
+  const result = migrateProgressRefTypeContact(db);
+  assert.deepEqual(result, { migrated: true });
+
+  const trigger = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='trigger' AND name='trg_progress_entries_audit'"
+  ).get();
+  assert.ok(trigger, 'Trigger muss nach dem Rebuild noch in sqlite_master vorhanden sein');
+
+  db.prepare(
+    `INSERT INTO progress_entries(id,user_id,ref_type,ref_id,body_html,body_text,created_at)
+     VALUES ('e-after-rebuild','u1','contact','c1','','',datetime('now'))`
+  ).run();
+  const audited = db.prepare("SELECT msg FROM audit_log WHERE msg=?").get('inserted:e-after-rebuild');
+  assert.ok(audited, 'Trigger muss nach dem Rebuild weiterhin feuern (nicht nur als Schema-Eintrag ueberleben)');
+});
+
+test('migrateProgressRefTypeContact: laeuft mit foreign_keys=OFF, damit eine kuenftige ON DELETE CASCADE-Kindtabelle beim Rebuild nicht leergeraeumt wird (Code-Review-Fund, Hoch #2)', (t) => {
+  const { db, dir } = tempDb();
+  t.after(() => cleanup(dir));
+  runProgressMigrations(db);
+  db.prepare("INSERT INTO users VALUES ('u1','u1',datetime('now'))").run();
+  db.exec(`
+    CREATE TABLE progress_entry_children (
+      id TEXT PRIMARY KEY,
+      entry_id TEXT NOT NULL REFERENCES progress_entries(id) ON DELETE CASCADE
+    );
+  `);
+  db.prepare(
+    `INSERT INTO progress_entries(id,user_id,ref_type,ref_id,body_html,body_text,created_at)
+     VALUES ('e1','u1','todo','t1','','',datetime('now'))`
+  ).run();
+  db.prepare("INSERT INTO progress_entry_children(id, entry_id) VALUES ('child-1','e1')").run();
+
+  assert.equal(db.pragma('foreign_keys', { simple: true }), 1, 'Testaufbau erwartet foreign_keys=ON vor der Migration');
+
+  const result = migrateProgressRefTypeContact(db);
+  assert.deepEqual(result, { migrated: true });
+
+  const entryRow = db.prepare('SELECT id FROM progress_entries WHERE id=?').get('e1');
+  assert.ok(entryRow, 'Zeile mit id="e1" muss nach dem Rebuild mit unveraenderter id erhalten bleiben');
+
+  const childRow = db.prepare('SELECT id FROM progress_entry_children WHERE id=?').get('child-1');
+  assert.ok(childRow, 'Kind-Zeile darf durch den Rebuild NICHT per CASCADE geloescht worden sein');
+
+  assert.equal(
+    db.pragma('foreign_keys', { simple: true }), 1,
+    'foreign_keys muss nach der Migration auf den urspruenglichen Wert (ON) zurueckgesetzt sein'
+  );
+
+  // Nach Wiederherstellung von foreign_keys=ON muss eine tatsaechlich
+  // ungueltige Fremdschluessel-Referenz weiterhin abgelehnt werden.
+  assert.throws(() => {
+    db.prepare("INSERT INTO progress_entry_children(id, entry_id) VALUES ('child-2','does-not-exist')").run();
+  }, /FOREIGN KEY constraint failed/);
+
+  const violations = db.pragma('foreign_key_check');
+  assert.deepEqual(violations, [], 'foreign_key_check darf nach dem Rebuild keine Inkonsistenzen melden');
+});
+
 test('purgeProgressOrphans: entfernt verwaiste contact-Zeilen, wenn contacts-Tabelle existiert', (t) => {
   const { db, dir } = tempDb({ withContacts: true });
   t.after(() => cleanup(dir));

@@ -21,7 +21,7 @@ const Database = require('better-sqlite3');
 
 const { createProgressRouter } = require('../lib/progress/routes');
 const { runProgressMigrations, migrateProgressRefTypeContact } = require('../lib/progress/schema');
-const { insertEntry } = require('../lib/progress/queries');
+const { insertEntry, deleteForRefs, summaryFor, setNextStep } = require('../lib/progress/queries');
 
 function buildTestApp({ getLatestFrameId, now } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'progress-contact-entries-test-'));
@@ -328,7 +328,7 @@ test('GET /contact/:id: dormant=false, obwohl letzte Aktivitaet weit in der Verg
   assert.equal(r.body.stats.stale, true);
 });
 
-test('GET /contact/:id: description ist immer "" (nicht contacts.description), done/result/resultDate sind leer', async (t) => {
+test('GET /contact/:id: description ist immer "" (nicht contacts.description), done/result/resultDate sind leer, reentry.empty daher trotz befuellter contacts.description true', async (t) => {
   const { app, db, dir } = buildTestApp();
   t.after(() => cleanup(dir));
   const contactId = makeContact(db, { description: 'Interner Beschreibungstext' });
@@ -339,6 +339,11 @@ test('GET /contact/:id: description ist immer "" (nicht contacts.description), d
   assert.equal(r.body.ref.done, false);
   assert.equal(r.body.ref.result, '');
   assert.equal(r.body.ref.resultDate, '');
+  // reentry.empty haengt (ueber descriptionEmpty) direkt an ref.description -
+  // waere ref.description faelschlich contacts.description, waere empty hier
+  // false, obwohl kein Zwischenstand/next-step existiert (Code-Review-Fund,
+  // Mittel #7: Testtitel/Assertion muss das tatsaechlich pruefen).
+  assert.equal(r.body.reentry.empty, true);
 });
 
 // ── Sonstige generische Endpunkte bleiben unveraendert nutzbar ──
@@ -352,4 +357,73 @@ test('PUT /contact/:id/goal: bleibt fuer contact wie fuer alle Typen mit 410 goa
   const r = await agent.put(`/api/progress/contact/${contactId}/goal`).send({ goal: 'x' });
   assert.equal(r.status, 410);
   assert.equal(r.body.code, 'goal_removed');
+});
+
+// ── deleteForRefs()/summaryFor() direkt getestet (Code-Review-Fund, Mittel #4) ──
+// Bisher nur indirekt ueber HTTP abgedeckt - hier direkte Tests analog zum
+// Muster in test/progress_summary.test.js.
+
+test('deleteForRefs: loescht nur die Kontakt-Eintraege, laesst todo/topic-Eintraege und progress_meta unangetastet', (t) => {
+  const { db, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const contactId = makeContact(db);
+  const nowIso = new Date().toISOString();
+
+  insertEntry(db, { userId: 'test-user', refType: 'contact', refId: contactId, bodyHtml: '<p>c</p>', bodyText: 'c', nowIso });
+  insertEntry(db, { userId: 'test-user', refType: 'todo', refId: 'todo-x', bodyHtml: '<p>t</p>', bodyText: 't', nowIso });
+  insertEntry(db, { userId: 'test-user', refType: 'topic', refId: 'topic-x', bodyHtml: '<p>k</p>', bodyText: 'k', nowIso });
+  setNextStep(db, 'test-user', 'todo', 'todo-x', 'Anrufen', nowIso);
+  setNextStep(db, 'test-user', 'topic', 'topic-x', 'Klaeren', nowIso);
+
+  const result = deleteForRefs(db, [{ refType: 'contact', refId: contactId }]);
+  assert.equal(result.entries, 1);
+  assert.equal(result.meta, 0, 'progress_meta traegt niemals contact-Zeilen (No-Op fuer diesen refType)');
+
+  const remainingEntries = db.prepare('SELECT ref_type, ref_id FROM progress_entries ORDER BY ref_type').all();
+  assert.deepEqual(remainingEntries, [
+    { ref_type: 'todo', ref_id: 'todo-x' },
+    { ref_type: 'topic', ref_id: 'topic-x' },
+  ]);
+
+  const remainingMeta = db.prepare('SELECT ref_type, ref_id FROM progress_meta ORDER BY ref_type').all();
+  assert.deepEqual(remainingMeta, [
+    { ref_type: 'todo', ref_id: 'todo-x' },
+    { ref_type: 'topic', ref_id: 'topic-x' },
+  ]);
+});
+
+test('summaryFor: gemischte Items (todo+topic+contact) liefern alle drei Schluessel, GENAU EINE Query pro belegtem refType', (t) => {
+  const { db, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const contactId = makeContact(db);
+  const nowIso = new Date().toISOString();
+
+  insertEntry(db, { userId: 'test-user', refType: 'contact', refId: contactId, bodyHtml: '<p>c</p>', bodyText: 'c', nowIso });
+  insertEntry(db, { userId: 'test-user', refType: 'todo', refId: 'todo-x', bodyHtml: '<p>t</p>', bodyText: 't', nowIso });
+  insertEntry(db, { userId: 'test-user', refType: 'topic', refId: 'topic-x', bodyHtml: '<p>k</p>', bodyText: 'k', nowIso });
+
+  const items = [
+    { refType: 'todo', refId: 'todo-x', refCreatedAt: nowIso, refDone: false, refSnoozedUntil: '' },
+    { refType: 'topic', refId: 'topic-x', refCreatedAt: nowIso, refDone: false, refSnoozedUntil: '' },
+    { refType: 'contact', refId: contactId, refCreatedAt: nowIso, refDone: false, refSnoozedUntil: '' },
+  ];
+
+  let groupByCalls = 0;
+  const origPrepare = db.prepare.bind(db);
+  db.prepare = (sql) => {
+    if (sql.includes('GROUP BY ref_id')) groupByCalls++;
+    return origPrepare(sql);
+  };
+  let map;
+  try {
+    map = summaryFor(db, 'test-user', items);
+  } finally {
+    db.prepare = origPrepare;
+  }
+
+  assert.equal(map.size, 3);
+  assert.equal(map.get('todo:todo-x').entryCount, 1);
+  assert.equal(map.get('topic:topic-x').entryCount, 1);
+  assert.equal(map.get(`contact:${contactId}`).entryCount, 1);
+  assert.equal(groupByCalls, 3, 'genau eine GROUP-BY-Query je belegtem refType (todo/topic/contact), kein N+1');
 });
