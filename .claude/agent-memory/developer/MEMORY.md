@@ -1,5 +1,5 @@
 - [Resumed session verification](workflow_resumed_session.md) — check git status/diff first, prior run may already be complete
 - [Progress module ref_type extension pattern](project_progress_module.md) — SQLite CHECK rebuild pattern, ownership split lib/progress vs server.js
 - [progress_web_helpers time-bomb test](pitfall_progress_web_helpers_timebomb.md) — hardcoded dates cause future unrelated failures
-- [SQLite rebuild migrations: triggers/FK](pitfall_sqlite_rebuild_triggers_fk.md) — DROP+RENAME rebuilds silently drop triggers, can CASCADE-delete via FK
+- [SQLite rebuild migrations: triggers/FK](pitfall_sqlite_rebuild_triggers_fk.md) — DROP+RENAME rebuilds drop own triggers, CASCADE-delete via FK, crash on foreign triggers referencing the table (needs legacy_alter_table=ON); scope foreign_key_check to the table, run it inside the transaction
 - [Shared env under heavy load](pitfall_shared_env_high_load.md) — many parallel agent worktrees cause load 150+, slow test runs aren't deadlocks
