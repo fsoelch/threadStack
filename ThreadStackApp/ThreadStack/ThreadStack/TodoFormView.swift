@@ -105,6 +105,32 @@ struct TodoFormView: View {
     // ohne AI-Vorschlag manuell zuordnen lassen) - analog zu KnowledgeEditorView.
     @State private var themeIds: Set<String> = []
     @State private var showTopicPicker = false
+    // Arbeitspaket A1 ("Erweiterung Ansprechpartner-Konzept"): Zuständigkeit
+    // (Ansprechpartner), analog zur Topic-Zuordnung oben — lokale Auswahl,
+    // committed als EIN vollständiger Ersatz-Request (`AppState.setAssignments`,
+    // analog zu `setTodoThemes`) NACH dem eigentlichen Speichern des Todos.
+    // Anzeige/Auswahl-UI ist in `ContactAssignmentSection` ausgelagert (siehe
+    // `ContactAssignmentPickerSheet.swift`, gemeinsam mit `TopicFormView`
+    // genutzt — Code-Review Fund 2, CLAUDE.md "Wiederverwendung vor
+    // Neuentwicklung").
+    @State private var contactIds: Set<String> = []
+    // Blocker-Fix (Code-Review): NUR nach erfolgreichem Laden der
+    // bestehenden Zuordnung (`.task` unten, am `NavigationStack`-Root, NICHT
+    // mehr in `ContactAssignmentSection.body` — siehe dortige Kopfkommentare)
+    // ODER nach einer vom Nutzer aktiv bestätigten Auswahl im Picker-Sheet
+    // wird dieses Flag `true`. `save()` committet `setAssignments` nur dann —
+    // so kann weder ein Rendering-Timing-Problem (Form/List-Lazy-Rendering)
+    // noch ein fehlgeschlagener Ladevorgang je bestehende Zuordnungen mit
+    // einer leeren Liste überschreiben; im Zweifel wird der Commit einfach
+    // übersprungen statt zu löschen.
+    @State private var assignmentsLoaded = false
+    @State private var assignmentsLoadError: String?
+    // Hoch-Fund (Code-Review, Fall c): wird im `onDone`-Callback des Pickers
+    // (über `ContactAssignmentSection`) gesetzt, sobald der Nutzer aktiv eine
+    // Auswahl bestätigt hat — verhindert in `loadContactAssignments()`, dass
+    // ein (ggf. verspätet zurückkommender) erfolgreicher Ladevorgang diese
+    // frische Auswahl kommentarlos überschreibt.
+    @State private var userConfirmedSelection = false
 
     private var detailsSummaryText: String? {
         TodoFormDetailsSummary.summaryText(
@@ -135,6 +161,16 @@ struct TodoFormView: View {
                     Section("Fortschritt") {
                         progressSection
                     }
+                }
+                // Positionierung vereinheitlicht mit `TopicFormView`: immer
+                // direkt vor "Weitere Details" (Code-Review Fund 2).
+                Section("Ansprechpartner") {
+                    ContactAssignmentSection(
+                        refType: "todo", refId: todo?.id, selection: $contactIds,
+                        loaded: $assignmentsLoaded, userConfirmedSelection: $userConfirmedSelection,
+                        loadError: assignmentsLoadError,
+                        onRetryLoad: { Task { await loadContactAssignments() } }
+                    )
                 }
                 Section {
                     DisclosureGroup(isExpanded: $detailsExpanded) {
@@ -185,6 +221,28 @@ struct TodoFormView: View {
                     themeIds = selection
                 }
             }
+            // Blocker-Fix: am NavigationStack-Root (nicht mehr innerhalb der
+            // `Form`, siehe `ContactAssignmentSection`) — läuft dadurch immer
+            // beim Öffnen des Formulars, unabhängig vom Scroll-/
+            // Sichtbarkeitszustand der Ansprechpartner-Sektion.
+            .task { await loadContactAssignments() }
+        }
+    }
+
+    private func loadContactAssignments() async {
+        switch await loadAssignedContactIds(state: state, refType: "todo", refId: todo?.id) {
+        case .success(let ids):
+            // Hoch-Fund (Code-Review, Fall c): ein (ggf. verspätet
+            // zurückkommender) erfolgreicher Ladevorgang darf eine bereits
+            // vom Nutzer aktiv im Picker bestätigte Auswahl NICHT mehr
+            // kommentarlos überschreiben.
+            if ContactAssignmentPickerLogic.shouldApplyLoadedSelection(userConfirmedSelection: userConfirmedSelection) {
+                contactIds = ids
+            }
+            assignmentsLoaded = true
+            assignmentsLoadError = nil
+        case .failure(let message):
+            assignmentsLoadError = message
         }
     }
 
@@ -391,8 +449,33 @@ struct TodoFormView: View {
                 let progressResult = await progressComposer.commit(
                     store: progressStore, refType: "todo", refId: savedId, hasSnooze: hasSnooze
                 )
+                // Zuständigkeit (Ansprechpartner) committen — Story 14
+                // (Offline-/Fehlerfall): anders als die bestehende, bewusst
+                // still verworfene Topic-Zuordnung oben MUSS ein Fehlschlag
+                // hier sichtbar bleiben und die Auswahl darf nicht verloren
+                // gehen. `savedId`/`createdId` bleiben dabei erhalten — ein
+                // erneuter Tap auf "Speichern" durchläuft danach zwar erneut
+                // den GESAMTEN `save()`-Ablauf (nicht nur diesen einen
+                // Schritt), das ist aber harmlos: Update-Aufrufe und der
+                // volle Ersatz-Request `setAssignments` sind beide idempotent.
+                //
+                // Blocker-Fix: nur committen, wenn die bestehende Zuordnung
+                // nachweislich geladen wurde (oder der Nutzer aktiv im
+                // Picker-Sheet bestätigt hat, siehe `assignmentsLoaded`) —
+                // sonst würde ein Rendering-Timing-Problem oder ein
+                // fehlgeschlagener Ladevorgang bestehende Ansprechpartner
+                // stillschweigend löschen. Im Zweifel wird der Commit
+                // einfach übersprungen, bestehende Zuordnungen bleiben
+                // serverseitig unangetastet.
+                var assignmentErrorText: String?
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId {
+                    do { try await state.setAssignments(refType: "todo", refId: savedId, contactIds: Array(contactIds)) }
+                    catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
+                }
                 loading = false
-                if progressResult != .failed {
+                if let assignmentErrorText {
+                    self.error = assignmentErrorText
+                } else if progressResult != .failed {
                     onSaved?()
                     dismiss()
                 }
