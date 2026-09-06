@@ -1053,15 +1053,13 @@ textarea.form-control { resize:vertical; min-height:80px; line-height:1.55; }
   color:#db2777; text-decoration:none;
 }
 .contact-card-email:hover { text-decoration:underline; }
-.contact-card-desc {
-  font-size:.875rem; color:var(--text); line-height:1.6;
-  padding:.875rem 1.25rem; white-space:pre-wrap;
-}
 /* Rubrik-Badges + Klartextauszug (TSContacts.contactBadgesHtml, Arbeitspaket
-   W1/W2) — ersetzt das frühere reine description-Snippet (.contact-card-desc
-   bleibt oben für etwaige Altverwendung erhalten, wird hier aber nicht mehr
-   eingesetzt). Innerer Abstand bewusst identisch zu .contact-card-desc,
-   damit sich am Kartenlayout sonst nichts ändert. */
+   W1/W2) — ersetzt das frühere reine description-Snippet. Das frühere
+   .contact-card-desc-Markup/CSS wurde entfernt, da die neue
+   TSContacts.mountContactDetail-Integration keinen Verwendungsort mehr dafür
+   hat (kein #contact-desc-Element, keine .contact-card-desc-Ausgabe mehr in
+   app.js/contacts.js). Innerer Abstand bewusst identisch zum früheren
+   .contact-card-desc, damit sich am Kartenlayout sonst nichts ändert. */
 .contact-card-badges {
   padding:.875rem 1.25rem; font-size:.875rem; color:var(--text); line-height:1.6;
 }

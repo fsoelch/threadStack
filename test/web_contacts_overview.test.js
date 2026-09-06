@@ -150,6 +150,43 @@ test('Kontaktkarte: contactBadgesHtml ersetzt das reine description-Snippet (Rub
   assert.doesNotMatch(host.innerHTML, /contact-card-desc/, 'altes reines description-Snippet-Markup soll ersetzt sein');
 });
 
+// Web-seitiger Regressionsschutz zur Datenschutz-Invariante "Privates"
+// (ergänzend zum bereits vorhandenen Backend-Test in
+// test/contact_search_text.test.js, der batchContactExtras() direkt prüft):
+// Auch bei GEMISCHTEN Rubriken (normale Rubrik + "Privates" am selben
+// Kontakt) darf kein Text aus einem "Privates"-Infoblock in der gerenderten
+// Kontaktkarte auftauchen. `description` steht hier stellvertretend für ein
+// veraltetes/anderes Feld, das theoretisch privaten Klartext enthalten
+// könnte — die Karte darf NUR über das serverseitig bereits gefilterte
+// `snippet`-Feld rendern, niemals über einen Fallback auf `description`.
+test('Kontaktkarte: Text aus "Privates"-Rubrik erscheint nicht, auch bei gemischten Rubriken (Datenschutz-Regressionsschutz)', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  const PRIVATE_MARKER = '<privater Testtext>';
+  setAppGlobal(window, 'contacts', [
+    {
+      id: 'c1', name: 'Anna Müller', role: 'PM', email: 'anna@example.com',
+      // Legacy-/Fallback-Feld: enthält (hypothetisch) den privaten Text —
+      // darf von der Karte NICHT gerendert werden.
+      description: PRIVATE_MARKER,
+      categories: [
+        { id: 'cat1', label: 'Zuständigkeit' },
+        { id: 'cat2', label: 'Privates' },
+      ],
+      infoBlockCount: 2,
+      // Server liefert laut Vertrag (batchContactExtras, PRIVATE_CATEGORY_LABEL_NORM-
+      // Ausschluss) bereits ein von "Privates"-Inhalten bereinigtes Snippet.
+      snippet: 'Verantwortlich für APAC-Rollout',
+    },
+  ]);
+  setAppGlobal(window, 'contactSearch', '');
+  const host = document.createElement('div');
+  window.renderContactsView(host);
+  assert.doesNotMatch(host.textContent, /<privater Testtext>/, 'kein Text einer "Privates"-Rubrik darf auf der Kontaktkarte erscheinen');
+  assert.match(host.innerHTML, /tsc-badge-private/, '"Privates"-Rubrik darf weiterhin als Badge (ohne Vorschautext) sichtbar sein');
+  assert.match(host.innerHTML, /Verantwortlich für APAC-Rollout/, 'der bereinigte Klartextauszug der NICHT-privaten Rubrik bleibt sichtbar');
+});
+
 test('Löschbestätigung: dynamischer Hinweis bei vorhandenen Zusatzinformationen (infoBlockCount)', async () => {
   const { window, document } = loadApp();
   await tick();
@@ -250,9 +287,10 @@ test('Host-Adapter: doOpenContactAssignmentPicker ruft TSContacts.openAssignment
 test('Host-Adapter: rt.initToolbar wird fuer dynamisch erzeugte Infoblock-Editoren aufgerufen', async () => {
   const { window, document } = loadApp();
   await tick();
-  const contact = { id: 'c1', name: 'Anna', role: '', email: '', description: '', categories: [], infoBlockCount: 0, snippet: '' };
+  const contact = { id: 'c1', name: 'Anna', role: '', email: '', description: '', categories: [], infoBlockCount: 1, snippet: '' };
+  const existingBlock = { id: 'b1', categoryId: null, bodyHtml: '<p>Bestand</p>', updatedAt: '2026-01-01T00:00:00.000Z' };
   setAppGlobal(window, 'contacts', [contact]);
-  window.api = makeApiMock(baseContactApiRoutes(contact), []);
+  window.api = makeApiMock(baseContactApiRoutes(contact, { blocks: [existingBlock] }), []);
 
   const toolbarCalls = [];
   window.initRtToolbar = (tbId, editorId) => { toolbarCalls.push({ tbId, editorId }); };
@@ -267,10 +305,31 @@ test('Host-Adapter: rt.initToolbar wird fuer dynamisch erzeugte Infoblock-Editor
   await tick(30); // rt.initToolbar()/rt.setRT() laufen ueber einen internen setTimeout(...,0)
 
   assert.equal(toolbarCalls.length, 1, 'initRtToolbar muss fuer den neu erzeugten Infoblock-Editor aufgerufen werden');
-  const editor = host.querySelector('[data-role="tsc-block-editor"] .rt-content');
-  assert.ok(editor, 'dynamischer Rich-Text-Editor fuer den Infoblock muss im DOM sein');
-  assert.equal(toolbarCalls[0].editorId, editor.id);
-  assert.equal(toolbarCalls[0].tbId, editor.id + '-tb');
+  const firstEditor = host.querySelector('[data-role="tsc-block-editor"] .rt-content');
+  assert.ok(firstEditor, 'dynamischer Rich-Text-Editor fuer den Infoblock muss im DOM sein');
+  assert.equal(toolbarCalls[0].editorId, firstEditor.id);
+  assert.equal(toolbarCalls[0].tbId, firstEditor.id + '-tb');
+
+  // Ersten Editor wieder schliessen und einen ZWEITEN, unterschiedlichen
+  // Infoblock-Editor oeffnen (Bearbeiten eines bestehenden Blocks statt
+  // Neuanlage) — deckt ab, dass initToolbar nicht nur fuer den allerersten,
+  // sondern fuer JEDEN dynamisch erzeugten Editor mit jeweils eigener,
+  // unterscheidbarer editorId aufgerufen wird.
+  const cancelBtn = host.querySelector('[data-action="cancel-block"]');
+  assert.ok(cancelBtn, '"Abbrechen"-Button des ersten Editors muss vorhanden sein');
+  cancelBtn.click();
+
+  const editBtn = host.querySelector('[data-action="edit-block"][data-block-id="b1"]');
+  assert.ok(editBtn, 'Bearbeiten-Button fuer den bestehenden Infoblock muss vorhanden sein');
+  editBtn.click();
+  await tick(30);
+
+  assert.equal(toolbarCalls.length, 2, 'initRtToolbar muss auch fuer den zweiten, spaeter geoeffneten Infoblock-Editor aufgerufen werden');
+  const secondEditor = host.querySelector('[data-role="tsc-block-editor"] .rt-content');
+  assert.ok(secondEditor, 'zweiter dynamischer Rich-Text-Editor muss im DOM sein');
+  assert.equal(toolbarCalls[1].editorId, secondEditor.id);
+  assert.equal(toolbarCalls[1].tbId, secondEditor.id + '-tb');
+  assert.notEqual(toolbarCalls[0].editorId, toolbarCalls[1].editorId, 'beide Editoren muessen unterschiedliche editorId-Werte erhalten');
 });
 
 test('Host-Adapter: onClosed wird nach Schließen des Theme-Link-Dialogs aufgerufen (Zugeordnete Topics laedt neu)', async () => {
@@ -302,6 +361,59 @@ test('Host-Adapter: onClosed wird nach Schließen des Theme-Link-Dialogs aufgeru
   assert.equal(themesCallsAfter, themesCallsBefore + 1, 'onClosed() muss loadTopics() (GET /themes) erneut ausloesen');
   assert.equal(document.getElementById('theme-link-modal').style.display, 'none');
 });
+
+// Testlücke (Code-Review): der obige Test deckt nur den direkten Aufruf von
+// closeThemeLinkModal() ab. onClosed() muss aber unabhängig davon, WIE der
+// Nutzer den Dialog schließt, GENAU EINMAL feuern — jeder Schließweg (×,
+// "Schließen"-Button, Overlay-Klick, Escape) läuft laut app.js letztlich
+// über closeThemeLinkModal(), das wird hier je Weg einzeln nachgewiesen.
+for (const [label, closeVia] of [
+  ['ueber "×" (.modal-close)', (window, document) => document.querySelector('#theme-link-modal .modal-close').click()],
+  ['ueber "Schließen" (.modal-footer .btn-secondary)', (window, document) => document.querySelector('#theme-link-modal .modal-footer .btn-secondary').click()],
+  ['ueber Klick auf das Overlay-Element', (window, document) => {
+    const overlay = document.getElementById('theme-link-modal');
+    overlay.dispatchEvent(new window.MouseEvent('click', { bubbles: true, target: overlay }));
+  }],
+  ['ueber die Escape-Taste', (window, document) => {
+    document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  }],
+]) {
+  test(`Host-Adapter: onClosed feuert genau einmal beim Schließen des Theme-Link-Dialogs ${label}`, async () => {
+    const { window, document } = loadApp();
+    await tick();
+    const contact = { id: 'c1', name: 'Anna', role: '', email: '', description: '', categories: [], infoBlockCount: 0, snippet: '' };
+    setAppGlobal(window, 'contacts', [contact]);
+    setAppGlobal(window, 'themes', []);
+    const calls = [];
+    window.api = makeApiMock(baseContactApiRoutes(contact), calls);
+
+    window.openContactModal('c1');
+    await tick(50);
+
+    const themesCallsBefore = calls.filter((c) => c.method === 'GET' && c.path === '/themes').length;
+
+    const host = document.getElementById('contact-detail-host');
+    const assignBtn = host.querySelector('[data-action="assign-topic"]');
+    assert.ok(assignBtn, '"Topic zuweisen"-Button in Abschnitt "Zugeordnete Topics" muss vorhanden sein');
+    assignBtn.click();
+    assert.equal(document.getElementById('theme-link-modal').style.display, 'flex', 'Theme-Link-Dialog muss geoeffnet werden');
+
+    closeVia(window, document);
+    await tick(50);
+
+    const themesCallsAfter = calls.filter((c) => c.method === 'GET' && c.path === '/themes').length;
+    assert.equal(themesCallsAfter, themesCallsBefore + 1, `onClosed() muss ${label} genau einmal GET /themes ausloesen`);
+    assert.equal(document.getElementById('theme-link-modal').style.display, 'none');
+
+    // Erneutes Schließen (z. B. durch nochmaliges Escape) darf onClosed
+    // nicht ein zweites Mal fuer denselben Oeffnungsvorgang ausloesen —
+    // themeLinkOnClosed wird beim Schließen zurueckgesetzt (siehe app.js).
+    closeVia(window, document);
+    await tick(50);
+    const themesCallsFinal = calls.filter((c) => c.method === 'GET' && c.path === '/themes').length;
+    assert.equal(themesCallsFinal, themesCallsAfter, 'onClosed() darf nach dem ersten Schließen nicht erneut feuern');
+  });
+}
 
 test('closeContactModal() destroy()t die gemountete TSContacts-Detailansicht (kein Fehler beim erneuten Oeffnen eines anderen Kontakts)', async () => {
   const { window, document, jsdomErrors } = loadApp();

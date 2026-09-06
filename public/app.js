@@ -4560,7 +4560,7 @@ let contactDetailHandle = null;
 
 function destroyContactDetailSection() {
   if (contactDetailHandle && typeof contactDetailHandle.destroy === 'function') {
-    try { contactDetailHandle.destroy(); } catch (e) { /* Handle evtl. bereits ungültig */ }
+    try { contactDetailHandle.destroy(); } catch (e) { console.warn('destroyContactDetailSection: destroy() fehlgeschlagen (Handle evtl. bereits ungültig)', e); }
   }
   contactDetailHandle = null;
 }
@@ -4587,7 +4587,14 @@ function navigateFromContactAssignment(ctx) {
       return;
     }
     closeContactModal();
-    TSHost.openObject('topic', refId, { meetingId: found.meeting.id, archived: !!found.meeting.archived });
+    // Invariante: findTopicAnywhere() durchsucht ausschließlich `meetings`,
+    // welches ausnahmslos über GET /meetings befüllt wird — diese Route
+    // liefert serverseitig NUR nicht-archivierte Meetings (notArchivedSql).
+    // `found.meeting.archived` ist an dieser Stelle daher beweisbar immer
+    // false. Archivierte Themen sind über diesen Navigationsweg aktuell
+    // NICHT erreichbar, da onNavigate laut Vertrag keine meetingId für den
+    // Archiv-Pfad liefert (bekannte Vertragslücke, siehe Kommentar oben).
+    TSHost.openObject('topic', refId, { meetingId: found.meeting.id, archived: false });
   }
 }
 
@@ -4710,8 +4717,10 @@ function confirmDeleteContact(id, name) {
 // TSContacts.openAssignmentPicker() auf (Wiederverwendung des bestehenden,
 // von W1 gelieferten Zuordnungsdialogs statt eines zweiten).
 function openContactFromChip(id) {
-  selectView('__contacts__');
-  openContactModal(id);
+  // Wiederverwendung statt Duplikat: TSHost.openObject('contact', id) macht
+  // exakt dasselbe (selectView('__contacts__') + openContactModal(id)), siehe
+  // dessen 'contact'-Zweig weiter oben.
+  TSHost.openObject('contact', id);
 }
 
 // Baut die Chips zugeordneter Ansprechpartner (Todo/Thema, `item.contacts`
@@ -4723,7 +4732,7 @@ function renderAssignedContactsChipsHtml(item) {
   const list = Array.isArray(item?.contacts) ? item.contacts : [];
   if (!list.length) return '';
   return TSContacts.assignedContactsHtml(list, {
-    onClickAttr: c => `onclick="event.stopPropagation(); openContactFromChip('${c.contactId}')"`
+    onClickAttr: c => `onclick="event.stopPropagation(); openContactFromChip('${escHtml(String(c.contactId)).replace(/'/g, "\\'")}')"`
   });
 }
 
@@ -4843,7 +4852,7 @@ function closeThemeLinkModal() {
   document.getElementById('theme-link-modal').style.display = 'none';
   const cb = themeLinkOnClosed;
   themeLinkOnClosed = null;
-  if (cb) { try { cb(); } catch (e) { /* Host-Callback darf das Schließen nicht verhindern */ } }
+  if (cb) { try { cb(); } catch (e) { console.warn('closeThemeLinkModal: onClosed-Callback fehlgeschlagen (Schließen wird dadurch nicht verhindert)', e); } }
 }
 
 function renderThemeLinkList() {
@@ -6934,7 +6943,7 @@ document.getElementById('login-user').addEventListener('keydown', e => { if (e.k
 // in beiden Bearbeiten-Modalen ist TSProgress.mountInlineComposer, ein
 // einfaches <textarea> ohne eigenes rt-content-Feld, siehe mountProgressArea).
 // pop-progress-note (Pop-Dialog) ist davon unberührt.
-['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc',
+['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result',
   'progress-entry-body','pop-progress-note']
   .forEach(id => initRtToolbar(id+'-tb', id));
 initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });
