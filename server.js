@@ -16,6 +16,8 @@ const aiUsage = require('./ai/usage');
 const progress = require('./lib/progress');
 const archive = require('./lib/archive');
 const summaries = require('./lib/summaries');
+const contacts = require('./lib/contacts');
+const assignments = require('./lib/contacts/assignments');
 const { runCoreMigrations } = require('./db/schema');
 let summaryScheduler; // wird nach dem Laden von ai/index.js weiter unten gesetzt
 
@@ -57,6 +59,15 @@ runCoreMigrations(db, { htmlToText });
 // auf users(id) referenziert und purgeProgressOrphans() bereits gegen
 // existierende todos/topics abgleicht.
 progress.runProgressMigrations(db);
+// ── Migration: Zwischenstände für Ansprechpartner (Arbeitspaket B2/B4) ──
+// MUSS vor contacts.runContactMigrations() laufen: B1 legt dort ggf. bereits
+// einen Trigger auf progress_entries für ref_type='contact' an; B2s
+// ref_type-Erweiterung (CHECK-Constraint-Rebuild von progress_entries) liest/
+// erhält vorhandene Trigger auf progress_entries beim eigenen
+// Tabellen-Rebuild, weshalb progress_entries VOR dem Contacts-Trigger-Setup
+// bereits den finalen CHECK-Constraint (inkl. 'contact') haben muss. Siehe
+// Abschlussberichte B2/B1/B4.
+progress.migrateProgressRefTypeContact(db);
 progress.purgeProgressOrphans(db);
 // ── Migration: Zielbild entfernen (Redesign "Übersichtlichere Todos und
 // Tasks", Arbeitspaket S1) ── Idempotent: zweiter Aufruf ist ein No-Op.
@@ -68,6 +79,30 @@ progress.dropProgressGoal(db);
 // referenziert und users/meetings zu diesem Zeitpunkt bereits existieren.
 archive.runArchiveMigrations(db);
 archive.purgeArchiveOrphans(db);
+
+// ── Migration: Ansprechpartner (Kontakte) & Kontakt-Zuständigkeiten
+// (Arbeitspaket B1/B3/B4, Ansprechpartner-Erweiterung) ────
+// Reihenfolge (verbindlich, siehe Abschlussberichte B1/B2/B3):
+// 1) contacts.runContactMigrations() legt contact_categories/
+//    contact_info_blocks/contacts.search_text an und setzt (sofern
+//    progress_entries bereits im finalen Zustand ist, siehe oben) die
+//    Kontakt-Notiz-Trigger auf progress_entries.
+// 2) assignments.runAssignmentMigrations() legt contact_assignments an -
+//    referenziert contacts(id), muss also NACH runContactMigrations laufen.
+// 3) contacts.migrateContactDescriptions() überführt das alte
+//    contacts.description-Feld in einen (legacy) Infoblock.
+// 4) contacts.ensureContactNoteTriggers() ist eine zusätzliche Absicherung:
+//    falls progress_entries beim ersten runContactMigrations()-Lauf (z.B. bei
+//    einer künftigen Umsortierung) noch nicht im finalen Zustand war, holt
+//    dieser Aufruf das Trigger-Setup + einen Backfill von search_text nach.
+// 5) purgeContactOrphans()/purgeAssignmentOrphans() räumen verwaiste
+//    theme_links- bzw. contact_assignments-Zeilen auf.
+contacts.runContactMigrations(db);
+assignments.runAssignmentMigrations(db);
+contacts.migrateContactDescriptions(db, { now: () => new Date() });
+contacts.ensureContactNoteTriggers(db);
+contacts.purgeContactOrphans(db);
+assignments.purgeAssignmentOrphans(db);
 
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
@@ -359,11 +394,16 @@ app.get(`${A}/meetings`, requireAuth, (req, res) => {
   const summaryItems = ts.map(t => ({ refType: 'topic', refId: t.id }));
   const summarySettings = ai.loadSettings(db, req.session.uid);
   const summaryMap = summaries.forRefs(db, req.session.uid, summaryItems, { settings: summarySettings, scheduler: summaryScheduler });
+  // Additive Zuständigkeits-Anreicherung (Ansprechpartner-Erweiterung,
+  // Arbeitspaket B3/B4): EIN contactsForRefs()-Aufruf für alle Topics dieser
+  // Meetings (kein N+1), analog zum Progress-/KI-Zusammenfassungs-Muster oben.
+  const contactsMap = assignments.contactsForRefs(db, req.session.uid, topicItems);
   const meetings = ms.map(m => parseMeeting(m, ts));
   for (const meeting of meetings) {
     for (const topic of meeting.topics) {
       topic.progress = progressMap.get(`topic:${topic.id}`) ?? null;
       topic.aiSummary = summaryMap.get(`topic:${topic.id}`) ?? null;
+      topic.contacts = contactsMap.get(`topic:${topic.id}`) ?? [];
     }
   }
   res.json(meetings);
@@ -422,13 +462,15 @@ app.delete(`${A}/meetings/:id`, requireAuth, (req, res) => {
   // SQLite kaskadiert topics.meeting_id (ON DELETE CASCADE) automatisch beim
   // Löschen des Meetings — die betroffenen Topic-IDs müssen daher VORHER
   // eingesammelt werden, damit der Fortschrittsverlauf (progress_entries/
-  // progress_meta) UND die KI-Zusammenfassungen (Paket S3) für diese Topics
-  // ebenfalls sofort aufgeräumt werden.
+  // progress_meta), die Kontakt-Zuständigkeiten (contact_assignments) UND
+  // die KI-Zusammenfassungen (Paket S3) für diese Topics ebenfalls sofort
+  // aufgeräumt werden.
   const topicIds = db.prepare('SELECT id FROM topics WHERE meeting_id=?').all(req.params.id).map(r => r.id);
   const r = db.prepare('DELETE FROM meetings WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
   if (!r.changes) return res.status(404).json({ error: 'Nicht gefunden' });
   if (topicIds.length) {
     progress.deleteForRefs(db, topicIds.map(id => ({ refType: 'topic', refId: id })));
+    assignments.deleteForRefs(db, topicIds.map(id => ({ refType: 'topic', refId: id })));
     try { summaries.deleteForRefs(db, req.session.uid, topicIds.map(id => ({ refType: 'topic', refId: id }))); }
     catch (_) { /* best effort */ }
   }
@@ -498,7 +540,9 @@ app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
   const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(req.params.id).m;
   db.prepare(`INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,is_todo,snoozed_until,created_at,sort_order) VALUES (?,?,?,?,0,'','',?,?,?,?)`)
     .run(id, req.params.id, title.trim(), cleanDesc, isTodo ? 1 : 0, snoozedUntil || '', new Date().toISOString(), maxOrder + 1);
-  res.status(201).json(parseTopic(db.prepare('SELECT * FROM topics WHERE id=?').get(id)));
+  // Neuanlage: noch keine Zuständigkeiten möglich -> immer leeres Array
+  // (konsistent mit der contactsForRefs()-Anreicherung in GET /meetings).
+  res.status(201).json({ ...parseTopic(db.prepare('SELECT * FROM topics WHERE id=?').get(id)), contacts: [] });
 });
 
 app.put(`${A}/meetings/:id/topics/reorder`, requireAuth, (req, res) => {
@@ -573,6 +617,9 @@ app.post(`${A}/meetings/:id/topics/:tid/move`, requireAuth, (req, res) => {
       .run(id, req.session.uid, t.title, t.description, t.done, t.result, t.result_date, mx + 1, new Date().toISOString());
     // Transfer theme_links to the new todo
     db.prepare('UPDATE theme_links SET ref_type=?, ref_id=? WHERE ref_type=? AND ref_id=?').run('todo', id, 'topic', t.id);
+    // Transfer Kontakt-Zuständigkeiten (Ansprechpartner-Erweiterung, B3/B4):
+    // sonst gehen bestehende Zuordnungen bei der Konvertierung verloren.
+    assignments.moveAssignments(db, { refType: 'topic', refId: t.id }, { refType: 'todo', refId: id });
     // Dissolve group if needed
     if (t.group_id) {
       const remaining = db.prepare('SELECT id FROM topics WHERE group_id=? AND id!=?').all(t.group_id, t.id);
@@ -600,6 +647,9 @@ app.post(`${A}/todos/:id/move`, requireAuth, (req, res) => {
     .run(id, targetMeetingId, t.title, t.description, t.done, t.result, t.result_date, maxOrder + 1, new Date().toISOString());
   // Transfer theme_links to the new topic
   db.prepare('UPDATE theme_links SET ref_type=?, ref_id=? WHERE ref_type=? AND ref_id=?').run('topic', id, 'todo', t.id);
+  // Transfer Kontakt-Zuständigkeiten (Ansprechpartner-Erweiterung, B3/B4):
+  // sonst gehen bestehende Zuordnungen bei der Konvertierung verloren.
+  assignments.moveAssignments(db, { refType: 'todo', refId: t.id }, { refType: 'topic', refId: id });
   db.prepare('DELETE FROM todos WHERE id=?').run(t.id);
   progress.retargetRef(db, 'todo', t.id, 'topic', id);
   res.json({ ok: true, targetMeetingId, newId: id });
@@ -661,6 +711,7 @@ app.delete(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   try { summaries.deleteForRefs(db, req.session.uid, [{ refType: 'topic', refId: t.id }]); } catch (_) { /* best effort */ }
   db.prepare('DELETE FROM topics WHERE id=?').run(t.id);
   progress.deleteForRefs(db, [{ refType: 'topic', refId: t.id }]);
+  assignments.deleteForRefs(db, [{ refType: 'topic', refId: t.id }]);
   // If only one group member remains, dissolve the group
   if (t.group_id) {
     const remaining = db.prepare('SELECT id FROM topics WHERE group_id=?').all(t.group_id);
@@ -706,10 +757,15 @@ app.get(`${A}/todos`, requireAuth, (req, res) => {
   const summaryItems = rows.map(t => ({ refType: 'todo', refId: t.id }));
   const summarySettings = ai.loadSettings(db, req.session.uid);
   const summaryMap = summaries.forRefs(db, req.session.uid, summaryItems, { settings: summarySettings, scheduler: summaryScheduler });
+  // Additive Zuständigkeits-Anreicherung (Ansprechpartner-Erweiterung,
+  // Arbeitspaket B3/B4): EIN contactsForRefs()-Aufruf für alle geladenen
+  // Todos (kein N+1), analog zum Progress-/KI-Zusammenfassungs-Muster oben.
+  const contactsMap = assignments.contactsForRefs(db, req.session.uid, items);
   res.json(rows.map(t => {
     const todo = parseTodo(t);
     todo.progress = progressMap.get(`todo:${t.id}`) ?? null;
     todo.aiSummary = summaryMap.get(`todo:${t.id}`) || NA_SUMMARY_PAIR;
+    todo.contacts = contactsMap.get(`todo:${t.id}`) ?? [];
     return todo;
   }));
 });
@@ -729,7 +785,9 @@ app.post(`${A}/todos`, requireAuth, (req, res) => {
     const r = summaries.onDescriptionChanged({ userId: req.session.uid, refType: 'todo', refId: id, reason: 'created' });
     pendingSummary = !!(r && r.enqueued);
   } catch (_) { /* best effort — Zusammenfassung darf das Anlegen nie verhindern */ }
-  res.status(201).json({ ...parseTodo(db.prepare('SELECT * FROM todos WHERE id=?').get(id)), aiSummary: { pending: pendingSummary } });
+  // Neuanlage: noch keine Zuständigkeiten möglich -> immer leeres Array
+  // (konsistent mit der contactsForRefs()-Anreicherung in GET /todos).
+  res.status(201).json({ ...parseTodo(db.prepare('SELECT * FROM todos WHERE id=?').get(id)), aiSummary: { pending: pendingSummary }, contacts: [] });
 });
 
 app.put(`${A}/todos/reorder`, requireAuth, (req, res) => {
@@ -805,6 +863,7 @@ app.delete(`${A}/todos/:id`, requireAuth, (req, res) => {
   try { summaries.deleteForRefs(db, req.session.uid, [{ refType: 'todo', refId: t.id }]); } catch (_) { /* best effort */ }
   db.prepare('DELETE FROM todos WHERE id=?').run(t.id);
   progress.deleteForRefs(db, [{ refType: 'todo', refId: t.id }]);
+  assignments.deleteForRefs(db, [{ refType: 'todo', refId: t.id }]);
   res.json({ ok: true });
 });
 
@@ -2161,76 +2220,6 @@ function defaultSnoozeUntilTomorrow() {
   return d.toISOString();
 }
 
-// ── Contacts (Ansprechpartner) ───────────────────────────────
-const MAX_CONTACT_NAME = 200;
-const MAX_CONTACT_FIELD = 500;
-
-app.get(`${A}/contacts`, requireAuth, (req, res) => {
-  const rows = db.prepare(
-    'SELECT * FROM contacts WHERE user_id=? ORDER BY sort_order, created_at'
-  ).all(req.session.uid);
-  res.json(rows.map(parseContact));
-});
-
-app.post(`${A}/contacts`, requireAuth, (req, res) => {
-  const { name = '', role = '', email = '', description = '' } = req.body || {};
-  const cleanName = String(name).trim();
-  if (!cleanName) return res.status(400).json({ error: 'Name erforderlich' });
-  if (cleanName.length > MAX_CONTACT_NAME) return res.status(400).json({ error: 'Name zu lang' });
-  if (String(role).length  > MAX_CONTACT_FIELD) return res.status(400).json({ error: 'Rolle zu lang' });
-  if (String(email).length > MAX_CONTACT_FIELD) return res.status(400).json({ error: 'E-Mail zu lang' });
-
-  const id = uid();
-  const now = new Date().toISOString();
-  const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) AS m FROM contacts WHERE user_id=?').get(req.session.uid).m;
-  db.prepare(
-    'INSERT INTO contacts(id,user_id,name,role,email,description,sort_order,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)'
-  ).run(id, req.session.uid, cleanName, String(role).trim(), String(email).trim(),
-        stripUnsafeHtml(description || ''), mx + 1, now, now);
-  res.status(201).json(parseContact(db.prepare('SELECT * FROM contacts WHERE id=?').get(id)));
-});
-
-app.put(`${A}/contacts/reorder`, requireAuth, (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
-  const update = db.prepare('UPDATE contacts SET sort_order=? WHERE id=? AND user_id=?');
-  ids.forEach((id, i) => update.run(i, id, req.session.uid));
-  res.json({ ok: true });
-});
-
-app.put(`${A}/contacts/:id`, requireAuth, (req, res) => {
-  const c = db.prepare('SELECT * FROM contacts WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
-  if (!c) return res.status(404).json({ error: 'Nicht gefunden' });
-  const { name = c.name, role = c.role, email = c.email, description = c.description } = req.body || {};
-  const cleanName = String(name).trim();
-  if (!cleanName) return res.status(400).json({ error: 'Name erforderlich' });
-  if (cleanName.length > MAX_CONTACT_NAME) return res.status(400).json({ error: 'Name zu lang' });
-  db.prepare(
-    'UPDATE contacts SET name=?, role=?, email=?, description=?, updated_at=? WHERE id=? AND user_id=?'
-  ).run(cleanName, String(role).trim(), String(email).trim(),
-        stripUnsafeHtml(description || ''), new Date().toISOString(),
-        req.params.id, req.session.uid);
-  res.json(parseContact(db.prepare('SELECT * FROM contacts WHERE id=?').get(req.params.id)));
-});
-
-app.delete(`${A}/contacts/:id`, requireAuth, (req, res) => {
-  const r = db.prepare('DELETE FROM contacts WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
-  if (!r.changes) return res.status(404).json({ error: 'Nicht gefunden' });
-  res.json({ ok: true });
-});
-
-function parseContact(r) {
-  return {
-    id: r.id,
-    name: r.name,
-    role: r.role,
-    email: r.email,
-    description: r.description,
-    sortOrder: r.sort_order,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-  };
-}
-
 // ── Attachment routes ─────────────────────────────────────────
 const ALLOWED_REF_TYPES = new Set(['topic', 'todo', 'knowledge_page']);
 const MAX_FILE_SIZE     = 50 * 1024 * 1024; // 50 MB
@@ -2346,17 +2335,20 @@ if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
 app.get(BASE || '/', (req, res) => {
   const fs = require('fs');
   let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-  // Graph-/Progress-/App-Assets sind im Quelltext auf "/assets/..." verlinkt
-  // (funktioniert direkt gegen den Node-Prozess). Hinter einem Reverse-Proxy,
-  // der nur BASE_PATH an die App weiterleitet (siehe deploy.sh-Beispiel-
-  // konfiguration), muss der ausgelieferte Pfad das BASE-Präfix tragen, sonst
-  // laden /assets/graph.js/.css, progress.js/.css und app.js nie.
+  // Graph-/Progress-/Contacts-/App-Assets sind im Quelltext auf "/assets/..."
+  // verlinkt (funktioniert direkt gegen den Node-Prozess). Hinter einem
+  // Reverse-Proxy, der nur BASE_PATH an die App weiterleitet (siehe
+  // deploy.sh-Beispielkonfiguration), muss der ausgelieferte Pfad das
+  // BASE-Präfix tragen, sonst laden /assets/graph.js/.css, progress.js/.css,
+  // contacts.js/.css und app.js nie.
   if (BASE) {
     html = html
       .replace('href="/assets/graph.css"', `href="${BASE}/assets/graph.css"`)
       .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`)
       .replace('href="/assets/progress.css"', `href="${BASE}/assets/progress.css"`)
       .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`)
+      .replace('href="/assets/contacts.css"', `href="${BASE}/assets/contacts.css"`)
+      .replace('src="/assets/contacts.js"', `src="${BASE}/assets/contacts.js"`)
       .replace('src="/assets/app.js"', `src="${BASE}/assets/app.js"`);
   }
   html = html.replace('</head>',
@@ -2481,6 +2473,63 @@ app.use(`${A}/archive`, archive.createArchiveRouter({
   buildFtsQuery: buildFts5Query,
   uploadsDir: UPLOADS_DIR,
   now: () => new Date(),
+}));
+
+// ── Contacts-API (Ansprechpartner, Arbeitspaket B1/B4) ──────────
+// Router definiert seine Pfade bereits relativ inkl. Präfix (z.B.
+// '/contacts', '/contact-categories'), daher Mount direkt unter der
+// App-weiten API-Basis `A` (nicht `${A}/contacts`) - identisch zum
+// Vertragstext des Architekten.
+app.use(A, contacts.createContactsRouter({
+  db,
+  requireAuth,
+  now: () => new Date(),
+  onContactDeleted: (_userId, contactId) => {
+    // Räumt Zwischenstände/Notizen (progress_entries, ref_type='contact') auf.
+    // Zwingend nötig: progress_entries hat KEINEN FK auf contacts, da ref_id
+    // dort polymorph ist (kein DB-seitiges Cascade möglich).
+    // Beide Aufräum-Schritte werden EINZELN abgesichert, damit ein Fehler im
+    // einen Schritt den anderen nicht verhindert (Aufrufer in
+    // lib/contacts/routes.js verschluckt Exceptions aus diesem Hook
+    // vollständig, ohne selbst zu loggen). Es werden nur Fehlermeldung und
+    // IDs geloggt, keine Kontaktinhalte.
+    try {
+      progress.deleteForRefs(db, [{ refType: 'contact', refId: contactId }]);
+    } catch (e) {
+      console.error('[contacts] progress cleanup failed:', e.message || e);
+    }
+    // Reine Zusatzabsicherung (Defense-in-Depth): contact_assignments hat
+    // bereits `contact_id ... ON DELETE CASCADE` (siehe
+    // lib/contacts/assignments/schema.js) und `foreign_keys = ON` ist gesetzt
+    // (siehe oben), d.h. ein DELETE FROM contacts räumt contact_assignments
+    // bereits über die Datenbank auf. Dieser Aufruf ist damit funktional
+    // redundant, aber idempotent und schützt zusätzlich für den Fall, dass
+    // das foreign_keys-Pragma einmal deaktiviert wäre.
+    try {
+      assignments.deleteForContact(db, contactId);
+    } catch (e) {
+      console.error('[contacts] assignment cleanup failed:', e.message || e);
+    }
+  },
+}));
+
+// ── Kontakt-Zuständigkeiten-API (Arbeitspaket B3/B4) ────────────
+// Ebenfalls relative Pfade ('/assignments/:refType/:refId', '/contacts/:id/
+// assignments'), daher direkt unter `A` gemountet (siehe Kommentar oben).
+// `fail` wird injiziert, damit der Fehler-Envelope konsistent mit dem Rest
+// der App bleibt (statt des modul-eigenen Fallbacks).
+//
+// ACHTUNG: `assignments` erwartet einen ISO-String statt eines Date -
+// abweichend vom übrigen `now`-Muster (progress/archive/summaries erhalten
+// `() => new Date()`). Sollte in lib/contacts/assignments/queries.js durch
+// Nutzung von toIso() (siehe lib/contacts/queries.js) harmonisiert werden.
+app.use(A, assignments.createAssignmentsRouter({
+  db,
+  requireAuth,
+  ownsRef,
+  isRefReadOnly,
+  now: () => new Date().toISOString(),
+  fail,
 }));
 
 // ── Globaler Error-Handler (letzte Middleware) ────────────────

@@ -75,6 +75,23 @@ struct TopicFormView: View {
     // bereits angelegte Thema laufen statt erneut createTopicReturning
     // aufzurufen (das wuerde sonst ein Duplikat anlegen).
     @State private var createdId: String?
+    // Arbeitspaket A1 ("Erweiterung Ansprechpartner-Konzept"): Zuständigkeit
+    // (Ansprechpartner) — Feature-Parität zu `TodoFormView` (siehe dortiger
+    // Kommentar, identisches Verhalten). Anzeige/Auswahl-UI ist in
+    // `ContactAssignmentSection` ausgelagert (siehe
+    // `ContactAssignmentPickerSheet.swift`, gemeinsam mit `TodoFormView`
+    // genutzt — Code-Review Fund 2, CLAUDE.md "Wiederverwendung vor
+    // Neuentwicklung").
+    @State private var contactIds: Set<String> = []
+    // Blocker-Fix (Code-Review): siehe `TodoFormView` (identisches Verhalten,
+    // Feature-Parität) — nur nach erfolgreichem Laden ODER aktiver
+    // Nutzerbestätigung im Picker-Sheet `true`; `save()` committet
+    // `setAssignments` nur dann.
+    @State private var assignmentsLoaded = false
+    @State private var assignmentsLoadError: String?
+    // Hoch-Fund (Code-Review, Fall c): siehe `TodoFormView` (identisches
+    // Verhalten, Feature-Parität).
+    @State private var userConfirmedSelection = false
 
     private var detailsSummaryText: String? {
         TopicFormDetailsSummary.summaryText(
@@ -101,6 +118,16 @@ struct TopicFormView: View {
                 }
                 Section {
                     Toggle("Als Todo markieren", isOn: $isTodo)
+                }
+                // Positionierung vereinheitlicht mit `TodoFormView`: immer
+                // direkt vor "Weitere Details" (Code-Review Fund 2).
+                Section("Ansprechpartner") {
+                    ContactAssignmentSection(
+                        refType: "topic", refId: topic?.id, selection: $contactIds,
+                        loaded: $assignmentsLoaded, userConfirmedSelection: $userConfirmedSelection,
+                        loadError: assignmentsLoadError,
+                        onRetryLoad: { Task { await loadContactAssignments() } }
+                    )
                 }
                 Section {
                     DisclosureGroup(isExpanded: $detailsExpanded) {
@@ -143,6 +170,24 @@ struct TopicFormView: View {
                     description = newHTML
                 }
             }
+            // Blocker-Fix: am NavigationStack-Root — siehe `TodoFormView`
+            // (identisches Verhalten).
+            .task { await loadContactAssignments() }
+        }
+    }
+
+    private func loadContactAssignments() async {
+        switch await loadAssignedContactIds(state: state, refType: "topic", refId: topic?.id) {
+        case .success(let ids):
+            // Hoch-Fund (Code-Review, Fall c): siehe `TodoFormView`
+            // (identisches Verhalten).
+            if ContactAssignmentPickerLogic.shouldApplyLoadedSelection(userConfirmedSelection: userConfirmedSelection) {
+                contactIds = ids
+            }
+            assignmentsLoaded = true
+            assignmentsLoadError = nil
+        case .failure(let message):
+            assignmentsLoadError = message
         }
     }
 
@@ -305,8 +350,24 @@ struct TopicFormView: View {
                 let progressResult = await progressComposer.commit(
                     store: progressStore, refType: "topic", refId: savedId, hasSnooze: hasSnooze
                 )
+                // Zuständigkeit (Ansprechpartner) committen — siehe
+                // `TodoFormView.save()` (identisches Verhalten, Feature-
+                // Parität): Fehler hier bleiben sichtbar, Auswahl bleibt
+                // erhalten, kein stiller Verwurf (Story 14). Blocker-Fix: nur
+                // committen, wenn die bestehende Zuordnung nachweislich
+                // geladen wurde bzw. der Nutzer aktiv bestätigt hat (siehe
+                // `assignmentsLoaded`) — sonst bleibt eine bestehende
+                // Zuordnung serverseitig unangetastet statt gelöscht zu
+                // werden.
+                var assignmentErrorText: String?
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId {
+                    do { try await state.setAssignments(refType: "topic", refId: savedId, contactIds: Array(contactIds)) }
+                    catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
+                }
                 loading = false
-                if progressResult != .failed {
+                if let assignmentErrorText {
+                    self.error = assignmentErrorText
+                } else if progressResult != .failed {
                     dismiss()
                 }
             } catch {

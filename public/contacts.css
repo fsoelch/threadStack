@@ -1,0 +1,117 @@
+/*
+ * ThreadStack — Ansprechpartner/Kontakte-Erweiterung (Arbeitspaket W1)
+ * Eigener Klassen-Namensraum "tsc-" (ThreadStack Contacts), um Kollisionen
+ * mit den bestehenden .contact-* Klassen (alte Kontakt-Karte/Modal in
+ * index.html/app.js) zu vermeiden. Rich-Text-Klassen (.rt-wrapper,
+ * .rt-toolbar, .rt-content, .rt-display) werden bewusst NICHT hier neu
+ * definiert, sondern aus dem bereits bestehenden globalen Stylesheet
+ * (index.html) wiederverwendet. Gleiches gilt für das Dialog-Chrome
+ * (.modal-overlay/.modal/.modal-header/.modal-body/.modal-footer/
+ * .modal-close) — auch hier KEINE eigene "tsc-modal-*"-Variante, um keine
+ * zweite Dialogoptik in der App entstehen zu lassen (Code-Review-Fund).
+ * Im eigenständigen Dev-Harness (contacts-dev.html), das ohne index.html
+ * läuft, werden die paar dafür nötigen Basisregeln lokal nachgebildet.
+ */
+
+.tsc-detail { display: flex; flex-direction: column; gap: 1.5rem; }
+.tsc-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+.tsc-section-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .5rem; }
+.tsc-section-title { font-size: .8125rem; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted, #5A5850); margin: 0; }
+
+.tsc-loading-hint, .tsc-empty-hint { font-size: .875rem; color: var(--text-muted, #5A5850); font-style: italic; }
+
+.tsc-error-box { display: flex; flex-direction: column; gap: .5rem; padding: .75rem; border: 1px solid #f3c7c7; background: #fdf2f2; border-radius: 8px; }
+.tsc-error-text { margin: 0; color: #7a1f1f; font-size: .875rem; }
+
+.tsc-btn {
+  font-family: inherit; font-size: .8125rem; padding: .4rem .75rem; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border, #E8E7E2); background: #fff;
+}
+.tsc-btn-primary { background: #1D6FE8; color: #fff; border-color: #1D6FE8; }
+.tsc-btn-secondary { background: #fff; }
+.tsc-link-btn { background: none; border: none; color: #1D6FE8; font-size: .8125rem; cursor: pointer; padding: 0; }
+.tsc-icon-btn {
+  background: none; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font-size: .875rem;
+  padding: .2rem .4rem; line-height: 1;
+}
+.tsc-icon-btn:hover, .tsc-icon-btn:focus-visible { border-color: var(--border, #E8E7E2); }
+
+/* Reorder-Buttons: visuell erst bei Hover/Fokus der Zeile hervorgehoben,
+   aber jederzeit im DOM/Accessibility-Tree vorhanden (kein display:none/
+   aria-hidden) — siehe NFR-7. */
+.tsc-block { display: flex; align-items: flex-start; gap: .75rem; padding: .5rem 0; border-bottom: 1px solid var(--border, #E8E7E2); }
+.tsc-block-body { flex: 1 1 auto; min-width: 0; }
+.tsc-block-actions { display: flex; gap: .15rem; opacity: .35; transition: opacity .15s ease; flex-shrink: 0; }
+.tsc-block:hover .tsc-block-actions,
+.tsc-block:focus-within .tsc-block-actions { opacity: 1; }
+.tsc-reorder-btn[disabled] { opacity: .3; cursor: default; }
+
+.tsc-block-list { list-style: none; margin: 0 0 .5rem; padding: 0; }
+.tsc-category-group { margin-bottom: .75rem; }
+.tsc-category-summary { font-weight: 600; font-size: .8125rem; margin-bottom: .25rem; cursor: default; }
+.tsc-category-private > .tsc-category-summary { cursor: pointer; }
+
+.tsc-block-editor { border: 1px solid var(--border, #E8E7E2); border-radius: 10px; padding: .75rem; margin-bottom: .75rem; background: #FBFBF9; }
+.tsc-block-editor-footer { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .5rem; }
+
+.tsc-conflict-banner { background: #FFF7E6; border: 1px solid #F0C36D; border-radius: 8px; padding: .5rem .75rem; margin-bottom: .5rem; font-size: .8125rem; }
+.tsc-conflict-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .4rem; }
+.tsc-conflict-server { margin-top: .5rem; padding: .5rem; background: #fff; border: 1px dashed #E8E7E2; border-radius: 6px; }
+
+.tsc-combobox { position: relative; margin-bottom: .5rem; }
+.tsc-combobox-input { width: 100%; box-sizing: border-box; font-family: inherit; font-size: .875rem; padding: .4rem .6rem; border: 1px solid var(--border, #E8E7E2); border-radius: 8px; }
+.tsc-combobox-list {
+  list-style: none; margin: 2px 0 0; padding: .25rem 0; position: absolute; z-index: 20; left: 0; right: 0;
+  background: #fff; border: 1px solid var(--border, #E8E7E2); border-radius: 8px; max-height: 220px; overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(16,22,30,.08);
+}
+.tsc-combobox-option { padding: .35rem .6rem; font-size: .8125rem; cursor: pointer; }
+.tsc-combobox-option-active { background: #EFF6FF; }
+.tsc-combobox-option-new { font-style: italic; color: #1D6FE8; }
+
+.tsc-topic-chips, .tsc-assigned-chips, .tsc-badges { display: flex; flex-wrap: wrap; gap: .35rem; }
+.tsc-topic-chip, .tsc-assigned-chip, .tsc-badge {
+  display: inline-flex; align-items: center; gap: .25rem; padding: .15rem .5rem; border-radius: 999px;
+  background: #F1F0EC; font-size: .75rem; border: 1px solid var(--border, #E8E7E2);
+}
+.tsc-badge-private { background: #F5EFEF; }
+.tsc-badge-more { cursor: default; font-weight: 600; }
+.tsc-snippet { display: block; font-size: .8125rem; color: var(--text-muted, #5A5850); margin-top: .25rem; }
+.tsc-chip-remove { background: none; border: none; cursor: pointer; font-size: .875rem; line-height: 1; padding: 0 .1rem; }
+
+.tsc-assignment-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.tsc-assignment-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .35rem .5rem; border-radius: 8px; background: #FBFBF9; border: 1px solid var(--border, #E8E7E2); }
+.tsc-assignment-main { display: flex; align-items: center; gap: .4rem; background: none; border: none; cursor: pointer; font-size: .8125rem; text-align: left; flex: 1 1 auto; min-width: 0; }
+.tsc-badge-type { font-size: .6875rem; text-transform: uppercase; letter-spacing: .04em; padding: .05rem .35rem; border-radius: 4px; background: #EFF6FF; color: #1D4ED8; flex-shrink: 0; }
+.tsc-assignment-status { font-size: .6875rem; color: var(--text-muted, #5A5850); flex-shrink: 0; }
+.tsc-assignment-meeting { font-size: .6875rem; color: var(--text-muted, #5A5850); flex-shrink: 0; }
+.tsc-assignment-done { opacity: .7; }
+
+/* Dialog-Chrome (Overlay/Rahmen/Kopf/Fußzeile) nutzt bewusst das bestehende,
+   app.js-weite .modal-overlay/.modal/.modal-header/.modal-body/.modal-footer/
+   .modal-close-Muster (siehe index.html) statt eines zweiten, eigenen
+   Dialog-Stils (Code-Review-Fund) — hier verbleiben nur die Inhalte, die
+   spezifisch für diese Dialoge sind (Picker-Liste, Rubrik-Verwaltung). */
+.tsc-picker-count { margin-right: auto; font-size: .8125rem; color: var(--text-muted, #5A5850); }
+.tsc-picker-context { font-size: .8125rem; color: var(--text-muted, #5A5850); margin: 0 0 .75rem; }
+.tsc-picker-search { width: 100%; box-sizing: border-box; font-family: inherit; font-size: .875rem; padding: .4rem .6rem; border: 1px solid var(--border, #E8E7E2); border-radius: 8px; margin-bottom: .5rem; }
+.tsc-picker-list { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; }
+.tsc-picker-row { display: flex; align-items: center; gap: .5rem; padding: .35rem .25rem; border-radius: 6px; }
+.tsc-picker-row-selected { background: #EFF6FF; }
+.tsc-picker-label { display: flex; align-items: center; gap: .3rem; font-size: .8125rem; cursor: pointer; }
+.tsc-picker-check { color: #1D4ED8; font-weight: 700; }
+.tsc-picker-role { color: var(--text-muted, #5A5850); }
+/* Fund A (Review): sichtbarer Warnhinweis, falls die Vorbelegung des
+   Zuordnungsdialogs nicht geladen werden konnte — analog zur Farbgebung von
+   .tsc-error-box, damit ein Netzwerkfehler nicht optisch übersehen wird
+   (Speichern würde sonst unbemerkt bestehende Zuordnungen ersetzen). */
+.tsc-picker-warning { font-size: .8125rem; color: #92400E; background: #fdf2f2; border: 1px solid #f3c7c7; border-radius: 8px; padding: .5rem .6rem; margin: 0 0 .5rem; }
+
+.tsc-category-manage-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
+.tsc-category-manage-row { display: flex; align-items: center; gap: .5rem; }
+.tsc-category-manage-label { flex: 1 1 auto; font-size: .875rem; }
+.tsc-category-rename-input { flex: 1 1 auto; font-family: inherit; font-size: .875rem; padding: .3rem .5rem; border: 1px solid var(--border, #E8E7E2); border-radius: 6px; }

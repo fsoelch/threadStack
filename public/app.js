@@ -636,7 +636,11 @@ function renderTodoCardBody(refType, item, themeEntries, isDone, isArchived) {
     ? `<button type="button" class="card-more-toggle" onclick="toggleTodoCardOverflow('${refType}','${item.id}')" aria-expanded="${expanded}">${escHtml(toggleLabel)}</button>`
     : '';
 
-  return { descriptionHtml, chipsHtml, toggleHtml };
+  // Zugeordnete Ansprechpartner (Arbeitspaket W2/TSContacts) — `item.contacts`
+  // liefert der Server bereits mit GET /todos bzw. GET /meetings.
+  const contactsHtml = renderAssignedContactsChipsHtml(item);
+
+  return { descriptionHtml, chipsHtml, toggleHtml, contactsHtml };
 }
 
 // Fortschrittszeile + optionale KI-Fortschritts-Zusammenfassung für Karten
@@ -2334,6 +2338,9 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
               <button onclick="closeAllOverflow(); openThemeLinkModalForTodo('${t.id}')">
                 <span class="icon">🏷️</span><span>Topic zuweisen</span>
               </button>
+              <button onclick="closeAllOverflow(); openContactAssignmentPickerForTodoCard('${t.id}')">
+                <span class="icon">👤</span><span>Ansprechpartner zuordnen</span>
+              </button>
               ${!isDone ? `<button onclick="closeAllOverflow(); openStackPushModal('todo','${t.id}')">
                 <span class="icon">📚</span><span>Auf Stack legen</span>
               </button>` : ''}
@@ -2357,6 +2364,7 @@ function renderPersonalTodoCard(t, isDone, themeMap) {
           <button class="snooze-wake-btn" onclick="wakeUpTodo('${t.id}')">🔔 Jetzt wecken</button>
         </div>` : ''}
       ${!isDone ? `<div id="todo-card-composer-todo-${t.id}" class="ts-progress-line-host" style="display:none"></div>` : ''}
+      ${cardBody.contactsHtml}
       ${cardBody.chipsHtml}${cardBody.toggleHtml}
       ${isDone ? `
         <div class="topic-result">
@@ -2401,6 +2409,9 @@ function renderMeetingTopicTodo(m, t, themeMap) {
               <button onclick="closeAllOverflow(); openThemeLinkModalForTopic('${m.id}','${t.id}')">
                 <span class="icon">🏷️</span><span>Topic zuweisen</span>
               </button>
+              <button onclick="closeAllOverflow(); openContactAssignmentPickerForTopicCard('${m.id}','${t.id}')">
+                <span class="icon">👤</span><span>Ansprechpartner zuordnen</span>
+              </button>
               <button onclick="closeAllOverflow(); openMoveModalForTopic('${m.id}','${t.id}')">
                 <span class="icon">→</span><span>In anderes Meeting verschieben</span>
               </button>
@@ -2433,6 +2444,7 @@ function renderMeetingTopicTodo(m, t, themeMap) {
           <button class="snooze-wake-btn" onclick="wakeUpTopic('${m.id}','${t.id}')">🔔 Jetzt wecken</button>
         </div>` : ''}
       ${!isArchived ? `<div id="todo-card-composer-topic-${t.id}" class="ts-progress-line-host" style="display:none"></div>` : ''}
+      ${cardBody.contactsHtml}
       ${cardBody.chipsHtml}${cardBody.toggleHtml}
       <a class="todo-meeting-chip" onclick="selectMeeting('${m.id}')">
         <span class="meeting-dot" style="background:${escHtml(m.color||'#1D6FE8')};width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:3px"></span>${escHtml(m.title)}
@@ -2493,6 +2505,9 @@ function renderTopicCard(mid, t, groupMap, themeMap, readOnly) {
               <button onclick="closeAllOverflow(); openThemeLinkModalForTopic('${mid}','${t.id}')">
                 <span class="icon">🏷️</span><span>Topic zuweisen</span>
               </button>
+              <button onclick="closeAllOverflow(); openContactAssignmentPickerForTopicCard('${mid}','${t.id}')">
+                <span class="icon">👤</span><span>Ansprechpartner zuordnen</span>
+              </button>
               <button onclick="closeAllOverflow(); toggleTopicTodo('${mid}','${t.id}')">
                 <span class="icon">📌</span><span>${t.isTodo ? 'Aus Todos entfernen' : 'Als Todo markieren'}</span>
               </button>
@@ -2526,6 +2541,7 @@ function renderTopicCard(mid, t, groupMap, themeMap, readOnly) {
               🏷️ ${escHtml(x.theme.title)}
             </span>`).join('')}
         </div>` : ''}
+      ${renderAssignedContactsChipsHtml(t)}
       ${t.done ? `
         <div class="topic-result">
           <div class="topic-result-header">
@@ -2908,6 +2924,15 @@ function openTodoModal(id, presetThemeId) {
     loadAttachments('todo', id);
   } else {
     attachSlot.innerHTML = '<p style="font-size:.8125rem;color:var(--text-muted);font-style:italic">Anhänge sind verfügbar, sobald das Todo gespeichert wurde.</p>';
+  }
+  // Ansprechpartner-Zuordnung (Arbeitspaket W2/TSContacts): wie Anhänge nur
+  // verfügbar, sobald das Todo existiert (Zuordnungen brauchen eine refId).
+  const contactsSection = document.getElementById('todo-contacts-section');
+  if (t) {
+    contactsSection.style.display = '';
+    renderTodoContactsChips(t);
+  } else {
+    contactsSection.style.display = 'none';
   }
   updateTodoMoreDetailsSummary();
   mountTodoProgressArea(t);
@@ -3335,6 +3360,15 @@ function openTopicModal(mid, tid) {
     loadAttachments('topic', tid);
   } else {
     attachSlot.innerHTML = '<p style="font-size:.8125rem;color:var(--text-muted);font-style:italic">Anhänge sind verfügbar, sobald das Thema gespeichert wurde.</p>';
+  }
+  // Ansprechpartner-Zuordnung (Arbeitspaket W2/TSContacts): wie Anhänge nur
+  // verfügbar, sobald das Thema existiert (Zuordnungen brauchen eine refId).
+  const topicContactsSection = document.getElementById('topic-contacts-section');
+  if (t) {
+    topicContactsSection.style.display = '';
+    renderTopicContactsChips(t);
+  } else {
+    topicContactsSection.style.display = 'none';
   }
   document.getElementById('topic-modal').style.display = 'flex';
   // Fortschrittsbereich erscheint nur beim Bearbeiten eines bestehenden
@@ -4418,6 +4452,13 @@ function matchesContact(c, query) {
     c.role || '',
     c.email || '',
     stripHtmlForSearch(c.description || ''),
+    // snippet/categories (Arbeitspaket W1/B1): serverseitig gelieferter
+    // Klartextauszug bzw. Rubriknamen der neuen strukturierten
+    // Zusatzinformationen — ohne diese Felder wäre das lokale Schnellfilter-
+    // Suchfeld in dieser Ansicht "blind" für über die neuen Infoblöcke
+    // erfasste Inhalte, obwohl die globale (⌘K-)Suche sie bereits findet.
+    c.snippet || '',
+    Array.isArray(c.categories) ? c.categories.map(cat => cat?.label || '').join(' ') : '',
   ].join('\n').toLowerCase();
   return query.toLowerCase().split(/\s+/).filter(Boolean)
     .every(token => haystack.includes(token));
@@ -4475,9 +4516,15 @@ function renderContactsView(el) {
   }
 
   host.innerHTML = list.map(c => {
-    // Description: snippet anzeigen (max 280 Zeichen) + Highlights
-    const descText = stripHtmlForSearch(c.description || '');
-    const snippet  = descText.length > 280 ? descText.slice(0, 280) + '…' : descText;
+    // Rubrik-Badges + Klartextauszug der neuen strukturierten Zusatz-
+    // informationen (Arbeitspaket W1/B1) statt des früheren reinen
+    // `description`-Snippets — TSContacts liefert bereits fertig
+    // escaptes HTML, daher hier KEIN zusätzliches highlightSearch() darauf
+    // (kein Such-Highlighting innerhalb der Badges/des Snippets, siehe
+    // Abschlussbericht W2: TSContacts.contactBadgesHtml kennt den
+    // Suchbegriff nicht).
+    const badgesHtml = (window.TSContacts && typeof TSContacts.contactBadgesHtml === 'function')
+      ? TSContacts.contactBadgesHtml(c, { maxBadges: 4 }) : '';
     return `
       <div class="contact-card">
         <div class="contact-card-header">
@@ -4491,7 +4538,7 @@ function renderContactsView(el) {
             <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteContact('${c.id}', '${escHtml(c.name).replace(/'/g, "\\'")}')" title="Löschen">🗑️</button>
           </div>
         </div>
-        ${snippet ? `<div class="contact-card-desc" style="white-space:pre-wrap">${highlightSearch(snippet, q)}</div>` : ''}
+        ${badgesHtml ? `<div class="contact-card-badges">${badgesHtml}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -4503,6 +4550,92 @@ function onContactSearch(val) {
   if (el) { el.focus(); el.setSelectionRange(val.length, val.length); }
 }
 
+// ── Erweiterte Kontakt-Detailansicht (Arbeitspaket W1: TSContacts) ────
+// Hält das aktuell gemountete mountContactDetail()-Handle, damit es beim
+// Schließen/Wechseln des Kontakts sauber destroy()t wird (sonst blieben
+// z. B. die von TSProgress innerhalb des Notizen-Abschnitts gemounteten
+// Composer-/Timeline-Instanzen an einem bereits ersetzten/entfernten
+// DOM-Host hängen).
+let contactDetailHandle = null;
+
+function destroyContactDetailSection() {
+  if (contactDetailHandle && typeof contactDetailHandle.destroy === 'function') {
+    try { contactDetailHandle.destroy(); } catch (e) { console.warn('destroyContactDetailSection: destroy() fehlgeschlagen (Handle evtl. bereits ungültig)', e); }
+  }
+  contactDetailHandle = null;
+}
+
+// Navigations-Ziel aus Abschnitt "Ist zuständig für" (onNavigate liefert
+// laut Vertrag NUR {refType, refId}, keine meetingId) — für Themen wird die
+// zugehörige Meeting-Id über den bestehenden findTopicAnywhere()-Helfer
+// aufgelöst und die vorhandene TSHost.openObject()-Logik (inkl. Archiv-/
+// "nicht mehr aktiv"-Behandlung) wiederverwendet, statt sie hier zu
+// duplizieren. Wird die Themen-Zuordnung nicht mehr gefunden (z. B. weil sie
+// zu einem archivierten Meeting gehört, dessen Id hier nicht bekannt ist),
+// bricht die Navigation sichtbar mit einem Toast ab statt eine kaputte
+// Bearbeiten-Ansicht zu öffnen.
+function navigateFromContactAssignment(ctx) {
+  const refType = ctx && ctx.refType, refId = ctx && ctx.refId;
+  if (!refType || !refId) return;
+  if (refType === 'todo') {
+    closeContactModal();
+    TSHost.openObject('todo', refId);
+  } else if (refType === 'topic') {
+    const found = findTopicAnywhere(refId);
+    if (!found) {
+      toast('Thema nicht gefunden (evtl. archiviert oder gelöscht).', 'error');
+      return;
+    }
+    closeContactModal();
+    // Invariante: findTopicAnywhere() durchsucht ausschließlich `meetings`,
+    // welches ausnahmslos über GET /meetings befüllt wird — diese Route
+    // liefert serverseitig NUR nicht-archivierte Meetings (notArchivedSql).
+    // `found.meeting.archived` ist an dieser Stelle daher beweisbar immer
+    // false. Archivierte Themen sind über diesen Navigationsweg aktuell
+    // NICHT erreichbar, da onNavigate laut Vertrag keine meetingId für den
+    // Archiv-Pfad liefert (bekannte Vertragslücke, siehe Kommentar oben).
+    TSHost.openObject('topic', refId, { meetingId: found.meeting.id, archived: false });
+  }
+}
+
+function mountContactDetailSection(id) {
+  destroyContactDetailSection();
+  const host = document.getElementById('contact-detail-host');
+  if (!host) return;
+  host.innerHTML = '';
+  if (!id) {
+    host.innerHTML = '<p style="font-size:.8125rem;color:var(--text-muted);font-style:italic">Zusatzinformationen, Notizen, Topics und Zuständigkeiten sind verfügbar, sobald der Ansprechpartner gespeichert wurde.</p>';
+    return;
+  }
+  if (!window.TSContacts || typeof TSContacts.mountContactDetail !== 'function') {
+    host.innerHTML = '<p class="form-error">Erweiterte Kontaktansicht momentan nicht verfügbar.</p>';
+    return;
+  }
+  contactDetailHandle = TSContacts.mountContactDetail(host, {
+    contactId: id,
+    rt: {
+      setRT: (elId, val) => setRT(elId, val),
+      getRT: (elId) => getRT(elId),
+      // Wird für JEDEN dynamisch erzeugten Infoblock-Editor unmittelbar vor
+      // rt.setRT(editorId,...) aufgerufen (siehe Modulkopf-Kommentar in
+      // contacts.js) — ohne dieses Wiring bliebe die Rich-Text-Toolbar der
+      // Infoblock-Editoren leer.
+      initToolbar: (editorId, toolbarId) => initRtToolbar(toolbarId, editorId),
+    },
+    openThemeLinkModal: openThemeLinkModal,
+    confirm: ({ title, message }) => genericConfirm(title, message, 'Löschen', 'Abbrechen'),
+    toast: (msg, type) => toast(msg, type),
+    onContactChanged: (updated) => {
+      if (!updated || !updated.id) return;
+      const idx = contacts.findIndex(x => x.id === updated.id);
+      if (idx >= 0) contacts[idx] = updated; else contacts.push(updated);
+      render();
+    },
+    onNavigate: (ctx) => navigateFromContactAssignment(ctx),
+    onError: (err) => toast((err && err.message) || 'Fehler beim Laden der Kontaktdaten.', 'error'),
+  });
+}
+
 function openContactModal(id) {
   editContactId = id || null;
   const c = id ? contacts.find(x => x.id === id) : null;
@@ -4510,33 +4643,44 @@ function openContactModal(id) {
   document.getElementById('contact-name').value  = c?.name  || '';
   document.getElementById('contact-role').value  = c?.role  || '';
   document.getElementById('contact-email').value = c?.email || '';
-  setRT('contact-desc', c?.description || '');
   document.getElementById('contact-error').style.display = 'none';
+  mountContactDetailSection(id);
   document.getElementById('contact-modal').style.display = 'flex';
   setTimeout(() => document.getElementById('contact-name').focus(), 50);
 }
-function closeContactModal() { document.getElementById('contact-modal').style.display = 'none'; }
+function closeContactModal() {
+  document.getElementById('contact-modal').style.display = 'none';
+  destroyContactDetailSection();
+}
 
 async function saveContactModal() {
   const name  = document.getElementById('contact-name').value.trim();
   const role  = document.getElementById('contact-role').value.trim();
   const email = document.getElementById('contact-email').value.trim();
-  const description = getRT('contact-desc');
   const errEl = document.getElementById('contact-error');
   errEl.style.display = 'none';
   if (!name) { errEl.textContent = 'Name ist erforderlich.'; errEl.style.display = ''; return; }
   setBusy('contact-save-btn', true);
   try {
+    // Kein `description`-Schlüssel mehr im Body (Arbeitspaket W2): das
+    // frühere Freitextfeld "Zuständigkeit & Eigenschaften" ist durch die
+    // strukturierten Zusatzinformationen (TSContacts.mountContactDetail,
+    // Abschnitt "Zusatzinformationen") ersetzt. Der Legacy-Shim im Backend
+    // (`description` NICHT im Body -> keine Blockänderung) bleibt dadurch
+    // unangetastet — bereits vorhandene Legacy-Inhalte gehen nicht verloren,
+    // sind aber nur noch über den neuen Infoblock-Editor bearbeitbar.
     if (editContactId) {
-      const c = await api('PUT', `/contacts/${editContactId}`, { name, role, email, description });
+      const c = await api('PUT', `/contacts/${editContactId}`, { name, role, email });
       const idx = contacts.findIndex(x => x.id === editContactId);
       if (idx >= 0) contacts[idx] = c;
+      closeContactModal(); render();
+      toast('Ansprechpartner aktualisiert');
     } else {
-      const c = await api('POST', '/contacts', { name, role, email, description });
+      const c = await api('POST', '/contacts', { name, role, email });
       contacts.push(c);
+      closeContactModal(); render();
+      toast('Ansprechpartner erstellt');
     }
-    closeContactModal(); render();
-    toast(editContactId ? 'Ansprechpartner aktualisiert' : 'Ansprechpartner erstellt');
   } catch (e) {
     errEl.textContent = e.message || 'Fehler';
     errEl.style.display = '';
@@ -4546,6 +4690,16 @@ async function saveContactModal() {
 }
 
 function confirmDeleteContact(id, name) {
+  const c = contacts.find(x => x.id === id);
+  // Dynamischer Zusatzhinweis (Arbeitspaket W2, UX-Vorgabe): warnt zusätzlich
+  // vor dem Verlust strukturierter Zusatzinformationen, falls vorhanden —
+  // `infoBlockCount` liefert der Server bereits fertig mit dem Contact-Objekt
+  // (kein zusätzlicher Request nötig). Notizen/Zuständigkeits-Zuordnungen
+  // werden serverseitig beim Löschen ebenfalls entfernt (siehe B4-Wiring),
+  // daher pauschal mit erwähnt statt eine exakte Zahl vorzutäuschen.
+  const extraHint = (c && c.infoBlockCount > 0)
+    ? ` Zusätzlich gehen ${c.infoBlockCount} Zusatzinformation${c.infoBlockCount === 1 ? '' : 'en'}, alle Notizen und Zuständigkeits-Zuordnungen zu diesem Ansprechpartner verloren.`
+    : '';
   confirmCallback = async () => {
     try {
       await api('DELETE', `/contacts/${id}`);
@@ -4554,8 +4708,114 @@ function confirmDeleteContact(id, name) {
     } catch (e) { toast(e.message, 'error'); }
   };
   document.getElementById('confirm-title').textContent   = 'Ansprechpartner löschen?';
-  document.getElementById('confirm-message').textContent = `„${name}" wird gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.`;
+  document.getElementById('confirm-message').textContent = `„${name}" wird gelöscht. Diese Aktion kann nicht rückgängig gemacht werden.${extraHint}`;
   document.getElementById('confirm-dialog').style.display = 'flex';
+}
+
+// ── Ansprechpartner-Zuordnung an Todo/Thema (Arbeitspaket W2) ─────────
+// Gemeinsame Basis für Karten-Overflow-Aktion UND Bearbeiten-Modal — ruft
+// TSContacts.openAssignmentPicker() auf (Wiederverwendung des bestehenden,
+// von W1 gelieferten Zuordnungsdialogs statt eines zweiten).
+function openContactFromChip(id) {
+  // Wiederverwendung statt Duplikat: TSHost.openObject('contact', id) macht
+  // exakt dasselbe (selectView('__contacts__') + openContactModal(id)), siehe
+  // dessen 'contact'-Zweig weiter oben.
+  TSHost.openObject('contact', id);
+}
+
+// Baut die Chips zugeordneter Ansprechpartner (Todo/Thema, `item.contacts`
+// im AssignedContact-Format {contactId,name,role,email,assignedAt} laut
+// Server-Vertrag) über die gemeinsame TSContacts.assignedContactsHtml()-
+// Funktion — Klick auf einen Chip öffnet den Ansprechpartner direkt.
+function renderAssignedContactsChipsHtml(item) {
+  if (!window.TSContacts || typeof TSContacts.assignedContactsHtml !== 'function') return '';
+  const list = Array.isArray(item?.contacts) ? item.contacts : [];
+  if (!list.length) return '';
+  return TSContacts.assignedContactsHtml(list, {
+    onClickAttr: c => `onclick="event.stopPropagation(); openContactFromChip('${escJsAttr(String(c.contactId))}')"`
+  });
+}
+
+function toAssignedContactShape(contact) {
+  return {
+    contactId: contact.id, name: contact.name, role: contact.role,
+    email: contact.email, assignedAt: new Date().toISOString(),
+  };
+}
+
+// Aktualisiert die lokal gehaltene `.contacts`-Liste eines Todos/Themas nach
+// einer erfolgreichen Zuordnungsänderung, ohne auf einen vollständigen
+// loadTodos()/loadMeetings()-Neuladeroundtrip warten zu müssen (analog zu
+// bestehenden optimistischen Aktualisierungen an anderer Stelle in app.js).
+function applyAssignedContacts(refType, refId, assignedContactsList) {
+  const mapped = (assignedContactsList || []).map(toAssignedContactShape);
+  if (refType === 'todo') {
+    const t = todos.find(x => x.id === refId);
+    if (t) t.contacts = mapped;
+  } else if (refType === 'topic') {
+    const found = findTopicAnywhere(refId);
+    if (found) found.topic.contacts = mapped;
+  }
+}
+
+function doOpenContactAssignmentPicker(refType, refId, title, afterApply) {
+  if (!window.TSContacts || typeof TSContacts.openAssignmentPicker !== 'function') {
+    toast('Ansprechpartner-Zuordnung momentan nicht verfügbar.', 'error');
+    return;
+  }
+  TSContacts.openAssignmentPicker({
+    refType, refId, title, contacts,
+    onChanged: (assigned) => {
+      applyAssignedContacts(refType, refId, assigned);
+      if (typeof afterApply === 'function') afterApply();
+      render();
+      toast('Ansprechpartner zugeordnet');
+    },
+    onError: (err) => toast((err && err.message) || 'Zuordnung konnte nicht geladen werden.', 'error'),
+    toast: (msg, type) => toast(msg, type),
+  });
+}
+
+// Karten-Overflow-Aktion "👤 Ansprechpartner zuordnen"
+function openContactAssignmentPickerForTodoCard(id) {
+  const t = todos.find(x => x.id === id);
+  if (!t) return;
+  doOpenContactAssignmentPicker('todo', id, t.title, null);
+}
+
+function openContactAssignmentPickerForTopicCard(mid, tid) {
+  const t = getTopic(mid, tid);
+  if (!t) return;
+  doOpenContactAssignmentPicker('topic', tid, t.title, null);
+}
+
+// Todo-/Themen-Bearbeiten-Modal: Chip-Anzeige + Zuordnen-Button
+function renderTodoContactsChips(t) {
+  const host = document.getElementById('todo-contacts-chips');
+  if (!host) return;
+  host.innerHTML = renderAssignedContactsChipsHtml(t) ||
+    '<span class="form-hint">Noch keine Ansprechpartner zugeordnet.</span>';
+}
+
+function renderTopicContactsChips(t) {
+  const host = document.getElementById('topic-contacts-chips');
+  if (!host) return;
+  host.innerHTML = renderAssignedContactsChipsHtml(t) ||
+    '<span class="form-hint">Noch keine Ansprechpartner zugeordnet.</span>';
+}
+
+function openContactAssignmentPickerForTodo() {
+  if (!editTodoId) return;
+  const t = todos.find(x => x.id === editTodoId);
+  if (!t) return;
+  doOpenContactAssignmentPicker('todo', editTodoId, t.title, () => renderTodoContactsChips(t));
+}
+
+function openContactAssignmentPickerForTopic() {
+  if (!editTopicMid || !editTopicId) return;
+  const t = getTopic(editTopicMid, editTopicId);
+  if (!t) return;
+  doOpenContactAssignmentPicker('topic', editTopicId, t.title, () => renderTopicContactsChips(t));
 }
 
 // ── Theme link modal ─────────────────────────────────────────
@@ -4571,15 +4831,29 @@ function openThemeLinkModalForTodo(tid) {
   openThemeLinkModal({ refType: 'todo', refId: tid, title: t.title });
 }
 
-function openThemeLinkModal(ctx) {
+// `onClosed` (Arbeitspaket W2, Vertrag mit TSContacts.mountContactDetail):
+// optionaler zweiter Parameter, wird GENAU EINMAL aufgerufen, sobald dieser
+// Dialog schließt (unabhängig davon, ob per ×/„Schließen"/Overlay-Klick/
+// Escape) — ersetzt das zuvor von contacts.js genutzte, dauerhaft laufende
+// Polling von GET /api/themes. Bestehende Aufrufer (openThemeLinkModalForTopic/
+// -ForTodo) übergeben weiterhin KEIN onClosed — vollständig abwärtskompatibel.
+let themeLinkOnClosed = null;
+
+function openThemeLinkModal(ctx, onClosed) {
   themeLinkCtx = ctx;
+  themeLinkOnClosed = typeof onClosed === 'function' ? onClosed : null;
   document.getElementById('theme-link-item-label').textContent =
     `Wählen Sie die Topics aus, zu denen „${ctx.title}" gehören soll.`;
   renderThemeLinkList();
   document.getElementById('theme-link-modal').style.display = 'flex';
 }
 
-function closeThemeLinkModal() { document.getElementById('theme-link-modal').style.display = 'none'; }
+function closeThemeLinkModal() {
+  document.getElementById('theme-link-modal').style.display = 'none';
+  const cb = themeLinkOnClosed;
+  themeLinkOnClosed = null;
+  if (cb) { try { cb(); } catch (e) { console.warn('closeThemeLinkModal: onClosed-Callback fehlgeschlagen (Schließen wird dadurch nicht verhindert)', e); } }
+}
 
 function renderThemeLinkList() {
   const listEl  = document.getElementById('theme-link-list');
@@ -4914,6 +5188,14 @@ function overlayClick(e, id) {
     [...modal.querySelectorAll('.rt-content')]
       .some(el => (el.textContent || '').trim() !== '');
   if (hasText) return;
+  // theme-link-modal/contact-modal (Arbeitspaket W2) müssen über ihre
+  // eigenen Schließ-Funktionen laufen statt blind ausgeblendet zu werden:
+  // theme-link-modal muss `onClosed()` zuverlässig auslösen (siehe
+  // openThemeLinkModal), contact-modal muss die gemountete TSContacts-
+  // Detailansicht destroy()en (sonst bleiben Notizen-Composer/-Timeline an
+  // einem bereits verworfenen Host hängen).
+  if (id === 'theme-link-modal') { closeThemeLinkModal(); return; }
+  if (id === 'contact-modal') { closeContactModal(); return; }
   modal.style.display = 'none';
 }
 
@@ -6610,10 +6892,17 @@ document.addEventListener('keydown', e => {
     // sondern über die Request-Funktionen geschlossen (Datenverlustschutz
     // für den Fortschritts-Composer). progress-entry-modal wird separat mit
     // 'cancelled' geschlossen (siehe unten).
-    ['meeting-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','share-modal','theme-edit-modal','theme-link-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','contact-modal','knowledge-quick-modal','export-modal']
+    // theme-link-modal/contact-modal (Arbeitspaket W2) sind NICHT Teil des
+    // blinden Bulk-Hides — sie nehmen wie todo-modal/topic-modal an einem
+    // eigenen Schließ-Pfad teil: theme-link-modal muss `onClosed()`
+    // zuverlässig auslösen (siehe openThemeLinkModal), contact-modal muss
+    // die gemountete TSContacts-Detailansicht destroy()en.
+    ['meeting-modal','complete-modal','pw-modal','admin-modal','edit-user-modal','share-modal','theme-edit-modal','theme-delete-modal','theme-move-modal','knowledge-modal','move-modal','ai-settings-modal','ai-brief-modal','ai-capture-modal','stack-push-modal','stack-pop-modal','pop-drift-modal','stack-note-modal','frame-detail-modal','quick-push-modal','knowledge-quick-modal','export-modal']
       .forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
     if (document.getElementById('todo-modal').style.display !== 'none') closeTodoModal();
     if (document.getElementById('topic-modal').style.display !== 'none') requestCloseTopicModal();
+    if (document.getElementById('theme-link-modal').style.display !== 'none') closeThemeLinkModal();
+    if (document.getElementById('contact-modal').style.display !== 'none') closeContactModal();
     if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
     if (document.getElementById('progress-entry-modal').style.display !== 'none') closeProgressEntryDialog('cancelled');
     return;
@@ -6654,7 +6943,7 @@ document.getElementById('login-user').addEventListener('keydown', e => { if (e.k
 // in beiden Bearbeiten-Modalen ist TSProgress.mountInlineComposer, ein
 // einfaches <textarea> ohne eigenes rt-content-Feld, siehe mountProgressArea).
 // pop-progress-note (Pop-Dialog) ist davon unberührt.
-['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result','contact-desc',
+['m-desc','t-desc','t-result','c-result','todo-desc','todo-result','pop-result',
   'progress-entry-body','pop-progress-note']
   .forEach(id => initRtToolbar(id+'-tb', id));
 initRtToolbar('knowledge-content-tb', 'knowledge-content', { imageButton: true });

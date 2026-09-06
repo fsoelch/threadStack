@@ -1,0 +1,8 @@
+- [Resumed session verification](workflow_resumed_session.md) — check git status/diff first, prior run may already be complete
+- [Progress module ref_type extension pattern](project_progress_module.md) — SQLite CHECK rebuild pattern, ownership split lib/progress vs server.js
+- [progress_web_helpers time-bomb test](pitfall_progress_web_helpers_timebomb.md) — hardcoded dates cause future unrelated failures
+- [SQLite rebuild migrations: triggers/FK](pitfall_sqlite_rebuild_triggers_fk.md) — DROP+RENAME rebuilds drop own triggers, CASCADE-delete via FK, crash on foreign triggers referencing the table (needs legacy_alter_table=ON); scope foreign_key_check to the table, run it inside the transaction
+- [Shared env under heavy load](pitfall_shared_env_high_load.md) — many parallel agent worktrees cause load 150+, slow test runs aren't deadlocks
+- [Xcode project format](xcode_project_format.md) — pbxproj uses synchronized groups, no manual file entries needed for new Swift files
+- [Flaky-Test Datumsdrift](flaky_test_date_drift.md) — badgeHtml-Test in progress_web_helpers.test.js bricht kalenderzeitabhaengig (Tage/Wochen-Schwelle), unabhaengig von W1/contacts.js.
+- [Assignments-API-Mismatch (behoben 2026-09-05)](contacts_assignments_api_mismatch.md) — contacts.js jetzt an B3s {items/contacts,page/limit}-Format angepasst; Lehre: Voll-Ersetzen-PUT + stiller Prefill-Fehler = Datenverlust-Risiko.

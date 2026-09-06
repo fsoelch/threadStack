@@ -1053,9 +1053,15 @@ textarea.form-control { resize:vertical; min-height:80px; line-height:1.55; }
   color:#db2777; text-decoration:none;
 }
 .contact-card-email:hover { text-decoration:underline; }
-.contact-card-desc {
-  font-size:.875rem; color:var(--text); line-height:1.6;
-  padding:.875rem 1.25rem; white-space:pre-wrap;
+/* Rubrik-Badges + Klartextauszug (TSContacts.contactBadgesHtml, Arbeitspaket
+   W1/W2) — ersetzt das frühere reine description-Snippet. Das frühere
+   .contact-card-desc-Markup/CSS wurde entfernt, da die neue
+   TSContacts.mountContactDetail-Integration keinen Verwendungsort mehr dafür
+   hat (kein #contact-desc-Element, keine .contact-card-desc-Ausgabe mehr in
+   app.js/contacts.js). Innerer Abstand bewusst identisch zum früheren
+   .contact-card-desc, damit sich am Kartenlayout sonst nichts ändert. */
+.contact-card-badges {
+  padding:.875rem 1.25rem; font-size:.875rem; color:var(--text); line-height:1.6;
 }
 .contact-card-actions { display:flex; gap:.25rem; flex-shrink:0; }
 .contact-empty {
@@ -1806,6 +1812,8 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
 <script defer src="/assets/graph.js"></script>
 <link rel="stylesheet" href="/assets/progress.css">
 <script defer src="/assets/progress.js"></script>
+<link rel="stylesheet" href="/assets/contacts.css">
+<script defer src="/assets/contacts.js"></script>
 </head>
 <body>
 
@@ -2036,6 +2044,11 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
         </div>
       </details>
       <div id="topic-attach-slot"></div>
+      <div class="form-group" id="topic-contacts-section" style="display:none">
+        <label class="form-label">Ansprechpartner <span class="opt">(optional)</span></label>
+        <div id="topic-contacts-chips" style="display:flex;flex-wrap:wrap;gap:.375rem;margin-bottom:.5rem"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openContactAssignmentPickerForTopic()">👤 Ansprechpartner zuordnen</button>
+      </div>
       <div id="t-result-section" style="display:none">
         <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
         <div class="form-group">
@@ -2263,6 +2276,11 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
         </div>
       </details>
       <div id="todo-attach-slot"></div>
+      <div class="form-group" id="todo-contacts-section" style="display:none">
+        <label class="form-label">Ansprechpartner <span class="opt">(optional)</span></label>
+        <div id="todo-contacts-chips" style="display:flex;flex-wrap:wrap;gap:.375rem;margin-bottom:.5rem"></div>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="openContactAssignmentPickerForTodo()">👤 Ansprechpartner zuordnen</button>
+      </div>
       <div id="todo-done-row" style="display:none">
         <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
         <div class="toggle-row" style="margin-bottom:.75rem">
@@ -2591,15 +2609,17 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
         <input type="email" class="form-control" id="contact-email" maxlength="500"
                placeholder="anna@example.com" autocomplete="off">
       </div>
-      <div class="form-group">
-        <label class="form-label">Zuständigkeit &amp; Eigenschaften <span class="opt">(optional)</span></label>
-        <div class="rt-wrapper">
-          <div class="rt-toolbar" id="contact-desc-tb"></div>
-          <div class="rt-content" id="contact-desc" contenteditable="true"
-               data-placeholder="Welche Themen, Regionen, Besonderheiten gehören zu dieser Person?"></div>
-        </div>
-      </div>
       <div id="contact-error" class="form-error" style="display:none"></div>
+      <!-- Zusatzinformationen/Notizen/Zugeordnete Topics/Ist zuständig für
+           (Arbeitspaket W1, TSContacts.mountContactDetail) — ersetzt das
+           frühere einzelne "Zuständigkeit & Eigenschaften"-Freitextfeld.
+           Die alte `description` bleibt als Legacy-Shim serverseitig
+           erhalten (erscheint als normaler Infoblock unter "Zuständigkeit"),
+           wird aber nicht mehr separat im Stammdaten-Bereich bearbeitet, um
+           keine zwei Editoren für denselben Inhalt zu zeigen (siehe
+           Abschlussbericht W2). Nur verfügbar, sobald der Ansprechpartner
+           gespeichert wurde (analog zu Anhängen bei Todo/Thema). -->
+      <div id="contact-detail-host" style="margin-top:.25rem"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeContactModal()">Abbrechen</button>

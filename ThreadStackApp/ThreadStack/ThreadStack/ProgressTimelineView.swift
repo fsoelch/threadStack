@@ -147,6 +147,13 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     /// (Default) erhält das bisherige Verhalten für Aufrufer ohne
     /// Beschreibungs-Kontext.
     var descriptionHTML: String? = nil
+    /// Arbeitspaket A1 ("Erweiterung Ansprechpartner-Konzept"): Kontakte
+    /// unterstützen keinen "nächsten Schritt" — der Server liefert dafür
+    /// `400 unsupported_for_ref_type` (siehe Vertrag). `false` unterdrückt die
+    /// gesamte "Nächster Schritt"-Kopfzeile additiv, OHNE das Verhalten für
+    /// todo/topic zu verändern (Default bleibt `true`). Analog zur gleichen
+    /// Aufgabe im Web (W1, `public/progress.js`).
+    var showNextStep: Bool = true
     private let composerContent: () -> Composer
     private let reentryContent: () -> Reentry
 
@@ -157,12 +164,14 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     @State private var expandedEntryIds: Set<String> = []
 
     init(refType: String, refId: String, store: ProgressStore, descriptionHTML: String? = nil,
+         showNextStep: Bool = true,
          @ViewBuilder composer: @escaping () -> Composer,
          @ViewBuilder reentry: @escaping () -> Reentry) {
         self.refType = refType
         self.refId = refId
         self.store = store
         self.descriptionHTML = descriptionHTML
+        self.showNextStep = showNextStep
         self.composerContent = composer
         self.reentryContent = reentry
     }
@@ -238,7 +247,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        if let detail = store.detail(refType: refType, refId: refId) {
+        if showNextStep, let detail = store.detail(refType: refType, refId: refId) {
             VStack(alignment: .leading, spacing: 16) {
                 nextStepSection(detail: detail)
             }

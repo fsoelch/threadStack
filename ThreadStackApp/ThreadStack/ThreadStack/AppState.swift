@@ -37,6 +37,45 @@ struct ArchiveConflictError: LocalizedError {
     var errorDescription: String? { "Offenes Stack-Frame im Meeting" }
 }
 
+// MARK: - Contact-Infoblöcke/Rubriken: strukturierte Fehler (Arbeitspaket A1
+// "Erweiterung Ansprechpartner-Konzept")
+
+/// Geworfen von `updateContactInfoBlock`, wenn der Server einen
+/// `409 block_conflict` meldet (jemand anders hat den Infoblock zwischenzeitlich
+/// geändert). Trägt den aktuellen Serverstand (`{block: ...}` im Body laut
+/// Vertrag) mit, damit `ContactInfoBlockSheet` die drei geforderten Optionen
+/// ("Anderen Stand ansehen"/"Meine Version speichern"/"Verwerfen und neu
+/// laden") anbieten kann — ein generischer `APIError.server(String)` würde
+/// diesen strukturierten Konfliktstand verwerfen.
+struct ContactInfoBlockConflictError: Error, LocalizedError {
+    let currentBlock: ContactInfoBlock
+    var errorDescription: String? {
+        "Dieser Infoblock wurde zwischenzeitlich an anderer Stelle geändert."
+    }
+}
+
+/// Geworfen von `deleteContactCategory`, wenn der Server einen
+/// `409 category_in_use` meldet — trägt die Nutzungsanzahl mit, damit
+/// `ContactCategorySheet` einen konkreten Bestätigungstext zeigen kann
+/// (Vertrag: "Text abhängig von `usageCount` aus der `category_in_use`-Antwort").
+struct ContactCategoryInUseError: Error, LocalizedError {
+    let usageCount: Int
+    var errorDescription: String? {
+        usageCount == 1
+            ? "Diese Rubrik wird noch von einem Infoblock verwendet und kann nicht gelöscht werden."
+            : "Diese Rubrik wird noch von \(usageCount) Infoblöcken verwendet und kann nicht gelöscht werden."
+    }
+}
+
+/// Geworfen von den Zuständigkeits-Methoden (`setAssignments`), wenn der
+/// Server einen `409 assignment_limit_reached` meldet — trägt keine
+/// zusätzlichen Daten, das Limit (20) ist bereits clientseitig in
+/// `ContactAssignmentPickerSheet` durchgesetzt; dieser Fehler ist ein
+/// Fail-Safe für den Fall eines Wettlaufs mit einem anderen Gerät.
+struct ContactAssignmentLimitError: Error, LocalizedError {
+    var errorDescription: String? { "Maximal 20 Ansprechpartner pro Vorhaben." }
+}
+
 // MARK: - AppState
 
 @MainActor
@@ -48,6 +87,10 @@ final class AppState: ObservableObject {
     @Published var themes:      [Theme]    = []
     @Published var knowledgePages: [KnowledgePage] = []
     @Published var contacts:    [Contact]  = []
+    // Arbeitspaket A1 ("Erweiterung Ansprechpartner-Konzept"): frei
+    // erweiterbare Rubriken für Kontakt-Infoblöcke, global (nicht pro
+    // Kontakt) verwaltet — analog zu `contacts`/`themes` oben.
+    @Published var contactCategories: [ContactCategory] = []
     @Published var isLoading = false
 
     // v1.1 Phase 2: Stack
@@ -155,6 +198,14 @@ final class AppState: ObservableObject {
         return .server(msg)
     }
 
+    // Strukturierte Fehler-Bodies für die Contact-Endpunkte (Arbeitspaket A1
+    // "Erweiterung Ansprechpartner-Konzept") — alle Felder optional decodiert,
+    // damit ein unerwartet abweichender Body die Fehlerbehandlung selbst
+    // nicht zum Absturz bringt (fällt dann auf `mapGenericError` zurück).
+    private struct ContactCategoryInUseBody: Decodable { let error: String?; let code: String?; let usageCount: Int? }
+    private struct ContactInfoBlockConflictBody: Decodable { let error: String?; let code: String?; let block: ContactInfoBlock? }
+    private struct ContactAssignmentLimitBody: Decodable { let error: String?; let code: String? }
+
     func request<T: Decodable>(_ method: String, _ path: String,
                                body: [String: Any]? = nil) async throws -> T {
         let (data, http) = try await performRequest(method, path, body: body)
@@ -210,6 +261,7 @@ final class AppState: ObservableObject {
         // wirkt die App abgemeldet, während Vorgänger-Daten/-Notifications noch aktiv sind.
         _ = try? await requestOK("POST", "/logout")
         currentUser = nil; meetings = []; todos = []; themes = []; knowledgePages = []; contacts = []
+        contactCategories = []
         stackFrames = []; stackDepth = 0
         driftIds = []; cmiByMeeting = [:]
         archivedMeetings = []; archiveTotal = 0
@@ -271,9 +323,11 @@ final class AppState: ObservableObject {
         async let th: [Theme]    = request("GET", "/themes")
         async let co: [Contact]  = request("GET", "/contacts")
         async let kp: [KnowledgePage] = request("GET", "/knowledge")
+        async let cc: [ContactCategory] = request("GET", "/contact-categories")
         meetings = try await m; todos = try await t; themes = try await th
         contacts = (try? await co) ?? contacts   // contacts ist neu, alte Server tolerieren
         knowledgePages = (try? await kp) ?? knowledgePages // Wissen ist neu, alte Server tolerieren
+        contactCategories = (try? await cc) ?? contactCategories // Rubriken sind neu, alte Server tolerieren
     }
 
     // MARK: - Meetings
@@ -850,6 +904,19 @@ final class AppState: ObservableObject {
         contacts.removeAll { $0.id == id }
     }
 
+    /// Lädt einen einzelnen Kontakt neu und aktualisiert `contacts` in place —
+    /// analog zu `reloadKnowledgePage(id:)`. `ContactDetailView` ruft dies
+    /// nach Änderungen an Infoblöcken auf, da sich dadurch die serverseitig
+    /// berechneten `Contact.categories`/`infoBlockCount`/`snippet`-Metadaten
+    /// ändern können. `nil`, falls der Kontakt nicht mehr existiert (z.B.
+    /// anderswo gelöscht).
+    @discardableResult
+    func reloadContact(id: String) async -> Contact? {
+        guard let fresh: Contact = try? await request("GET", "/contacts/\(id)") else { return nil }
+        if let i = contacts.firstIndex(where: { $0.id == id }) { contacts[i] = fresh } else { contacts.append(fresh) }
+        return fresh
+    }
+
     func addThemeLink(themeId: String, refType: String, refId: String) async throws {
         let link: ThemeLink = try await request("POST", "/themes/\(themeId)/links",
                                                 body: ["refType": refType, "refId": refId])
@@ -884,6 +951,123 @@ final class AppState: ObservableObject {
             }
             return nil
         }
+    }
+
+    // MARK: - Contact-Rubriken (Arbeitspaket A1 "Erweiterung Ansprechpartner-Konzept")
+
+    func loadContactCategories() async {
+        do { contactCategories = try await request("GET", "/contact-categories") }
+        catch { /* still — alte Server liefern 404, ok */ }
+    }
+
+    @discardableResult
+    func createContactCategory(label: String) async throws -> ContactCategory {
+        let c: ContactCategory = try await request("POST", "/contact-categories", body: ["label": label])
+        contactCategories.append(c)
+        return c
+    }
+
+    @discardableResult
+    func updateContactCategory(id: String, label: String) async throws -> ContactCategory {
+        let c: ContactCategory = try await request("PUT", "/contact-categories/\(id)", body: ["label": label])
+        if let i = contactCategories.firstIndex(where: { $0.id == id }) { contactCategories[i] = c }
+        return c
+    }
+
+    /// Wirft `ContactCategoryInUseError`, wenn die Rubrik noch von
+    /// Infoblöcken verwendet wird (409 `category_in_use`) — Startrubriken
+    /// (`isDefault == true`) werden clientseitig in `ContactCategorySheet`
+    /// gar nicht erst zum Löschen angeboten, dieser Serverfehler bleibt aber
+    /// als Fail-Safe bestehen.
+    func deleteContactCategory(id: String) async throws {
+        let (data, http) = try await performRequest("DELETE", "/contact-categories/\(id)")
+        if http.statusCode >= 400 {
+            if http.statusCode == 409,
+               let body = try? decoder.decode(ContactCategoryInUseBody.self, from: data),
+               body.code == "category_in_use" {
+                throw ContactCategoryInUseError(usageCount: body.usageCount ?? 0)
+            }
+            throw mapGenericError(data: data, status: http.statusCode)
+        }
+        contactCategories.removeAll { $0.id == id }
+    }
+
+    // MARK: - Contact-Infoblöcke (Arbeitspaket A1)
+
+    func loadContactInfoBlocks(contactId: String) async throws -> [ContactInfoBlock] {
+        try await request("GET", "/contacts/\(contactId)/info-blocks")
+    }
+
+    func createContactInfoBlock(contactId: String, categoryId: String, categoryLabel: String, bodyHtml: String) async throws -> ContactInfoBlock {
+        try await request("POST", "/contacts/\(contactId)/info-blocks", body: [
+            "categoryId": categoryId, "categoryLabel": categoryLabel, "bodyHtml": bodyHtml
+        ])
+    }
+
+    /// Wirft `ContactInfoBlockConflictError`, wenn der Server einen
+    /// `409 block_conflict` meldet (siehe Vertrag: `expectedUpdatedAt` zur
+    /// Konflikterkennung) — der mitgelieferte aktuelle Serverstand steckt in
+    /// `ContactInfoBlockConflictError.currentBlock`.
+    func updateContactInfoBlock(contactId: String, blockId: String, categoryId: String, categoryLabel: String,
+                                 bodyHtml: String, expectedUpdatedAt: String) async throws -> ContactInfoBlock {
+        let (data, http) = try await performRequest("PUT", "/contacts/\(contactId)/info-blocks/\(blockId)", body: [
+            "categoryId": categoryId, "categoryLabel": categoryLabel,
+            "bodyHtml": bodyHtml, "expectedUpdatedAt": expectedUpdatedAt
+        ])
+        if http.statusCode == 409,
+           let body = try? decoder.decode(ContactInfoBlockConflictBody.self, from: data),
+           body.code == "block_conflict", let block = body.block {
+            throw ContactInfoBlockConflictError(currentBlock: block)
+        }
+        if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
+        return try decoder.decode(ContactInfoBlock.self, from: data)
+    }
+
+    func deleteContactInfoBlock(contactId: String, blockId: String) async throws {
+        try await requestOK("DELETE", "/contacts/\(contactId)/info-blocks/\(blockId)")
+    }
+
+    func reorderContactInfoBlocks(contactId: String, categoryId: String, orderedIds: [String]) async throws {
+        try await requestOK("PUT", "/contacts/\(contactId)/info-blocks/reorder", body: [
+            "categoryId": categoryId, "orderedIds": orderedIds
+        ])
+    }
+
+    // MARK: - Zuständigkeit (Kontakt <-> Todo/Topic, Arbeitspaket A1)
+
+    func loadAssignments(refType: String, refId: String) async throws -> [AssignedContact] {
+        try await request("GET", "/assignments/\(refType)/\(refId)")
+    }
+
+    /// Ersetzt die vollständige Zuständigkeits-Zuordnung eines Vorhabens
+    /// (analog zu `setTodoThemes` für Topic-Zuordnungen) — wird von
+    /// `TodoFormView`/`TopicFormView` EINMALIG nach dem eigentlichen
+    /// Speichern des Todos/Themas aufgerufen, mit der finalen Auswahl aus
+    /// `ContactAssignmentPickerSheet`. Wirft `ContactAssignmentLimitError`
+    /// bei `409 assignment_limit_reached` (Fail-Safe, siehe dortiger Kommentar).
+    @discardableResult
+    func setAssignments(refType: String, refId: String, contactIds: [String]) async throws -> [AssignedContact] {
+        let (data, http) = try await performRequest("PUT", "/assignments/\(refType)/\(refId)", body: ["contactIds": contactIds])
+        if http.statusCode == 409,
+           let body = try? decoder.decode(ContactAssignmentLimitBody.self, from: data),
+           body.code == "assignment_limit_reached" {
+            throw ContactAssignmentLimitError()
+        }
+        if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
+        return try decoder.decode([AssignedContact].self, from: data)
+    }
+
+    /// `status` ist optional (z.B. "open"/"done") — `nil` liefert laut
+    /// Vertrag alle Zuordnungen, offene vor erledigten (Server-Sortierung,
+    /// `ContactDetailView` sortiert nicht selbst nach).
+    func loadContactAssignments(contactId: String, limit: Int = 20, offset: Int = 0, status: String? = nil) async throws -> [AssignmentTarget] {
+        var path = "/contacts/\(contactId)/assignments?limit=\(limit)&offset=\(offset)"
+        if let status, !status.isEmpty { path += "&status=\(status)" }
+        return try await request("GET", path)
+    }
+
+    func removeContactAssignment(contactId: String, refType: String, refId: String) async throws {
+        try await requestOK("DELETE", "/contacts/\(contactId)/assignments/\(refType)/\(refId)")
     }
 
     // MARK: - Admin

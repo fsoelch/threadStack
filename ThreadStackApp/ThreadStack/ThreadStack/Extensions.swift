@@ -128,6 +128,44 @@ extension Color {
     }
 }
 
+// MARK: - Transportfehler-/Zuordnungsfehler-Erkennung (Contact-Arbeitspaket A1)
+//
+// Ursprünglich in `ContactsView.swift` definiert, aber von 6+ weiteren
+// Contact-Dateien genutzt (`ContactDetailView`, `ContactCategorySheet`,
+// `ContactInfoBlockSheet`, `TodoFormView`, `TopicFormView`, `ContactAPITests`)
+// — hierher (analog zu `stripHTML` als etabliertem Ort für gemeinsam
+// genutzte freie Helfer) verschoben, damit ein Feature-View-File nicht
+// eigentlich fachfremde, geteilte Utility-Funktionen besitzt.
+
+/// Erkennt sowohl `APIError.network`/`.invalidURL` als auch rohe
+/// `URLError`-Transportfehler (siehe `AppState.performRequest`: reine
+/// Verbindungsfehler werden dort NICHT in `APIError` verpackt, sondern
+/// unverändert durchgereicht) — wiederverwendet von allen neuen
+/// Contact-Sheets dieses Arbeitspakets für ein konsistentes Offline-Verhalten.
+func isTransportFailure(_ error: Error) -> Bool {
+    if let apiError = error as? APIError {
+        switch apiError {
+        case .network, .invalidURL: return true
+        default: return false
+        }
+    }
+    return error is URLError
+}
+
+/// Verständliche, deutsche Fehlermeldung ohne technische Details für einen
+/// fehlgeschlagenen `AppState.setAssignments`-Commit (siehe
+/// `TodoFormView.save()`/`TopicFormView.save()`) — unterscheidet nur
+/// Verbindungsfehler (Story 14: expliziter Offline-Hinweis mit Bitte um
+/// erneuten Versuch) von sonstigen Serverfehlern (bereits deutscher Text laut
+/// Fehler-Envelope-Vertrag). Gemeinsam genutzt von `TodoFormView` und
+/// `TopicFormView` (vormals byte-identisch dupliziert, CLAUDE.md
+/// "Wiederverwendung vor Neuentwicklung").
+func friendlyAssignmentErrorMessage(_ error: Error) -> String {
+    isTransportFailure(error)
+        ? "Keine Verbindung — deine Ansprechpartner-Auswahl bleibt erhalten. Bitte erneut versuchen, sobald du wieder online bist."
+        : error.localizedDescription
+}
+
 // MARK: - HTML strip (plain text, e.g. for search)
 
 func stripHTML(_ s: String) -> String {
