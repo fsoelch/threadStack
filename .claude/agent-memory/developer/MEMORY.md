@@ -5,4 +5,5 @@
 - [Shared env under heavy load](pitfall_shared_env_high_load.md) — many parallel agent worktrees cause load 150+, slow test runs aren't deadlocks
 - [Xcode project format](xcode_project_format.md) — pbxproj uses synchronized groups, no manual file entries needed for new Swift files
 - [Flaky-Test Datumsdrift](flaky_test_date_drift.md) — badgeHtml-Test in progress_web_helpers.test.js bricht kalenderzeitabhaengig (Tage/Wochen-Schwelle), unabhaengig von W1/contacts.js.
-- [Assignments-API-Mismatch (behoben 2026-09-05)](contacts_assignments_api_mismatch.md) — contacts.js jetzt an B3s {items/contacts,page/limit}-Format angepasst; Lehre: Voll-Ersetzen-PUT + stiller Prefill-Fehler = Datenverlust-Risiko.
+- [Assignments-API-Mismatch (behoben 2026-09-05/06)](contacts_assignments_api_mismatch.md) — contacts.js an echte Server-Envelopes (assignments UND info-blocks/categories) angepasst; bei Formatkonflikt IMMER Modul+Dev-Harness+Mocks+E2E-Test gegen echten Server in einem Zug fixen.
+- [Worktree-Sandbox vs. "arbeite auf main"](pitfall_worktree_sandbox_vs_main_instruction.md) — Task sagt main-Checkout, Sandbox isoliert trotzdem aufs eigene Worktree; git reset --hard auf main-Tip im eigenen Branch statt cd in shared checkout.

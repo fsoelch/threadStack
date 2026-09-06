@@ -309,6 +309,12 @@ function assignmentsResponse(items) {
   };
 }
 
+// Server-Envelopes (Quelle der Wahrheit: lib/contacts/routes.js) — NICHT die
+// flachen Formen, die contacts.js vor der Nachbesserung (Security-Review
+// HOCH 2) fälschlich erwartet hatte:
+//   GET /contacts/:id            -> {contact, infoBlocks, categories, themeLinks}
+//   GET /contact-categories      -> {categories:[...]}
+//   GET .../info-blocks          -> {blocks:[...], categories:[...]}
 function standardRouter({ contact, categories, blocks, themes, assignments } = {}) {
   contact = contact || baseContact();
   categories = categories || [];
@@ -316,9 +322,11 @@ function standardRouter({ contact, categories, blocks, themes, assignments } = {
   themes = themes || [];
   assignments = assignments || [];
   return (method, url) => {
-    if (method === 'GET' && /^\/api\/contacts\/[^/]+$/.test(url)) return { status: 200, body: contact };
-    if (method === 'GET' && url === '/api/contact-categories') return { status: 200, body: categories };
-    if (method === 'GET' && /\/info-blocks$/.test(url)) return { status: 200, body: blocks };
+    if (method === 'GET' && /^\/api\/contacts\/[^/]+$/.test(url)) {
+      return { status: 200, body: { contact, infoBlocks: blocks, categories, themeLinks: [] } };
+    }
+    if (method === 'GET' && url === '/api/contact-categories') return { status: 200, body: { categories } };
+    if (method === 'GET' && /\/info-blocks$/.test(url)) return { status: 200, body: { blocks, categories } };
     if (method === 'GET' && url === '/api/themes') return { status: 200, body: themes };
     if (method === 'GET' && /\/assignments/.test(url)) return { status: 200, body: assignmentsResponse(assignments) };
     return { status: 404, body: { error: 'Nicht gefunden', code: 'not_found' } };
@@ -492,6 +500,30 @@ test('Zusatzinformationen: Rubriken-Ladefehler zeigt Fehlerbox UND rendert "Priv
   handle.destroy();
 });
 
+test('Zusatzinformationen (Security-Review-Fund HOCH 2): ein unerwartetes Antwortformat (flaches Array statt {categories}) wird als Fehler behandelt, NICHT still als Leerzustand', async () => {
+  // Simuliert einen künftigen Format-Drift: der Server liefert (fälschlich)
+  // ein flaches Array statt des vertraglich vorgesehenen {categories}-
+  // Envelopes. Vor der Nachbesserung wäre das per `Array.isArray(x)?x:[]`
+  // still als "keine Rubriken" durchgerutscht.
+  const onErrorCalls = [];
+  const router = (method, url) => {
+    if (method === 'GET' && url === '/api/contact-categories') {
+      return { status: 200, body: [{ id: 'cat1', label: 'Vertrieb' }] };
+    }
+    return standardRouter()(method, url);
+  };
+  const { window, document } = makeDom(router);
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, {
+    contactId: 'c1', ...defaultAdapters(window, { onError: (e) => onErrorCalls.push(e) }),
+  });
+  await tick(50);
+  assert.match(root.textContent, /Das hat leider nicht geklappt/, 'Format-Drift muss als Fehler sichtbar sein, nicht als Leerzustand');
+  assert.ok(onErrorCalls.length > 0, 'onError muss bei einem unerwarteten Antwortformat aufgerufen werden');
+  handle.destroy();
+});
+
 test('mountContactDetail: "Privates"-Rubrik ist als <details> standardmäßig eingeklappt', async () => {
   const categories = [{ id: 'p1', label: 'Privates', isPrivate: true }];
   const blocks = [{ id: 'b1', categoryId: 'p1', bodyHtml: '<p>Geheim</p>', updatedAt: '2026-01-01T00:00:00.000Z' }];
@@ -561,6 +593,45 @@ test('Rubrik-Combobox: Duplikat case-/trim-insensitiv erkannt (keine "neu anlege
   handle.destroy();
 });
 
+test('Rubrik-Combobox: neue Rubrik anlegen entpackt Server-Envelope {category} (Security-Review-Fund HOCH 2) und speichert Block mit deren id', async () => {
+  const categories = [{ id: 'cat1', label: 'Vertrieb' }];
+  const router = (method, url, body) => {
+    if (method === 'POST' && url === '/api/contact-categories') {
+      // Server-Envelope ist {category:{...}}, KEIN flaches Kategorie-Objekt
+      // (lib/contacts/routes.js POST /contact-categories).
+      return { status: 201, body: { category: { id: 'cat-new', label: body.label, isDefault: false, sortOrder: 0, usageCount: 0 } } };
+    }
+    return standardRouter({ categories })(method, url);
+  };
+  const { window, document, calls } = makeDom(router);
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window) });
+  await tick(50);
+  root.querySelector('[data-action="add-block"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  const input = root.querySelector('.tsc-combobox-input');
+  input.value = 'Ganz Neue Rubrik';
+  input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  await tick(10);
+  const newOption = Array.from(root.querySelectorAll('.tsc-combobox-option')).filter((o) => /anlegen/.test(o.textContent))[0];
+  assert.ok(newOption, '"neu anlegen"-Option erwartet');
+  newOption.dispatchEvent(new window.Event('mousedown', { bubbles: true }));
+  await tick(10);
+  const editorId = root.querySelector('[data-role="tsc-block-editor"]').getAttribute('data-editor-id');
+  document.getElementById(editorId).innerHTML = '<p>Inhalt</p>';
+  root.querySelector('[data-action="tsc-save-block"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(50);
+  const postCategoryCalls = calls.filter((c) => c.method === 'POST' && c.url === '/api/contact-categories');
+  assert.equal(postCategoryCalls.length, 1);
+  assert.equal(postCategoryCalls[0].body.label, 'Ganz Neue Rubrik');
+  const postBlockCalls = calls.filter((c) => c.method === 'POST' && /\/info-blocks$/.test(c.url));
+  assert.equal(postBlockCalls.length, 1);
+  assert.equal(postBlockCalls[0].body.categoryId, 'cat-new', 'die vom Server per {category} zurückgegebene id muss verwendet werden');
+  assert.equal(postBlockCalls[0].body.body, '<p>Inhalt</p>', 'Server-Feldname ist `body`, nicht `bodyHtml`');
+  handle.destroy();
+});
+
 // ==========================================================================
 // Reorder (↑/↓) + aria-live-Ansage
 // ==========================================================================
@@ -588,7 +659,8 @@ test('Infoblock-Reorder: Klick auf "↑" verschiebt Block, sendet PUT reorder un
   assert.match(liveRegion.textContent, /An Position 1 von 2 verschoben\./);
   const reorderCalls = calls.filter((c) => c.method === 'PUT' && /reorder$/.test(c.url));
   assert.equal(reorderCalls.length, 1);
-  assert.deepEqual(reorderCalls[0].body.order, ['b2', 'b1']);
+  // Server-Feldname ist `orderedIds`, nicht `order` (lib/contacts/routes.js).
+  assert.deepEqual(reorderCalls[0].body.orderedIds, ['b2', 'b1']);
   handle.destroy();
 });
 
@@ -673,9 +745,9 @@ test('Infoblock-Konflikt (409 block_conflict): Banner mit drei Buttons, Editor b
       if (putAttempts === 1) {
         return { status: 409, body: { error: 'Konflikt', code: 'block_conflict', block: serverBlock } };
       }
-      return { status: 200, body: serverBlock };
+      return { status: 200, body: { block: serverBlock } };
     }
-    if (method === 'GET' && /\/info-blocks$/.test(url)) return { status: 200, body: [serverBlock] };
+    if (method === 'GET' && /\/info-blocks$/.test(url)) return { status: 200, body: { blocks: [serverBlock], categories } };
     return standardRouter({ categories, blocks })(method, url);
   };
   const { window, document, calls } = makeDom(router);
@@ -711,7 +783,9 @@ test('Infoblock-Konflikt (409 block_conflict): Banner mit drei Buttons, Editor b
   await tick(30);
   assert.equal(putAttempts, 2);
   const putBodies = calls.filter((c) => c.method === 'PUT' && /\/info-blocks\/b1$/.test(c.url)).map((c) => c.body);
-  assert.equal(putBodies[1].bodyHtml, '<p>Meine Änderung</p>');
+  // Server-Feldname ist `body`, nicht `bodyHtml` (lib/contacts/routes.js
+  // planBody(body.body)).
+  assert.equal(putBodies[1].body, '<p>Meine Änderung</p>');
   handle.destroy();
 });
 
@@ -725,7 +799,7 @@ test('Infoblock-Konflikt: "Verwerfen und neu laden" lädt Serverstand und schlie
       putAttempts++;
       return { status: 409, body: { error: 'Konflikt', code: 'block_conflict', block: serverBlock } };
     }
-    if (method === 'GET' && /\/info-blocks$/.test(url)) return { status: 200, body: [serverBlock] };
+    if (method === 'GET' && /\/info-blocks$/.test(url)) return { status: 200, body: { blocks: [serverBlock], categories } };
     return standardRouter({ categories, blocks })(method, url);
   };
   const { window, document } = makeDom(router);
@@ -965,6 +1039,48 @@ test('openAssignmentPicker: Eintreffen der Vorbelegung reißt NICHT die Sucheing
   assert.equal(preselected.checked, true);
 });
 
+test('openAssignmentPicker (Security-Review-Fund MITTEL 4): "Fertig" ist gesperrt, solange die Vorbelegung noch lädt, und ein Klick löst KEIN PUT aus', async () => {
+  const contacts = makeContacts(2);
+  let resolvePrefill;
+  const putCalls = [];
+  const router = (method, url, body) => {
+    if (method === 'GET') {
+      return new Promise((resolve) => {
+        resolvePrefill = () => resolve({
+          status: 200,
+          body: { contacts: [{ contactId: 'k0', name: 'Kontakt 0', role: 'Einkauf', email: '', assignedAt: '2026-01-01' }], limit: 20 },
+        });
+      });
+    }
+    if (method === 'PUT') putCalls.push(body);
+    return { status: 200, body: { ok: true } };
+  };
+  const { window, document } = makeDom(router);
+  window.TSContacts.openAssignmentPicker({ refType: 'todo', refId: 't1', title: 'Angebot', contacts });
+  await tick(10);
+  const dialog = document.querySelector('.modal');
+  const doneBtn = Array.from(dialog.querySelectorAll('button')).filter((b) => b.textContent === 'Fertig')[0];
+
+  // Vorbelegung (GET) hängt noch (resolvePrefill wurde absichtlich noch
+  // nicht aufgerufen) — "Fertig" MUSS bereits jetzt gesperrt sein, sonst
+  // würde ein Klick die noch unbekannte bestehende Zuordnung per
+  // Voll-Ersetzen-PUT {contactIds:[]} löschen.
+  assert.equal(doneBtn.disabled, true, '"Fertig" muss gesperrt sein, solange die Vorbelegung noch lädt');
+  doneBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  assert.equal(putCalls.length, 0, 'ein Klick auf "Fertig" vor Abschluss des Prefills darf KEINEN PUT auslösen');
+  assert.ok(document.querySelector('.modal-overlay'), 'Dialog muss offen bleiben');
+
+  // Vorbelegung trifft jetzt ein — "Fertig" wird freigegeben.
+  resolvePrefill();
+  await tick(20);
+  assert.equal(doneBtn.disabled, false);
+  doneBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  assert.equal(putCalls.length, 1);
+  assert.deepEqual(putCalls[0].contactIds, ['k0']);
+});
+
 test('openAssignmentPicker: Titel in der Kontextzeile ist gegen XSS escaped (Code-Review-Fund)', async () => {
   const contacts = makeContacts(1);
   const { window, document } = makeDom(() => ({ status: 200, body: { contacts: [] } }));
@@ -1068,6 +1184,29 @@ test('openAssignmentPicker: Prefill entpackt B3-Format {contacts:[{contactId,...
   assert.equal(preselected.checked, true);
 });
 
+test('openAssignmentPicker (Security-Review-Fund HOCH 2): unerwartetes Prefill-Format (flaches Array statt {contacts}) wird wie ein Ladefehler behandelt, NICHT als leere Vorbelegung', async () => {
+  const contacts = makeContacts(2);
+  const putCalls = [];
+  const { window, document } = makeDom((method, url, body) => {
+    if (method === 'GET') return { status: 200, body: [{ contactId: 'k0' }] };
+    if (method === 'PUT') putCalls.push(body);
+    return { status: 200, body: { ok: true } };
+  });
+  let reportedErr = null;
+  window.TSContacts.openAssignmentPicker({
+    refType: 'todo', refId: 't1', title: 'Angebot', contacts,
+    onError: (err) => { reportedErr = err; },
+  });
+  await tick(20);
+  const dialog = document.querySelector('.modal');
+  assert.ok(reportedErr, 'ein unerwartetes Format muss wie ein Ladefehler onError auslösen');
+  const doneBtn = Array.from(dialog.querySelectorAll('button')).filter((b) => b.textContent === 'Fertig')[0];
+  assert.equal(doneBtn.disabled, true, '"Fertig" darf bei unerwartetem Prefill-Format NICHT freigegeben werden');
+  doneBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  assert.equal(putCalls.length, 0, 'ein Klick darf in diesem Zustand keinen destruktiven PUT auslösen');
+});
+
 // ==========================================================================
 // Fund A (Review): stiller Prefill-Fehler trotz destruktivem Speichern
 // ==========================================================================
@@ -1161,7 +1300,11 @@ test('Rubriken verwalten: Liste anzeigen, Umbenennen inline, Löschen mit Bestä
   const calls = [];
   const router = (method, url, body) => {
     calls.push({ method, url, body });
-    if (method === 'PUT' && /contact-categories\/cat1$/.test(url)) return { status: 200, body: { id: 'cat1', label: body.label } };
+    if (method === 'PUT' && /contact-categories\/cat1$/.test(url)) {
+      // Server-Envelope ist {category:{...}}, kein flaches Kategorie-Objekt
+      // (lib/contacts/routes.js serializeCategoryWithUsage()).
+      return { status: 200, body: { category: { id: 'cat1', label: body.label, isDefault: false, sortOrder: 0, usageCount: 0 } } };
+    }
     return standardRouter({ categories })(method, url);
   };
   const { window, document } = makeDom(router);
@@ -1187,17 +1330,54 @@ test('Rubriken verwalten: Liste anzeigen, Umbenennen inline, Löschen mit Bestä
   handle.destroy();
 });
 
+test('Rubriken verwalten (Security-Review-Fund MITTEL 3): Umbenennen von "Privates" liefert 409 category_private_protected, Toast statt Änderung', async () => {
+  const categories = [{ id: 'p1', label: 'Privates' }];
+  const router = (method, url) => {
+    if (method === 'PUT' && /contact-categories\/p1$/.test(url)) {
+      return {
+        status: 409,
+        body: { error: 'Die Rubrik „Privates“ ist eine Systemrubrik (Datenschutz-Filter) und kann nicht umbenannt werden.', code: 'category_private_protected' },
+      };
+    }
+    return standardRouter({ categories })(method, url);
+  };
+  const { window, document } = makeDom(router);
+  stubProgressModule(window);
+  const root = document.getElementById('root');
+  let toastMsg = null;
+  const handle = window.TSContacts.mountContactDetail(root, { contactId: 'c1', ...defaultAdapters(window, { toast: (m) => { toastMsg = m; } }) });
+  await tick(50);
+  root.querySelector('[data-action="manage-categories"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  const dialog = document.querySelector('.modal');
+  const renameBtn = dialog.querySelector('.tsc-category-manage-row .tsc-icon-btn');
+  renameBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(10);
+  const input = dialog.querySelector('.tsc-category-rename-input');
+  input.value = 'Persönliches';
+  const saveBtn = Array.from(dialog.querySelectorAll('button')).filter((b) => b.textContent === 'Speichern')[0];
+  saveBtn.dispatchEvent(new window.Event('click', { bubbles: true }));
+  await tick(20);
+  assert.match(toastMsg || '', /Systemrubrik \(Datenschutz-Filter\)/);
+  handle.destroy();
+});
+
 test('Rubriken verwalten: Löschen bei category_in_use zeigt dynamischen Bestätigungstext mit usageCount/fallbackLabel', async () => {
   const categories = [{ id: 'cat1', label: 'Vertrieb' }];
   let firstAttempt = true;
   const confirmMessages = [];
+  const deleteCalls = [];
   const router = (method, url) => {
-    if (method === 'DELETE' && /contact-categories\/cat1$/.test(url)) {
+    // `$` allein würde den zweiten Versuch verfehlen: contacts.js hängt bei
+    // der Bestätigung `?confirm=true` als QUERY-PARAMETER an (lib/contacts/
+    // routes.js liest `req.query.confirm`, KEIN Body-Feld `force`).
+    if (method === 'DELETE' && /contact-categories\/cat1(\?.*)?$/.test(url)) {
+      deleteCalls.push(url);
       if (firstAttempt) {
         firstAttempt = false;
         return { status: 409, body: { error: 'in use', code: 'category_in_use', usageCount: 3, fallbackLabel: 'Sonstiges' } };
       }
-      return { status: 200, body: { ok: true } };
+      return { status: 200, body: { ok: true, reassignedCount: 3, fallbackCategoryId: 'cat-sonstiges' } };
     }
     return standardRouter({ categories })(method, url);
   };
@@ -1216,5 +1396,9 @@ test('Rubriken verwalten: Löschen bei category_in_use zeigt dynamischen Bestät
   assert.equal(confirmMessages.length, 2);
   assert.match(confirmMessages[1], /3 Infoblöcken/);
   assert.match(confirmMessages[1], /Sonstiges/);
+  // Der zweite (bestätigte) Löschversuch muss die Bestätigung als
+  // Query-Parameter senden, nicht als Body-Feld (Security-Review-Fund HOCH 2).
+  assert.equal(deleteCalls.length, 2);
+  assert.match(deleteCalls[1], /\?confirm=true$/);
   handle.destroy();
 });

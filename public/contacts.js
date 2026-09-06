@@ -538,18 +538,37 @@
     // abgefangen und als eigener Fehlerzustand (categoriesError/blocksError)
     // abgebildet; nur ein Fehler beim Kontakt selbst (contactUrl) lässt
     // load() insgesamt fehlschlagen (siehe äußerer catch).
-    var categoriesP = request('GET', categoriesUrl()).then(function (cats) {
-      return { ok: true, value: Array.isArray(cats) ? cats : [] };
+    // Server-Envelopes (GET /contact-categories -> {categories:[...]},
+    // GET .../info-blocks -> {blocks:[...],categories:[...]}) werden hier
+    // EXPLIZIT geprüft statt still auf ein leeres Array zu verfallen — ein
+    // unerwartetes Format wird als Fehler behandelt (bestehender
+    // Fehlerpfad: categoriesError/blocksError + reportError), damit ein
+    // künftiger Vertragsdrift nicht erneut unbemerkt bleibt.
+    var categoriesP = request('GET', categoriesUrl()).then(function (res) {
+      if (!res || !Array.isArray(res.categories)) {
+        throw new Error('Unerwartetes Antwortformat für Rubriken.');
+      }
+      return { ok: true, value: res.categories };
     }).catch(function (err) {
       return { ok: false, error: err };
     });
-    var blocksP = request('GET', infoBlocksUrl(this.contactId)).then(function (blocks) {
-      return { ok: true, value: Array.isArray(blocks) ? blocks : [] };
+    var blocksP = request('GET', infoBlocksUrl(this.contactId)).then(function (res) {
+      if (!res || !Array.isArray(res.blocks)) {
+        throw new Error('Unerwartetes Antwortformat für Infoblöcke.');
+      }
+      return { ok: true, value: res.blocks };
     }).catch(function (err) {
       return { ok: false, error: err };
     });
     Promise.all([
-      request('GET', contactUrl(this.contactId)),
+      // GET /contacts/:contactId liefert {contact, infoBlocks, categories,
+      // themeLinks} (Server-Envelope), KEIN flaches Kontaktobjekt.
+      request('GET', contactUrl(this.contactId)).then(function (res) {
+        if (!res || typeof res !== 'object' || !res.contact) {
+          throw new Error('Unerwartetes Antwortformat für Kontakt.');
+        }
+        return res.contact;
+      }),
       categoriesP,
       blocksP
     ]).then(function (results) {
@@ -602,9 +621,12 @@
     var self = this;
     this.state.blocksLoading = true;
     this.renderSection1();
-    return request('GET', infoBlocksUrl(this.contactId)).then(function (blocks) {
+    return request('GET', infoBlocksUrl(this.contactId)).then(function (res) {
       if (self.destroyed) return;
-      self.state.blocks = Array.isArray(blocks) ? blocks : [];
+      if (!res || !Array.isArray(res.blocks)) {
+        throw new Error('Unerwartetes Antwortformat für Infoblöcke.');
+      }
+      self.state.blocks = res.blocks;
       self.state.blocksLoading = false;
       self.state.blocksError = null;
       self.renderSection1();
@@ -626,8 +648,11 @@
     this.state.blocksLoading = true;
     this.renderSection1();
     var tasks = [
-      request('GET', infoBlocksUrl(this.contactId)).then(function (blocks) {
-        self.state.blocks = Array.isArray(blocks) ? blocks : [];
+      request('GET', infoBlocksUrl(this.contactId)).then(function (res) {
+        if (!res || !Array.isArray(res.blocks)) {
+          throw new Error('Unerwartetes Antwortformat für Infoblöcke.');
+        }
+        self.state.blocks = res.blocks;
         self.state.blocksError = null;
       }).catch(function (err) {
         self.state.blocksError = genericErrorMessage();
@@ -635,8 +660,11 @@
       })
     ];
     if (this.state.categoriesError) {
-      tasks.push(request('GET', categoriesUrl()).then(function (cats) {
-        self.state.categories = Array.isArray(cats) ? cats : [];
+      tasks.push(request('GET', categoriesUrl()).then(function (res) {
+        if (!res || !Array.isArray(res.categories)) {
+          throw new Error('Unerwartetes Antwortformat für Rubriken.');
+        }
+        self.state.categories = res.categories;
         self.state.categoriesLoaded = true;
         self.state.categoriesError = null;
       }).catch(function (err) {
@@ -727,9 +755,12 @@
     // category_exists), falls es zwischenzeitlich zu einem Konflikt kommt.
     var dup = this.state.categories.filter(function (c) { return normLabel(c.label) === normLabel(label); })[0];
     if (dup) return Promise.resolve(dup);
-    return request('POST', categoriesUrl(), { label: label }).then(function (cat) {
-      self.state.categories.push(cat);
-      return cat;
+    return request('POST', categoriesUrl(), { label: label }).then(function (res) {
+      if (!res || !res.category) {
+        throw new Error('Unerwartetes Antwortformat für Rubrik.');
+      }
+      self.state.categories.push(res.category);
+      return res.category;
     }).catch(function (err) {
       if (err && err.code === 'category_exists' && err.body && err.body.category) {
         var existing = err.body.category;
@@ -756,7 +787,9 @@
     if (saveBtn) saveBtn.disabled = true;
 
     this.ensureCategory(selection).then(function (cat) {
-      var payload = { categoryId: cat.id, bodyHtml: bodyHtml };
+      // Server erwartet das Feld `body` (POST/PUT .../info-blocks), NICHT
+      // `bodyHtml` — siehe lib/contacts/routes.js `planBody(body.body)`.
+      var payload = { categoryId: cat.id, body: bodyHtml };
       if (!isNew && expectedUpdatedAt !== undefined) payload.expectedUpdatedAt = expectedUpdatedAt;
       var method = isNew ? 'POST' : 'PUT';
       var url = isNew ? infoBlocksUrl(self.contactId) : infoBlockUrl(self.contactId, self.state.editingBlockId);
@@ -809,7 +842,7 @@
     if (action === 'save-mine') {
       var newExpected = conflict.serverBlock ? conflict.serverBlock.updatedAt : undefined;
       request('PUT', infoBlockUrl(this.contactId, conflict.blockId), {
-        categoryId: conflict.pendingCategoryId, bodyHtml: conflict.pendingBodyHtml, expectedUpdatedAt: newExpected
+        categoryId: conflict.pendingCategoryId, body: conflict.pendingBodyHtml, expectedUpdatedAt: newExpected
       }).then(function () {
         if (self.destroyed) return;
         self.state.editingBlockId = null;
@@ -835,11 +868,21 @@
   ContactDetailInstance.prototype.reloadBlocksAndContact = function () {
     var self = this;
     return Promise.all([
-      request('GET', infoBlocksUrl(this.contactId)),
-      request('GET', contactUrl(this.contactId))
+      request('GET', infoBlocksUrl(this.contactId)).then(function (res) {
+        if (!res || !Array.isArray(res.blocks)) {
+          throw new Error('Unerwartetes Antwortformat für Infoblöcke.');
+        }
+        return res.blocks;
+      }),
+      request('GET', contactUrl(this.contactId)).then(function (res) {
+        if (!res || typeof res !== 'object' || !res.contact) {
+          throw new Error('Unerwartetes Antwortformat für Kontakt.');
+        }
+        return res.contact;
+      })
     ]).then(function (results) {
       if (self.destroyed) return;
-      self.state.blocks = Array.isArray(results[0]) ? results[0] : [];
+      self.state.blocks = results[0];
       self.state.contact = results[1];
       self.renderSection1();
       self.onContactChanged(self.state.contact);
@@ -896,7 +939,8 @@
     this.renderSection1();
     this.announce('An Position ' + (newIdx + 1) + ' von ' + order.length + ' verschoben.');
 
-    request('PUT', infoBlocksReorderUrl(this.contactId), { categoryId: group.category.id, order: order }).catch(function (err) {
+    // Server erwartet `orderedIds` (PUT .../info-blocks/reorder), NICHT `order`.
+    request('PUT', infoBlocksReorderUrl(this.contactId), { categoryId: group.category.id, orderedIds: order }).catch(function (err) {
       if (self.destroyed) return;
       self.state.blocks = prevBlocks;
       self.reportError(err);
@@ -1188,7 +1232,10 @@
     // `res` erneut auslesen, ohne dass hier Vorratshaltung nötig ist.
     request('GET', contactAssignmentsUrl(this.contactId, { limit: 50, offset: 0 })).then(function (res) {
       if (self.destroyed) return;
-      self.state.assignments = (res && Array.isArray(res.items)) ? res.items : [];
+      if (!res || !Array.isArray(res.items)) {
+        throw new Error('Unerwartetes Antwortformat für Zuständigkeiten.');
+      }
+      self.state.assignments = res.items;
       self.state.assignmentsLoading = false;
       self.renderSection4();
     }).catch(function (err) {
@@ -1445,11 +1492,18 @@
         if (!newLabel) return;
         var dupLocal = categories.some(function (c, i2) { return i2 !== idx && normLabel(c.label) === normLabel(newLabel); });
         if (dupLocal) { toastFn('Diese Rubrik existiert bereits.'); return; }
-        request('PUT', categoryUrl(cat.id), { label: newLabel }).then(function (updated) {
-          categories[idx] = updated;
+        request('PUT', categoryUrl(cat.id), { label: newLabel }).then(function (res) {
+          if (!res || !res.category) {
+            throw new Error('Unerwartetes Antwortformat für Rubrik.');
+          }
+          categories[idx] = res.category;
           render();
         }).catch(function (err) {
           if (err && err.code === 'category_exists') { toastFn('Diese Rubrik existiert bereits.'); return; }
+          if (err && (err.code === 'category_fallback_protected' || err.code === 'category_private_protected')) {
+            toastFn(err.body && err.body.error ? err.body.error : genericErrorMessage());
+            return;
+          }
           toastFn(genericErrorMessage());
         });
       });
@@ -1473,7 +1527,9 @@
               message: 'Diese Rubrik wird bei ' + usageCount + ' Infoblöcken verwendet. Diese werden stattdessen der Rubrik „' + fallbackLabel + '" zugeordnet. Trotzdem löschen?'
             })).then(function (ok2) {
               if (!ok2) return;
-              request('DELETE', categoryUrl(cat.id), { force: true }).then(function () {
+              // Server erwartet den Bestätigungs-Query-Parameter `?confirm=true`
+              // (DELETE /contact-categories/:id), NICHT einen Body {force:true}.
+              request('DELETE', categoryUrl(cat.id) + '?confirm=true').then(function () {
                 categories.splice(idx, 1);
                 render();
               }).catch(function () { toastFn(genericErrorMessage()); });
@@ -1555,11 +1611,17 @@
       // solange die Vorbelegung nicht (erfolgreich) geladen wurde.
       if (warningEl) warningEl.hidden = !state.prefillError;
       if (doneBtnEl) {
-        doneBtnEl.disabled = !!state.prefillError;
-        doneBtnEl.setAttribute('aria-disabled', state.prefillError ? 'true' : 'false');
+        // Fund MITTEL 4 (Security-Review): "Fertig" darf NICHT nur bei einem
+        // Ladefehler gesperrt sein, sondern auch solange die Vorbelegung
+        // noch lädt (state.loaded === false) — sonst überschreibt ein Klick
+        // vor Eintreffen des GET-Prefills bestehende Zuordnungen mit der
+        // (noch leeren) Auswahl, da PUT /assignments/... voll ersetzt.
+        var blocked = !state.loaded || state.prefillError;
+        doneBtnEl.disabled = blocked;
+        doneBtnEl.setAttribute('aria-disabled', blocked ? 'true' : 'false');
         doneBtnEl.title = state.prefillError
           ? 'Speichern nicht möglich: aktuelle Zuordnung konnte nicht geladen werden.'
-          : '';
+          : (!state.loaded ? 'Aktuelle Zuordnung wird noch geladen …' : '');
       }
       listEl.innerHTML = '';
       var atMax = selectedCount() >= ASSIGNMENT_MAX;
@@ -1652,7 +1714,7 @@
       // verhindert — ein PUT {contactIds} in diesem Zustand würde bestehende
       // Zuordnungen unbemerkt löschen, da state.selected nicht die reale
       // Ausgangslage widerspiegelt.
-      if (state.saving || state.prefillError) return;
+      if (state.saving || state.prefillError || !state.loaded) return;
       state.saving = true;
       var ids = Object.keys(state.selected).filter(function (id) { return state.selected[id]; });
       request('PUT', assignmentsForRefUrl(refType, refId), { contactIds: ids }).then(function () {
@@ -1682,8 +1744,15 @@
     // zusätzlich einen kurzen Lade-Hinweis oberhalb der Liste.
     request('GET', assignmentsForRefUrl(refType, refId)).then(function (res) {
       // B3-Backend (lib/contacts/assignments/router.js) liefert
-      // { contacts:[{contactId,...}], limit } — KEIN flaches ID-Array.
-      var list = (res && Array.isArray(res.contacts)) ? res.contacts : [];
+      // { contacts:[{contactId,...}], limit } — KEIN flaches ID-Array. Ein
+      // unerwartetes Format wird NICHT still als "leere Vorbelegung"
+      // interpretiert (das würde "Fertig" fälschlich freigeben und
+      // bestehende Zuordnungen per Voll-Ersetzen-PUT löschen), sondern wie
+      // ein Ladefehler behandelt (siehe catch unten, state.prefillError).
+      if (!res || !Array.isArray(res.contacts)) {
+        throw new Error('Unerwartetes Antwortformat für Zuständigkeiten.');
+      }
+      var list = res.contacts;
       list.forEach(function (c) { if (c && c.contactId) state.selected[c.contactId] = true; });
       state.loaded = true;
       state.prefillError = false;
