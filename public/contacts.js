@@ -114,11 +114,14 @@
     }
 
     // Datenschutz (Vertrag): eine Rubrik "Privates" darf nie als Textauszug
-    // erscheinen. Der Server liefert nur EINEN aggregierten Klartextauszug
-    // (kein Pro-Rubrik-Text) — die Ausschlusspflicht dafür liegt beim
-    // Server. Defensiv wird hier zusätzlich unterdrückt, falls die EINZIGEN
-    // gemeldeten Rubriken ausschließlich "Privates" sind (dann kann der vom
-    // Server gelieferte Snippet nur aus dieser Rubrik stammen).
+    // erscheinen. Der Server schließt "Privates"-Infoblöcke bereits serverseitig
+    // aus der Snippet-Aggregation aus (siehe batchContactExtras() in
+    // lib/contacts/queries.js, PRIVATE_CATEGORY_LABEL_NORM) - dort liegt die
+    // primäre Absicherung, da nur der Server die Rubrik je Infoblock kennt.
+    // Diese Prüfung hier ist reine Defense-in-Depth (zweite Absicherungsebene,
+    // falls die Server-Filterung z.B. durch einen künftigen Regressions-Bug
+    // ausfällt): unterdrückt zusätzlich, falls die EINZIGEN gemeldeten
+    // Rubriken ausschließlich "Privates" sind.
     var onlyPrivate = categories.length > 0 && categories.every(isPrivateCategory);
     if (hasSnippet && !onlyPrivate) {
       html += '<span class="tsc-snippet">' + escHtml(contact.snippet) + '</span>';
