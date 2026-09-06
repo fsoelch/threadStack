@@ -462,8 +462,9 @@ app.delete(`${A}/meetings/:id`, requireAuth, (req, res) => {
   // SQLite kaskadiert topics.meeting_id (ON DELETE CASCADE) automatisch beim
   // Löschen des Meetings — die betroffenen Topic-IDs müssen daher VORHER
   // eingesammelt werden, damit der Fortschrittsverlauf (progress_entries/
-  // progress_meta) UND die KI-Zusammenfassungen (Paket S3) für diese Topics
-  // ebenfalls sofort aufgeräumt werden.
+  // progress_meta), die Kontakt-Zuständigkeiten (contact_assignments) UND
+  // die KI-Zusammenfassungen (Paket S3) für diese Topics ebenfalls sofort
+  // aufgeräumt werden.
   const topicIds = db.prepare('SELECT id FROM topics WHERE meeting_id=?').all(req.params.id).map(r => r.id);
   const r = db.prepare('DELETE FROM meetings WHERE id=? AND user_id=?').run(req.params.id, req.session.uid);
   if (!r.changes) return res.status(404).json({ error: 'Nicht gefunden' });
@@ -2334,26 +2335,19 @@ if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
 app.get(BASE || '/', (req, res) => {
   const fs = require('fs');
   let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-  // Graph-/Progress-/Contacts-/App-Assets sind im Quelltext auf "/assets/..."
-  // verlinkt (funktioniert direkt gegen den Node-Prozess). Hinter einem
-  // Reverse-Proxy, der nur BASE_PATH an die App weiterleitet (siehe
-  // deploy.sh-Beispielkonfiguration), muss der ausgelieferte Pfad das
-  // BASE-Präfix tragen, sonst laden /assets/graph.js/.css, progress.js/.css,
-  // contacts.js/.css und app.js nie.
-  // Hinweis (Arbeitspaket B4): public/contacts.js/contacts.css existieren im
-  // aktuellen Auslieferungsstand noch nicht (Frontend-Arbeitspaket der
-  // Ansprechpartner-Erweiterung läuft separat) - diese .replace()-Aufrufe
-  // sind bis dahin ein sicheres No-Op (kein Treffer im HTML) und stellen die
-  // BASE-Pfad-Behandlung identisch zu graph/progress bereit, sobald das
-  // Frontend die entsprechenden <link>/<script>-Tags ergänzt.
+  // Graph-/Progress-/App-Assets sind im Quelltext auf "/assets/..." verlinkt
+  // (funktioniert direkt gegen den Node-Prozess). Hinter einem Reverse-Proxy,
+  // der nur BASE_PATH an die App weiterleitet (siehe deploy.sh-
+  // Beispielkonfiguration), muss der ausgelieferte Pfad das BASE-Präfix
+  // tragen, sonst laden /assets/graph.js/.css, progress.js/.css und app.js
+  // nie. (Contacts-Assets kommen aus einem separaten Frontend-Arbeitspaket
+  // und ergänzen ihre eigenen <link>/<script>-Tags samt BASE-Handling dort.)
   if (BASE) {
     html = html
       .replace('href="/assets/graph.css"', `href="${BASE}/assets/graph.css"`)
       .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`)
       .replace('href="/assets/progress.css"', `href="${BASE}/assets/progress.css"`)
       .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`)
-      .replace('href="/assets/contacts.css"', `href="${BASE}/assets/contacts.css"`)
-      .replace('src="/assets/contacts.js"', `src="${BASE}/assets/contacts.js"`)
       .replace('src="/assets/app.js"', `src="${BASE}/assets/app.js"`);
   }
   html = html.replace('</head>',
@@ -2489,14 +2483,32 @@ app.use(A, contacts.createContactsRouter({
   db,
   requireAuth,
   now: () => new Date(),
-  onContactDeleted: (uid, contactId) => {
-    // Räumt Zwischenstände/Notizen (progress_entries, ref_type='contact')
-    // und Zuständigkeits-Zuordnungen (contact_assignments) auf, die sonst
-    // nach dem Löschen eines Kontakts verwaist zurückblieben (kein FK bzw.
-    // FK ON DELETE CASCADE deckt progress_entries nicht ab, da ref_id dort
-    // polymorph ist).
-    progress.deleteForRefs(db, [{ refType: 'contact', refId: contactId }]);
-    assignments.deleteForContact(db, contactId);
+  onContactDeleted: (_userId, contactId) => {
+    // Räumt Zwischenstände/Notizen (progress_entries, ref_type='contact') auf.
+    // Zwingend nötig: progress_entries hat KEINEN FK auf contacts, da ref_id
+    // dort polymorph ist (kein DB-seitiges Cascade möglich).
+    // Beide Aufräum-Schritte werden EINZELN abgesichert, damit ein Fehler im
+    // einen Schritt den anderen nicht verhindert (Aufrufer in
+    // lib/contacts/routes.js verschluckt Exceptions aus diesem Hook
+    // vollständig, ohne selbst zu loggen). Es werden nur Fehlermeldung und
+    // IDs geloggt, keine Kontaktinhalte.
+    try {
+      progress.deleteForRefs(db, [{ refType: 'contact', refId: contactId }]);
+    } catch (e) {
+      console.error('[contacts] progress cleanup failed:', e.message || e);
+    }
+    // Reine Zusatzabsicherung (Defense-in-Depth): contact_assignments hat
+    // bereits `contact_id ... ON DELETE CASCADE` (siehe
+    // lib/contacts/assignments/schema.js) und `foreign_keys = ON` ist gesetzt
+    // (siehe oben), d.h. ein DELETE FROM contacts räumt contact_assignments
+    // bereits über die Datenbank auf. Dieser Aufruf ist damit funktional
+    // redundant, aber idempotent und schützt zusätzlich für den Fall, dass
+    // das foreign_keys-Pragma einmal deaktiviert wäre.
+    try {
+      assignments.deleteForContact(db, contactId);
+    } catch (e) {
+      console.error('[contacts] assignment cleanup failed:', e.message || e);
+    }
   },
 }));
 
@@ -2506,17 +2518,10 @@ app.use(A, contacts.createContactsRouter({
 // `fail` wird injiziert, damit der Fehler-Envelope konsistent mit dem Rest
 // der App bleibt (statt des modul-eigenen Fallbacks).
 //
-// ACHTUNG (dokumentierte Abweichung vom sonst projektweiten `now`-Muster,
-// siehe Abschlussbericht B4): anders als progress/archive/summaries (dort
-// ruft das Modul selbst `now().toISOString()` auf, Injektion also als
-// `() => new Date()`), erwartet lib/contacts/assignments/queries.js
-// (setAssignments/addAssignment) den ROHEN Rückgabewert von `now()` direkt
-// als SQL-Bind-Parameter für `created_at` - der modul-eigene Fallback ist
-// `() => new Date().toISOString()`. Eine Injektion von `() => new Date()`
-// (wie bei den anderen Modulen) führt zu einem 500er auf JEDEM Schreibpfad
-// (PUT/POST /assignments/...), da better-sqlite3 keine Date-Objekte binden
-// kann ("SQLite3 can only bind numbers, strings, bigints, buffers, and
-// null"). Deshalb hier bewusst ein String-liefernder now-Callback.
+// ACHTUNG: `assignments` erwartet einen ISO-String statt eines Date -
+// abweichend vom übrigen `now`-Muster (progress/archive/summaries erhalten
+// `() => new Date()`). Sollte in lib/contacts/assignments/queries.js durch
+// Nutzung von toIso() (siehe lib/contacts/queries.js) harmonisiert werden.
 app.use(A, assignments.createAssignmentsRouter({
   db,
   requireAuth,

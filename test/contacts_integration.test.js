@@ -11,9 +11,25 @@ const { test }   = require('node:test');
 const assert     = require('node:assert/strict');
 const request    = require('supertest');
 const { setupEnv, loadServer, login, ensureTestAdmin, cleanup, REPO_ROOT } = require('./helpers');
+const progressLib    = require('../lib/progress');
+const archiveLib     = require('../lib/archive');
+const contactsLib    = require('../lib/contacts');
+const assignmentsLib = require('../lib/contacts/assignments');
 
-function tableInfo(db, name) {
-  return db.prepare(`PRAGMA table_info(${name})`).all().map(c => `${c.name}:${c.type}`).sort().join(',');
+// Vergleicht die tatsächliche CREATE-TABLE-Anweisung aus sqlite_master statt
+// nur Spaltennamen/-typen (PRAGMA table_info) - andernfalls sind CHECK-
+// Constraints (z.B. der ref_type-CHECK auf progress_entries) für den
+// Warmstart-Vergleich unsichtbar (Code-Review-Fund "Mittel #3").
+function schemaSql(db, name) {
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(name);
+  return row ? row.sql : null;
+}
+
+// Namensmenge aller Trigger - macht einen Verlust/eine Veränderung von
+// Triggern (z.B. trg_cnote_*, trg_cib_*) zwischen zwei Serverstarts sichtbar,
+// was ein reiner Spalten-Vergleich nicht könnte (Code-Review-Fund "Mittel #3").
+function triggerNames(db) {
+  return db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' ORDER BY name").all().map((r) => r.name);
 }
 
 test('Kaltstart: Migrationsreihenfolge greift - Kontakte, Rubriken, Kontakt-Notizen (progress ref_type=contact) und Zuständigkeiten sind ab dem ersten Start nutzbar', async (t) => {
@@ -62,7 +78,7 @@ test('Kaltstart: Migrationsreihenfolge greift - Kontakte, Rubriken, Kontakt-Noti
   assert.equal(todoInList.contacts[0].name, 'Anna Müller');
 });
 
-test('Kaltstart: GET /api/meetings reichert Topics ebenfalls mit zugewiesenen Kontakten an (contactsForRefs, kein N+1)', async (t) => {
+test('Kaltstart: GET /api/meetings reichert Topics ebenfalls mit zugewiesenen Kontakten an (contactsForRefs, gemessen: genau EIN contact_assignments-Statement für die gesamte Liste)', async (t) => {
   const dir = setupEnv();
   const { app, db } = loadServer(REPO_ROOT);
   const admin = ensureTestAdmin(db);
@@ -72,20 +88,54 @@ test('Kaltstart: GET /api/meetings reichert Topics ebenfalls mit zugewiesenen Ko
   const contactRes = await agent.post('/api/contacts').send({ name: 'Bert Schmidt' });
   const contactId = contactRes.body.id;
 
+  // Zwei Meetings mit je einem Topic - mehrere Refs, damit ein N+1-Zugriff
+  // (eine Query PRO Topic statt einer gebatchten Query) überhaupt sichtbar
+  // werden könnte.
   const meetingRes = await agent.post('/api/meetings').send({ title: 'Sync', color: '#4f46e5' });
   const meetingId = meetingRes.body.id;
   const topicRes = await agent.post(`/api/meetings/${meetingId}/topics`).send({ title: 'Budget' });
   const topicId = topicRes.body.id;
   assert.deepEqual(topicRes.body.contacts, [], 'Neuanlage: contacts-Feld muss leer, aber vorhanden sein');
+  await agent.put(`/api/assignments/topic/${topicId}`).send({ contactIds: [contactId] });
 
-  const assignRes = await agent.put(`/api/assignments/topic/${topicId}`).send({ contactIds: [contactId] });
-  assert.equal(assignRes.status, 200);
+  const meeting2Res = await agent.post('/api/meetings').send({ title: 'Sync 2', color: '#4f46e5' });
+  const meeting2Id = meeting2Res.body.id;
+  const topic2Res = await agent.post(`/api/meetings/${meeting2Id}/topics`).send({ title: 'Roadmap' });
+  const topic2Id = topic2Res.body.id;
+  await agent.put(`/api/assignments/topic/${topic2Id}`).send({ contactIds: [contactId] });
 
-  const meetingsList = await agent.get('/api/meetings');
+  // db.prepare() für die Dauer des GET-Requests umhüllen und die Anzahl der
+  // Statements zählen, deren SQL-Text `contact_assignments` referenziert
+  // (contactsForRefs() ist die einzige Stelle, die dort liest).
+  const originalPrepare = db.prepare.bind(db);
+  let contactAssignmentsStatementCount = 0;
+  db.prepare = (sql, ...rest) => {
+    if (typeof sql === 'string' && sql.includes('contact_assignments')) {
+      contactAssignmentsStatementCount += 1;
+    }
+    return originalPrepare(sql, ...rest);
+  };
+  let meetingsList;
+  try {
+    meetingsList = await agent.get('/api/meetings');
+  } finally {
+    db.prepare = originalPrepare;
+  }
+
+  assert.equal(
+    contactAssignmentsStatementCount, 1,
+    'GET /api/meetings darf für die Kontakt-Anreicherung nur EIN gebatchtes contact_assignments-Statement vorbereiten (kein N+1 pro Topic)'
+  );
+
   const meeting = meetingsList.body.find((m) => m.id === meetingId);
   const topic = meeting.topics.find((x) => x.id === topicId);
   assert.equal(topic.contacts.length, 1);
   assert.equal(topic.contacts[0].contactId, contactId);
+
+  const meeting2 = meetingsList.body.find((m) => m.id === meeting2Id);
+  const topic2 = meeting2.topics.find((x) => x.id === topic2Id);
+  assert.equal(topic2.contacts.length, 1);
+  assert.equal(topic2.contacts[0].contactId, contactId);
 });
 
 test('Topic->ToDo-Konvertierung nimmt Kontakt-Zuständigkeiten mit (moveAssignments-Wiring)', async (t) => {
@@ -181,12 +231,13 @@ test('Warmstart: zweiter Serverstart auf derselben DB ist idempotent (Schema unv
   const categoryCountBefore = categoriesBefore.body.categories.length;
 
   const snap1 = {
-    contacts: tableInfo(db, 'contacts'),
-    contact_categories: tableInfo(db, 'contact_categories'),
-    contact_info_blocks: tableInfo(db, 'contact_info_blocks'),
-    contact_assignments: tableInfo(db, 'contact_assignments'),
-    progress_entries: tableInfo(db, 'progress_entries'),
+    contacts: schemaSql(db, 'contacts'),
+    contact_categories: schemaSql(db, 'contact_categories'),
+    contact_info_blocks: schemaSql(db, 'contact_info_blocks'),
+    contact_assignments: schemaSql(db, 'contact_assignments'),
+    progress_entries: schemaSql(db, 'progress_entries'),
   };
+  const triggers1 = triggerNames(db);
 
   // Server "neu starten": Require-Cache leeren, DB schließen, erneut laden -
   // ABER denselben DATA_DIR behalten (siehe test/migrations.test.js-Muster).
@@ -200,13 +251,17 @@ test('Warmstart: zweiter Serverstart auf derselben DB ist idempotent (Schema unv
   agent = await login(request, app, admin.username, admin.password);
 
   const snap2 = {
-    contacts: tableInfo(db, 'contacts'),
-    contact_categories: tableInfo(db, 'contact_categories'),
-    contact_info_blocks: tableInfo(db, 'contact_info_blocks'),
-    contact_assignments: tableInfo(db, 'contact_assignments'),
-    progress_entries: tableInfo(db, 'progress_entries'),
+    contacts: schemaSql(db, 'contacts'),
+    contact_categories: schemaSql(db, 'contact_categories'),
+    contact_info_blocks: schemaSql(db, 'contact_info_blocks'),
+    contact_assignments: schemaSql(db, 'contact_assignments'),
+    progress_entries: schemaSql(db, 'progress_entries'),
   };
-  assert.deepEqual(snap2, snap1, 'Schema muss nach dem zweiten Start identisch sein (kein doppelter Rebuild)');
+  assert.deepEqual(snap2, snap1, 'Schema (inkl. CHECK-Constraints) muss nach dem zweiten Start identisch sein (kein doppelter Rebuild)');
+  assert.deepEqual(
+    triggerNames(db), triggers1,
+    'Trigger-Menge (inkl. trg_cnote_*/trg_cib_*) muss nach dem zweiten Start identisch sein'
+  );
 
   // Daten sind erhalten geblieben.
   const contactAfter = await agent.get(`/api/contacts/${contactId}`);
@@ -220,4 +275,123 @@ test('Warmstart: zweiter Serverstart auf derselben DB ist idempotent (Schema unv
   // Keine doppelten Default-Rubriken durch einen erneuten ensureDefaultCategories-Aufruf.
   const categoriesAfter = await agent.get('/api/contact-categories');
   assert.equal(categoriesAfter.body.categories.length, categoryCountBefore, 'ensureDefaultCategories darf beim zweiten Start keine Duplikate anlegen');
+});
+
+test('Bestandsupgrade: Alt-Installation (progress_entries ohne "contact" im CHECK, gefüllte contacts.description, fehlende trg_cnote_*-Trigger) wird durch die volle Migrationskette korrekt nachgezogen', async (t) => {
+  const dir = setupEnv();
+  const { app, db } = loadServer(REPO_ROOT);
+  const admin = ensureTestAdmin(db);
+  t.after(() => cleanup(dir));
+  const agent = await login(request, app, admin.username, admin.password);
+
+  // Kontakt über den regulären, bereits voll migrierten Endpunkt anlegen.
+  const contactRes = await agent.post('/api/contacts').send({ name: 'Gerda Holt' });
+  assert.equal(contactRes.status, 201);
+  const contactId = contactRes.body.id;
+
+  // ── Künstlich auf Alt-Schema zurückbauen ────────────────────────
+  // WICHTIG: legacy_alter_table=ON VOR dem Rebuild setzen - sonst scheitert
+  // das abschließende `ALTER TABLE ... RENAME`, weil trg_cib_ai (auf
+  // contact_info_blocks) in seinem SQL-Text bereits auf `progress_entries`
+  // verweist (die includeNotes-Formel) und SQLite mit legacy_alter_table=OFF
+  // versucht, Referenzen in ANDEREN Schema-Objekten beim Rename automatisch
+  // nachzuziehen - was in der kurzen Zwischenphase (Tabelle bereits
+  // gedroppt, neue noch nicht umbenannt) mit "no such table:
+  // main.progress_entries" fehlschlägt.
+  const priorForeignKeys = db.pragma('foreign_keys', { simple: true });
+  const priorLegacyAlterTable = db.pragma('legacy_alter_table', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  db.pragma('legacy_alter_table = ON');
+  try {
+    const downgrade = db.transaction(() => {
+      // trg_cnote_*-Trigger droppen (Alt-Installation kannte ref_type='contact'
+      // noch nicht, also auch keine Kontakt-Notiz-Trigger).
+      db.exec(`
+        DROP TRIGGER IF EXISTS trg_cnote_ai;
+        DROP TRIGGER IF EXISTS trg_cnote_au;
+        DROP TRIGGER IF EXISTS trg_cnote_ad;
+      `);
+      // progress_entries ohne 'contact' im ref_type-CHECK neu aufbauen
+      // (Umkehrung von migrateProgressRefTypeContact, siehe lib/progress/schema.js).
+      db.exec(`
+        CREATE TABLE progress_entries_old (
+          id            TEXT PRIMARY KEY,
+          user_id       TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          ref_type      TEXT NOT NULL CHECK (ref_type IN ('todo','topic')),
+          ref_id        TEXT NOT NULL,
+          kind          TEXT NOT NULL DEFAULT 'note' CHECK (kind IN ('note','result')),
+          source        TEXT NOT NULL DEFAULT 'manual',
+          body_html     TEXT NOT NULL DEFAULT '',
+          body_text     TEXT NOT NULL DEFAULT '',
+          link_frame_id TEXT,
+          client_token  TEXT,
+          created_at    TEXT NOT NULL,
+          edited_at     TEXT
+        );
+        INSERT INTO progress_entries_old
+          (id,user_id,ref_type,ref_id,kind,source,body_html,body_text,link_frame_id,client_token,created_at,edited_at)
+          SELECT id,user_id,ref_type,ref_id,kind,source,body_html,body_text,link_frame_id,client_token,created_at,edited_at
+          FROM progress_entries;
+        DROP TABLE progress_entries;
+        ALTER TABLE progress_entries_old RENAME TO progress_entries;
+        CREATE INDEX idx_progress_entries_ref  ON progress_entries(ref_type, ref_id, created_at DESC);
+        CREATE INDEX idx_progress_entries_user ON progress_entries(user_id, created_at DESC);
+        CREATE UNIQUE INDEX idx_progress_entries_token
+          ON progress_entries(user_id, client_token) WHERE client_token IS NOT NULL;
+        CREATE UNIQUE INDEX idx_progress_result_frame
+          ON progress_entries(link_frame_id) WHERE kind='result';
+      `);
+      // Gefüllte Alt-`description` (direkter SQL-Zugriff, bewusst AM
+      // Contact-CRUD-Endpunkt vorbei - der würde `description` sofort selbst
+      // in einen Infoblock konvertieren, siehe lib/contacts/routes.js. Genau
+      // dieser noch-nicht-migrierte Zustand soll hier simuliert werden).
+      db.prepare('UPDATE contacts SET description=? WHERE id=?').run('<p>Alte Zustaendigkeits-Notiz</p>', contactId);
+    });
+    downgrade();
+  } finally {
+    db.pragma(`foreign_keys = ${priorForeignKeys ? 'ON' : 'OFF'}`);
+    db.pragma(`legacy_alter_table = ${priorLegacyAlterTable ? 'ON' : 'OFF'}`);
+  }
+
+  // Alt-Zustand verifizieren, bevor die Migrationskette erneut läuft.
+  assert.ok(!schemaSql(db, 'progress_entries').includes("'contact'"), 'Testaufbau: CHECK darf vor dem Upgrade kein "contact" enthalten');
+  assert.ok(!triggerNames(db).includes('trg_cnote_ai'), 'Testaufbau: trg_cnote_-Trigger dürfen vor dem Upgrade nicht existieren');
+
+  // ── Komplette Migrationskette erneut in der server.js-Reihenfolge aufrufen ──
+  progressLib.runProgressMigrations(db);
+  progressLib.migrateProgressRefTypeContact(db);
+  progressLib.purgeProgressOrphans(db);
+  progressLib.dropProgressGoal(db);
+  archiveLib.runArchiveMigrations(db);
+  archiveLib.purgeArchiveOrphans(db);
+  contactsLib.runContactMigrations(db);
+  assignmentsLib.runAssignmentMigrations(db);
+  contactsLib.migrateContactDescriptions(db, { now: () => new Date() });
+  contactsLib.ensureContactNoteTriggers(db);
+  contactsLib.purgeContactOrphans(db);
+  assignmentsLib.purgeAssignmentOrphans(db);
+
+  // 1) CHECK enthält wieder 'contact'.
+  assert.ok(schemaSql(db, 'progress_entries').includes("'contact'"), 'ref_type-CHECK muss nach dem Upgrade wieder "contact" enthalten');
+
+  // 2) Alle drei trg_cnote_*-Trigger existieren wieder.
+  const triggersAfter = triggerNames(db);
+  for (const name of ['trg_cnote_ai', 'trg_cnote_au', 'trg_cnote_ad']) {
+    assert.ok(triggersAfter.includes(name), `${name} muss nach dem Upgrade existieren`);
+  }
+
+  // 3) Der Legacy-Infoblock wurde aus der alten description angelegt.
+  const legacyBlock = db.prepare(
+    'SELECT body_text, is_legacy_description FROM contact_info_blocks WHERE contact_id=? AND is_legacy_description=1'
+  ).get(contactId);
+  assert.ok(legacyBlock, 'Legacy-Infoblock muss aus contacts.description angelegt worden sein');
+  assert.match(legacyBlock.body_text, /Alte Zustaendigkeits-Notiz/);
+  const contactRow = db.prepare('SELECT description FROM contacts WHERE id=?').get(contactId);
+  assert.equal(contactRow.description, '', 'contacts.description muss nach der Migration geleert sein');
+
+  // 4) Eine neue Kontakt-Notiz landet korrekt in search_text.
+  const noteRes = await agent.post(`/api/progress/contact/${contactId}/entries`).send({ body: '<p>Frisch nach dem Upgrade</p>' });
+  assert.equal(noteRes.status, 201, `Kontakt-Notiz muss nach dem Upgrade anlegbar sein: ${JSON.stringify(noteRes.body)}`);
+  const contactSearchRow = db.prepare('SELECT search_text FROM contacts WHERE id=?').get(contactId);
+  assert.match(contactSearchRow.search_text, /Frisch nach dem Upgrade/);
 });
