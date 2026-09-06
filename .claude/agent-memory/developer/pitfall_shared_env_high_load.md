@@ -24,3 +24,13 @@ in isolation (fewer files) first to sanity-check it's not a real hang; if
 the isolated run passes quickly, the full-glob slowness is very likely just
 shared-machine contention — keep waiting via a background `until ! ps -p
 <pid>` loop rather than killing/rewriting code to "fix" a phantom bug.
+
+**Additional note (2026-09-06):** `server.js` has a top-level (module-scope)
+`setInterval(...)` for login-attempt cleanup with no `.unref()`. Any test
+file that calls `loadServer()`/requires `server.js` fresh multiple times
+(via the require-cache-clearing pattern in `test/helpers.js`) accumulates one
+such interval per call — this can make the `node --test` process for that
+file appear to sit idle for a while AFTER printing all `ok` results before
+actually exiting. Observed: exits with code 0 eventually (not a real hang),
+just confusingly slow. Not something to "fix" as part of an unrelated
+work package — pre-existing, orthogonal to contacts/assignments work.

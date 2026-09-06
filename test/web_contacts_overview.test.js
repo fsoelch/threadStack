@@ -78,11 +78,17 @@ function makeApiMock(routes, calls) {
   };
 }
 
+// Server-Envelopes (Quelle der Wahrheit: lib/contacts/routes.js) — NICHT die
+// flachen Formen, die contacts.js vor der Nachbesserung (Security-Review
+// HOCH 2) fälschlich erwartet hatte:
+//   GET /contacts/:id            -> {contact, infoBlocks, categories, themeLinks}
+//   GET /contact-categories      -> {categories:[...]}
+//   GET .../info-blocks          -> {blocks:[...], categories:[...]}
 function baseContactApiRoutes(contact, { categories = [], blocks = [], themes = [], assignments = [] } = {}) {
   return [
-    { method: 'GET', test: (p) => p === `/contacts/${contact.id}`, handler: () => contact },
-    { method: 'GET', test: (p) => p === '/contact-categories', handler: () => categories },
-    { method: 'GET', test: (p) => p === `/contacts/${contact.id}/info-blocks`, handler: () => blocks },
+    { method: 'GET', test: (p) => p === `/contacts/${contact.id}`, handler: () => ({ contact, infoBlocks: blocks, categories, themeLinks: [] }) },
+    { method: 'GET', test: (p) => p === '/contact-categories', handler: () => ({ categories }) },
+    { method: 'GET', test: (p) => p === `/contacts/${contact.id}/info-blocks`, handler: () => ({ blocks, categories }) },
     { method: 'GET', test: (p) => p === '/themes', handler: () => themes },
     {
       method: 'GET', test: (p) => p.startsWith(`/contacts/${contact.id}/assignments`),

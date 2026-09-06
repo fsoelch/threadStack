@@ -96,9 +96,12 @@ struct ContactModelDecodingTests {
 struct ContactCategoryAPITests {
 
     @Test func loadContactCategoriesPopulatesPublishedState() async {
+        // Server-Vertrag (verifiziert per Lesen von `lib/contacts/routes.js`,
+        // `GET /contact-categories`): Envelope `{categories:[...]}`, kein
+        // flaches Array.
         let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/contact-categories")
-            return (200, mockJSONData([["id": "cat1", "label": "Allgemein"]]))
+            return (200, mockJSONData(["categories": [["id": "cat1", "label": "Allgemein"]]]))
         }
         await state.loadContactCategories()
         #expect(state.contactCategories.count == 1)
@@ -110,10 +113,36 @@ struct ContactCategoryAPITests {
         #expect(state.contactCategories.isEmpty)
     }
 
+    @Test func loadAllDecodesContactCategoriesEnvelope() async throws {
+        // Security-Review-Nachbesserung (MITTEL 2): `loadAll()` fragte
+        // `/contact-categories` bislang als FLACHES Array ab, obwohl der
+        // Server (siehe `lib/contacts/routes.js`, `GET /contact-categories`)
+        // immer `{categories:[...]}` liefert — der Decode-Fehler wurde durch
+        // `try?` verschluckt und `contactCategories` blieb dauerhaft leer/
+        // veraltet. Dieser Test belegt, dass `loadAll()` (nicht nur die
+        // bereits separat getestete `loadContactCategories()`) das echte
+        // Envelope-Format korrekt dekodiert.
+        let state = makeMockAppState { req in
+            switch req.url?.path {
+            case "/api/contact-categories":
+                return (200, mockJSONData(["categories": [["id": "cat1", "label": "Allgemein"]]]))
+            case "/api/meetings", "/api/todos", "/api/themes", "/api/contacts", "/api/knowledge":
+                return (200, mockJSONData([]))
+            default:
+                return (404, Data())
+            }
+        }
+        try await state.loadAll()
+        #expect(state.contactCategories.count == 1)
+        #expect(state.contactCategories.first?.id == "cat1")
+    }
+
     @Test func createContactCategoryAppendsToPublishedState() async throws {
+        // Server-Vertrag (`POST /contact-categories`, `routes.js`): Erfolgsfall
+        // antwortet mit `{category:{...}}`, kein flaches Objekt.
         let state = makeMockAppState { req in
             #expect(req.httpMethod == "POST")
-            return (200, mockJSONData(["id": "cat2", "label": "Interessen"]))
+            return (200, mockJSONData(["category": ["id": "cat2", "label": "Interessen"]]))
         }
         let created = try await state.createContactCategory(label: "Interessen")
         #expect(created.label == "Interessen")
@@ -153,15 +182,69 @@ struct ContactCategoryAPITests {
     }
 }
 
+// MARK: - Kontakt-Detail (Envelope): reloadContact(id:)
+
+@MainActor
+struct ContactDetailReloadAPITests {
+
+    /// Server-Vertrag (`GET /contacts/:contactId`, `routes.js`): Envelope
+    /// `{contact, infoBlocks, categories, themeLinks}`, kein flacher `Contact`.
+    /// Regressionstest für den Security-Review-Fund "iOS-Client spricht ein
+    /// anderes API-Format" (2026-09-06) — vorher dekodierte `reloadContact`
+    /// die Antwort direkt als `Contact` und scheiterte an jedem echten Server.
+    @Test func reloadContactUnwrapsEnvelopeAndUpdatesPublishedState() async throws {
+        let state = makeMockAppState { req in
+            #expect(req.url?.path == "/api/contacts/c1")
+            return (200, mockJSONData([
+                "contact": [
+                    "id": "c1", "name": "Anna Müller", "role": "PL", "email": "a@x.de",
+                    "description": "", "createdAt": "2026-01-01T00:00:00.000Z"
+                ],
+                "infoBlocks": [],
+                "categories": [],
+                "themeLinks": []
+            ]))
+        }
+        state.contacts = [
+            Contact(id: "c1", name: "Alt", role: "", email: "", description: "", sortOrder: nil,
+                    createdAt: "2026-01-01T00:00:00.000Z", updatedAt: nil, categories: nil, infoBlockCount: nil, snippet: nil)
+        ]
+        let fresh = await state.reloadContact(id: "c1")
+        #expect(fresh?.name == "Anna Müller")
+        #expect(state.contacts.first(where: { $0.id == "c1" })?.name == "Anna Müller")
+    }
+
+    /// Ein unerwartet abweichender Body (z.B. ein flacher `Contact` ohne
+    /// Envelope, wie es der frühere — fehlerhafte — Vertrag lieferte) darf
+    /// nicht crashen, sondern `reloadContact` gibt `nil` zurück und
+    /// `contacts` bleibt unverändert (kein stiller Datenverlust).
+    @Test func reloadContactReturnsNilOnMalformedEnvelope() async throws {
+        let state = makeMockAppState { _ in
+            (200, mockJSONData([
+                "id": "c1", "name": "Anna Müller", "role": "PL", "email": "a@x.de",
+                "description": "", "createdAt": "2026-01-01T00:00:00.000Z"
+            ]))
+        }
+        let original = Contact(id: "c1", name: "Alt", role: "", email: "", description: "", sortOrder: nil,
+                                createdAt: "2026-01-01T00:00:00.000Z", updatedAt: nil, categories: nil, infoBlockCount: nil, snippet: nil)
+        state.contacts = [original]
+        let fresh = await state.reloadContact(id: "c1")
+        #expect(fresh == nil)
+        #expect(state.contacts == [original])
+    }
+}
+
 // MARK: - Contact-Infoblöcke: Erfolgs-/Konfliktpfade
 
 @MainActor
 struct ContactInfoBlockAPITests {
 
     @Test func loadContactInfoBlocksBuildsExpectedPath() async throws {
+        // Server-Vertrag (`GET .../info-blocks`, `routes.js`): Envelope
+        // `{blocks:[...], categories:[...]}`, kein flaches Array.
         let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/contacts/c1/info-blocks")
-            return (200, mockJSONData([]))
+            return (200, mockJSONData(["blocks": [], "categories": []]))
         }
         let blocks = try await state.loadContactInfoBlocks(contactId: "c1")
         #expect(blocks.isEmpty)
@@ -174,13 +257,19 @@ struct ContactInfoBlockAPITests {
             #expect(req.httpMethod == "POST")
             let body = requestBodyJSON(req)
             #expect(body["categoryId"] as? String == "cat1")
-            #expect(body["categoryLabel"] as? String == "Allgemein")
-            #expect(body["bodyHtml"] as? String == "<p>x</p>")
-            return (200, mockJSONData([
+            // Server-Vertrag (`planBody()` in `routes.js`): das Feld heißt
+            // `body`, NICHT `bodyHtml` — und der Server liest kein
+            // `categoryLabel` aus dem Request (wird aus `categoryId`
+            // serverseitig aufgelöst).
+            #expect(body["body"] as? String == "<p>x</p>")
+            #expect(body["categoryLabel"] == nil)
+            #expect(body["bodyHtml"] == nil)
+            // Erfolgsfall antwortet mit `{block:{...}}`, kein flaches Objekt.
+            return (200, mockJSONData(["block": [
                 "id": "b1", "contactId": "c1", "categoryId": "cat1", "categoryLabel": "Allgemein",
                 "bodyHtml": "<p>x</p>", "excerpt": "x", "sortOrder": 0,
                 "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-01T00:00:00.000Z"
-            ]))
+            ]]))
         }
         let block = try await state.createContactInfoBlock(contactId: "c1", categoryId: "cat1", categoryLabel: "Allgemein", bodyHtml: "<p>x</p>")
         #expect(block.id == "b1")
@@ -221,12 +310,15 @@ struct ContactInfoBlockAPITests {
             let body = requestBodyJSON(req)
             #expect(body["expectedUpdatedAt"] as? String == "2026-01-01T00:00:00.000Z")
             #expect(body["categoryId"] as? String == "cat1")
-            #expect(body["bodyHtml"] as? String == "<p>neu</p>")
-            return (200, mockJSONData([
+            // Server-Vertrag: Feld heißt `body`, nicht `bodyHtml`.
+            #expect(body["body"] as? String == "<p>neu</p>")
+            #expect(body["bodyHtml"] == nil)
+            // Erfolgsfall antwortet mit `{block:{...}}`, kein flaches Objekt.
+            return (200, mockJSONData(["block": [
                 "id": "b1", "contactId": "c1", "categoryId": "cat1", "categoryLabel": "Allgemein",
                 "bodyHtml": "<p>neu</p>", "excerpt": "neu", "sortOrder": 0,
                 "createdAt": "2026-01-01T00:00:00.000Z", "updatedAt": "2026-01-03T00:00:00.000Z"
-            ]))
+            ]]))
         }
         let block = try await state.updateContactInfoBlock(
             contactId: "c1", blockId: "b1", categoryId: "cat1", categoryLabel: "Allgemein",
@@ -245,7 +337,11 @@ struct ContactInfoBlockAPITests {
             let body = requestBodyJSON(req)
             #expect(body["categoryId"] as? String == "cat1")
             #expect(body["orderedIds"] as? [String] == ["b2", "b1"])
-            return (200, mockJSONData(["ok": true]))
+            // Server-Vertrag (`PUT .../info-blocks/reorder`, `routes.js`):
+            // Antwort ist `{blocks:[...]}` — wird von
+            // `reorderContactInfoBlocks` aktuell nicht ausgewertet (nur der
+            // Statuscode zählt), der Mock bildet trotzdem das reale Format ab.
+            return (200, mockJSONData(["blocks": []]))
         }
         try await state.reorderContactInfoBlocks(contactId: "c1", categoryId: "cat1", orderedIds: ["b2", "b1"])
         #expect(box.wasCalled == true)
@@ -267,9 +363,12 @@ struct ContactInfoBlockAPITests {
 struct ContactAssignmentAPITests {
 
     @Test func loadAssignmentsBuildsExpectedPath() async throws {
+        // Server-Vertrag (`GET /assignments/:refType/:refId`,
+        // `assignments/router.js`): Envelope `{contacts:[...], limit}`, kein
+        // flaches Array.
         let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/assignments/todo/t1")
-            return (200, mockJSONData([]))
+            return (200, mockJSONData(["contacts": [], "limit": 20]))
         }
         let list = try await state.loadAssignments(refType: "todo", refId: "t1")
         #expect(list.isEmpty)
@@ -283,8 +382,10 @@ struct ContactAssignmentAPITests {
             #expect(req.url?.path == "/api/assignments/todo/t1")
             let body = requestBodyJSON(req)
             #expect(body["contactIds"] as? [String] == ["c1"])
+            // Server-Vertrag: `PUT` antwortet mit `{contacts:[...]}` (ohne
+            // `limit`), ebenfalls kein flaches Array.
             return (200, mockJSONData([
-                ["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]
+                "contacts": [["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]]
             ]))
         }
         let result = try await state.setAssignments(refType: "todo", refId: "t1", contactIds: ["c1"])
@@ -305,13 +406,21 @@ struct ContactAssignmentAPITests {
     }
 
     @Test func loadContactAssignmentsIncludesQueryParams() async throws {
+        // Server-Vertrag (`GET /contacts/:contactId/assignments`,
+        // `assignments/router.js`): Envelope `{items:[...], page:{...},
+        // counts:{...}}`, kein flaches Array.
         let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/contacts/c1/assignments")
             #expect(req.url?.query?.contains("limit=20") == true)
             #expect(req.url?.query?.contains("status=open") == true)
-            return (200, mockJSONData([]))
+            return (200, mockJSONData([
+                "items": [],
+                "page": ["limit": 20, "offset": 0, "total": 0, "hasMore": false],
+                "counts": ["open": 0, "done": 0]
+            ]))
         }
-        _ = try await state.loadContactAssignments(contactId: "c1", status: "open")
+        let list = try await state.loadContactAssignments(contactId: "c1", status: "open")
+        #expect(list.isEmpty)
     }
 
     @Test func removeContactAssignmentUsesExpectedPath() async throws {

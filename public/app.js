@@ -4535,7 +4535,7 @@ function renderContactsView(el) {
           </div>
           <div class="contact-card-actions">
             <button class="btn btn-secondary btn-sm btn-icon" onclick="openContactModal('${c.id}')" title="Bearbeiten">${SVG.pencil}</button>
-            <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteContact('${c.id}', '${escHtml(c.name).replace(/'/g, "\\'")}')" title="Löschen">🗑️</button>
+            <button class="btn btn-ghost btn-sm btn-icon" onclick="confirmDeleteContact('${c.id}', '${escJsAttr(c.name)}')" title="Löschen">🗑️</button>
           </div>
         </div>
         ${badgesHtml ? `<div class="contact-card-badges">${badgesHtml}</div>` : ''}

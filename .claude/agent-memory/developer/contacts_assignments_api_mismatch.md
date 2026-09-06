@@ -47,3 +47,35 @@ Stellen in einem Schritt pruefen/anpassen — Produktivmodul, Unit-Test-Mocks
 UND jede manuelle Dev-/Test-Harness-Seite (falls vorhanden) — sonst bleibt
 genau die Flaeche falsch, die eigentlich als Absicherung gegen diese
 Bugklasse dienen soll.
+
+**Nachtrag (2026-09-06, Security-Review HOCH 2):** Derselbe Bugtyp trat noch
+viel groesser bei Infoblöcken/Rubriken auf (`lib/contacts/routes.js`):
+- `POST/PUT .../info-blocks` erwartet Feld `body`, contacts.js sandte `bodyHtml`.
+- `PUT .../info-blocks/reorder` erwartet `orderedIds`, contacts.js sandte `order`.
+- `DELETE /contact-categories/:id` erwartet Bestaetigung als Query-Parameter
+  `?confirm=true`, contacts.js sandte Body `{force:true}`.
+- `GET /contact-categories` liefert `{categories:[...]}`, `GET .../info-blocks`
+  liefert `{blocks:[...],categories:[...]}`, `GET /contacts/:id` liefert
+  `{contact,infoBlocks,categories,themeLinks}`, `POST/PUT /contact-categories`
+  liefert `{category:{...}}` — contacts.js erwartete ueberall flache
+  Arrays/Objekte und tarnte den Fehler durch `Array.isArray(x)?x:[]`-Fallbacks
+  als harmlosen Leerzustand (Infoblöcke liessen sich in der Praxis gar nicht
+  anlegen, alle Tests waren trotzdem gruen, weil die Mocks denselben falschen
+  Vertrag abbildeten).
+  Fix: `public/contacts.js`, `public/contacts-dev.html`,
+  `test/contacts_web_module.test.js`, `test/web_contacts_overview.test.js`
+  gleichzeitig korrigiert; alle `Array.isArray(x)?x:[]`-Stellen durch eine
+  explizite Formatpruefung ersetzt, die bei Abweichung den bestehenden
+  Fehlerpfad (`reportError`/`prefillError`) ausloest statt still leer
+  weiterzumachen. Zusaetzlich neue Datei `test/contacts_web_e2e.test.js`
+  angelegt: `public/contacts.js` in jsdom, aber `window.TSHost.api` schickt
+  echte supertest-Requests gegen den per `loadServer()` geladenen ECHTEN
+  server.js (In-Process, kein echter Socket noetig — `agent[method](path)`
+  aus supertest reicht) — das ist der einzige verlaessliche Weg, um zu
+  pruefen, dass ein Formatkonflikt-Fix nicht nur gegen selbst erfundene
+  Mocks, sondern gegen die Realitaet funktioniert.
+  Verallgemeinerte Lehre: bei JEDEM Formatkonflikt-Fund reicht es NICHT, nur
+  den Server-Code zu lesen und contacts.js/Mocks zu "reparieren" — man MUSS
+  parallel mindestens einen End-zu-Ende-Test gegen den echten Server
+  schreiben, weil sonst dieselbe Bugklasse (Mock bestaetigt erfundenen
+  Vertrag) beim naechsten Review wieder auftritt.

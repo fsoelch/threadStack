@@ -323,11 +323,11 @@ final class AppState: ObservableObject {
         async let th: [Theme]    = request("GET", "/themes")
         async let co: [Contact]  = request("GET", "/contacts")
         async let kp: [KnowledgePage] = request("GET", "/knowledge")
-        async let cc: [ContactCategory] = request("GET", "/contact-categories")
+        async let cc: ContactCategoriesResponse = request("GET", "/contact-categories")
         meetings = try await m; todos = try await t; themes = try await th
         contacts = (try? await co) ?? contacts   // contacts ist neu, alte Server tolerieren
         knowledgePages = (try? await kp) ?? knowledgePages // Wissen ist neu, alte Server tolerieren
-        contactCategories = (try? await cc) ?? contactCategories // Rubriken sind neu, alte Server tolerieren
+        contactCategories = (try? await cc)?.categories ?? contactCategories // Rubriken sind neu, alte Server tolerieren
     }
 
     // MARK: - Meetings
@@ -910,9 +910,18 @@ final class AppState: ObservableObject {
     /// berechneten `Contact.categories`/`infoBlockCount`/`snippet`-Metadaten
     /// ändern können. `nil`, falls der Kontakt nicht mehr existiert (z.B.
     /// anderswo gelöscht).
+    ///
+    /// Nachbesserung Security-Review (2026-09-06): `GET /contacts/:contactId`
+    /// liefert laut Server (`lib/contacts/routes.js`) das Envelope
+    /// `{contact, infoBlocks, categories, themeLinks}`, keinen flachen
+    /// `Contact`. `infoBlocks`/`categories`/`themeLinks` werden hier bewusst
+    /// verworfen (kein aktueller Aufrufer benötigt sie über diesen Pfad —
+    /// `ContactDetailView` lädt Infoblöcke separat via
+    /// `loadContactInfoBlocks`), Rückgabetyp bleibt unverändert `Contact?`.
     @discardableResult
     func reloadContact(id: String) async -> Contact? {
-        guard let fresh: Contact = try? await request("GET", "/contacts/\(id)") else { return nil }
+        guard let resp: ContactDetailResponse = try? await request("GET", "/contacts/\(id)") else { return nil }
+        let fresh = resp.contact
         if let i = contacts.firstIndex(where: { $0.id == id }) { contacts[i] = fresh } else { contacts.append(fresh) }
         return fresh
     }
@@ -955,23 +964,30 @@ final class AppState: ObservableObject {
 
     // MARK: - Contact-Rubriken (Arbeitspaket A1 "Erweiterung Ansprechpartner-Konzept")
 
+    // Nachbesserung Security-Review (2026-09-06): der Server (`lib/contacts/routes.js`)
+    // liefert bei allen drei Rubrik-Endpunkten unten ein Envelope
+    // (`{categories:[...]}` bzw. `{category:{...}}`), keine flachen
+    // Objekte/Arrays — siehe `ContactCategoriesResponse`/`ContactCategoryResponse`
+    // in `Models.swift`.
     func loadContactCategories() async {
-        do { contactCategories = try await request("GET", "/contact-categories") }
-        catch { /* still — alte Server liefern 404, ok */ }
+        do {
+            let resp: ContactCategoriesResponse = try await request("GET", "/contact-categories")
+            contactCategories = resp.categories
+        } catch { /* still — alte Server liefern 404, ok */ }
     }
 
     @discardableResult
     func createContactCategory(label: String) async throws -> ContactCategory {
-        let c: ContactCategory = try await request("POST", "/contact-categories", body: ["label": label])
-        contactCategories.append(c)
-        return c
+        let resp: ContactCategoryResponse = try await request("POST", "/contact-categories", body: ["label": label])
+        contactCategories.append(resp.category)
+        return resp.category
     }
 
     @discardableResult
     func updateContactCategory(id: String, label: String) async throws -> ContactCategory {
-        let c: ContactCategory = try await request("PUT", "/contact-categories/\(id)", body: ["label": label])
-        if let i = contactCategories.firstIndex(where: { $0.id == id }) { contactCategories[i] = c }
-        return c
+        let resp: ContactCategoryResponse = try await request("PUT", "/contact-categories/\(id)", body: ["label": label])
+        if let i = contactCategories.firstIndex(where: { $0.id == id }) { contactCategories[i] = resp.category }
+        return resp.category
     }
 
     /// Wirft `ContactCategoryInUseError`, wenn die Rubrik noch von
@@ -994,14 +1010,27 @@ final class AppState: ObservableObject {
 
     // MARK: - Contact-Infoblöcke (Arbeitspaket A1)
 
+    // Nachbesserung Security-Review (2026-09-06): der Server
+    // (`lib/contacts/routes.js`, `planBody()`) erwartet als Request-Feld
+    // `body` (nicht `bodyHtml`) und liest kein `categoryLabel`-Feld — die
+    // Rubrik-Bezeichnung wird serverseitig ausschließlich über `categoryId`
+    // aus der Datenbank aufgelöst (siehe `serializeInfoBlockRow`). Das
+    // `categoryLabel`-Funktionsparameter bleibt aus Kompatibilitätsgründen
+    // zum bestehenden Aufrufer (`ContactInfoBlockSheet.swift`, außerhalb
+    // dieses Arbeitspakets) erhalten, wird aber nicht mehr mitgeschickt.
+    // GET/POST/PUT liefern zudem ein `{blocks:[...], categories:[...]}`
+    // bzw. `{block:{...}}`-Envelope, kein flaches Objekt/Array — siehe
+    // `ContactInfoBlocksResponse`/`ContactInfoBlockResponse` in `Models.swift`.
     func loadContactInfoBlocks(contactId: String) async throws -> [ContactInfoBlock] {
-        try await request("GET", "/contacts/\(contactId)/info-blocks")
+        let resp: ContactInfoBlocksResponse = try await request("GET", "/contacts/\(contactId)/info-blocks")
+        return resp.blocks
     }
 
     func createContactInfoBlock(contactId: String, categoryId: String, categoryLabel: String, bodyHtml: String) async throws -> ContactInfoBlock {
-        try await request("POST", "/contacts/\(contactId)/info-blocks", body: [
-            "categoryId": categoryId, "categoryLabel": categoryLabel, "bodyHtml": bodyHtml
+        let resp: ContactInfoBlockResponse = try await request("POST", "/contacts/\(contactId)/info-blocks", body: [
+            "categoryId": categoryId, "body": bodyHtml
         ])
+        return resp.block
     }
 
     /// Wirft `ContactInfoBlockConflictError`, wenn der Server einen
@@ -1011,8 +1040,7 @@ final class AppState: ObservableObject {
     func updateContactInfoBlock(contactId: String, blockId: String, categoryId: String, categoryLabel: String,
                                  bodyHtml: String, expectedUpdatedAt: String) async throws -> ContactInfoBlock {
         let (data, http) = try await performRequest("PUT", "/contacts/\(contactId)/info-blocks/\(blockId)", body: [
-            "categoryId": categoryId, "categoryLabel": categoryLabel,
-            "bodyHtml": bodyHtml, "expectedUpdatedAt": expectedUpdatedAt
+            "categoryId": categoryId, "body": bodyHtml, "expectedUpdatedAt": expectedUpdatedAt
         ])
         if http.statusCode == 409,
            let body = try? decoder.decode(ContactInfoBlockConflictBody.self, from: data),
@@ -1020,7 +1048,7 @@ final class AppState: ObservableObject {
             throw ContactInfoBlockConflictError(currentBlock: block)
         }
         if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
-        return try decoder.decode(ContactInfoBlock.self, from: data)
+        return try decoder.decode(ContactInfoBlockResponse.self, from: data).block
     }
 
     func deleteContactInfoBlock(contactId: String, blockId: String) async throws {
@@ -1035,8 +1063,13 @@ final class AppState: ObservableObject {
 
     // MARK: - Zuständigkeit (Kontakt <-> Todo/Topic, Arbeitspaket A1)
 
+    // Nachbesserung Security-Review (2026-09-06): der Server
+    // (`lib/contacts/assignments/router.js`) liefert bei GET/PUT
+    // `/assignments/:refType/:refId` ein `{contacts:[...], limit?}`-Envelope,
+    // kein flaches Array — siehe `AssignmentsResponse` in `Models.swift`.
     func loadAssignments(refType: String, refId: String) async throws -> [AssignedContact] {
-        try await request("GET", "/assignments/\(refType)/\(refId)")
+        let resp: AssignmentsResponse = try await request("GET", "/assignments/\(refType)/\(refId)")
+        return resp.contacts
     }
 
     /// Ersetzt die vollständige Zuständigkeits-Zuordnung eines Vorhabens
@@ -1054,16 +1087,24 @@ final class AppState: ObservableObject {
             throw ContactAssignmentLimitError()
         }
         if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
-        return try decoder.decode([AssignedContact].self, from: data)
+        return try decoder.decode(AssignmentsResponse.self, from: data).contacts
     }
 
     /// `status` ist optional (z.B. "open"/"done") — `nil` liefert laut
     /// Vertrag alle Zuordnungen, offene vor erledigten (Server-Sortierung,
     /// `ContactDetailView` sortiert nicht selbst nach).
+    ///
+    /// Nachbesserung Security-Review (2026-09-06): der Server
+    /// (`lib/contacts/assignments/router.js`) liefert
+    /// `{items:[...], page:{...}, counts:{...}}`, kein flaches Array — siehe
+    /// `ContactAssignmentsResponse` in `Models.swift`. `page`/`counts` werden
+    /// hier verworfen, da kein aktueller Aufrufer sie benötigt (Rückgabetyp
+    /// bleibt unverändert `[AssignmentTarget]`).
     func loadContactAssignments(contactId: String, limit: Int = 20, offset: Int = 0, status: String? = nil) async throws -> [AssignmentTarget] {
         var path = "/contacts/\(contactId)/assignments?limit=\(limit)&offset=\(offset)"
         if let status, !status.isEmpty { path += "&status=\(status)" }
-        return try await request("GET", path)
+        let resp: ContactAssignmentsResponse = try await request("GET", path)
+        return resp.items
     }
 
     func removeContactAssignment(contactId: String, refType: String, refId: String) async throws {

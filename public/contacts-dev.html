@@ -87,11 +87,22 @@
   // (Pakete B1/B2/B3, parallel entstehend).
   // =========================================================================
 
+  // Rubrik-Objekte spiegeln GENAU die Felder von serializeCategory() in
+  // lib/contacts/queries.js ({id,label,isDefault,sortOrder,usageCount}) —
+  // KEIN erfundenes `isPrivate`-Feld: der echte Server erkennt die
+  // "Privates"-Rubrik ausschließlich am (normalisierten) Label, siehe
+  // PRIVATE_CATEGORY_LABEL_NORM. "Sonstiges" ist immer vorhanden (der echte
+  // Server legt sie per ensureDefaultCategories() für jeden Nutzer an) —
+  // ohne sie würde eine Rubrik-Löschung mit Fallback-Umhängung hier nicht
+  // simulierbar sein.
   var categories = [
-    { id: 'cat-vertrieb', label: 'Vertrieb' },
-    { id: 'cat-technik', label: 'Technik' },
-    { id: 'cat-privates', label: 'Privates', isPrivate: true }
+    { id: 'cat-vertrieb', label: 'Vertrieb', isDefault: false, sortOrder: 0, usageCount: 0 },
+    { id: 'cat-technik', label: 'Technik', isDefault: false, sortOrder: 0, usageCount: 0 },
+    { id: 'cat-privates', label: 'Privates', isDefault: true, sortOrder: 1, usageCount: 0 },
+    { id: 'cat-sonstiges', label: 'Sonstiges', isDefault: true, sortOrder: 3, usageCount: 0 }
   ];
+  var FALLBACK_LABEL_NORM = 'sonstiges';
+  var PRIVATE_LABEL_NORM = 'privates';
   var contacts = {
     'anna': { id: 'anna', name: 'Anna Müller', role: 'Projektleitung', email: 'anna@example.com', categories: [categories[0], categories[2]], infoBlockCount: 2, snippet: 'Zuständig für die APAC-Region, bevorzugt Kommunikation per E-Mail.' },
     'neu': { id: 'neu', name: 'Neuer Kontakt', role: '', email: '', categories: [], infoBlockCount: 0, snippet: '' }
@@ -144,34 +155,133 @@
       return new Promise(function (resolve, reject) {
         setTimeout(function () {
           var m;
-          if ((m = url.match(/^\/api\/contacts\/([^/]+)$/)) && method === 'GET') { resolve(ok(contacts[m[1]])); return; }
-          if (url === '/api/contact-categories' && method === 'GET') { resolve(ok(categories)); return; }
-          if (url === '/api/contact-categories' && method === 'POST') {
-            var cat = { id: 'cat-' + Date.now(), label: body.label };
-            categories.push(cat);
-            resolve(ok(cat));
+          // GET /api/contacts/:id -> Server-Envelope {contact, infoBlocks,
+          // categories, themeLinks} (lib/contacts/routes.js).
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)$/)) && method === 'GET') {
+            var contactRow = contacts[m[1]];
+            if (!contactRow) { resolve(fail(404, { error: 'Ansprechpartner nicht gefunden.', code: 'contact_not_found' })); return; }
+            resolve(ok({
+              contact: contactRow,
+              infoBlocks: blocks[m[1]] || [],
+              categories: categories,
+              themeLinks: []
+            }));
             return;
           }
-          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'GET') { resolve(ok(blocks[m[1]] || [])); return; }
+          if (url === '/api/contact-categories' && method === 'GET') { resolve(ok({ categories: categories })); return; }
+          if (url === '/api/contact-categories' && method === 'POST') {
+            var label = (body && body.label || '').trim();
+            var dupCat = categories.filter(function (c) { return c.label.trim().toLowerCase() === label.toLowerCase(); })[0];
+            if (dupCat) { resolve(fail(409, { error: 'Diese Rubrik gibt es bereits.', code: 'category_exists', category: dupCat })); return; }
+            var cat = { id: 'cat-' + Date.now(), label: label, isDefault: false, sortOrder: 0, usageCount: 0 };
+            categories.push(cat);
+            resolve(ok({ category: cat }));
+            return;
+          }
+          // PUT /api/contact-categories/:id -> {category} (Umbenennen),
+          // schützt "Sonstiges" (Auffangrubrik) UND "Privates"
+          // (Datenschutz-Filter, Security-Review-Fund MITTEL 3) analog
+          // lib/contacts/routes.js.
+          if ((m = url.match(/^\/api\/contact-categories\/([^/]+)$/)) && method === 'PUT') {
+            var catToRename = categories.filter(function (c) { return c.id === m[1]; })[0];
+            if (!catToRename) { resolve(fail(404, { error: 'Rubrik nicht gefunden.', code: 'category_not_found' })); return; }
+            var normOld = catToRename.label.trim().toLowerCase();
+            if (normOld === FALLBACK_LABEL_NORM) {
+              resolve(fail(409, { error: 'Die Rubrik „Sonstiges“ ist eine Systemrubrik und kann nicht umbenannt werden.', code: 'category_fallback_protected' }));
+              return;
+            }
+            if (normOld === PRIVATE_LABEL_NORM) {
+              resolve(fail(409, { error: 'Die Rubrik „Privates“ ist eine Systemrubrik (Datenschutz-Filter) und kann nicht umbenannt werden.', code: 'category_private_protected' }));
+              return;
+            }
+            var newLabel = (body && body.label || '').trim();
+            var dupRename = categories.filter(function (c) { return c.id !== m[1] && c.label.trim().toLowerCase() === newLabel.toLowerCase(); })[0];
+            if (dupRename) { resolve(fail(409, { error: 'Diese Rubrik gibt es bereits.', code: 'category_exists', category: dupRename })); return; }
+            catToRename.label = newLabel;
+            resolve(ok({ category: catToRename }));
+            return;
+          }
+          // DELETE /api/contact-categories/:id?confirm=true -> {ok,
+          // reassignedCount, fallbackCategoryId}. Bestätigung ist ein
+          // QUERY-PARAMETER, KEIN Body-Feld (siehe lib/contacts/routes.js).
+          if ((m = url.match(/^\/api\/contact-categories\/([^/?]+)(?:\?(.*))?$/)) && method === 'DELETE') {
+            var catToDelete = categories.filter(function (c) { return c.id === m[1]; })[0];
+            if (!catToDelete) { resolve(fail(404, { error: 'Rubrik nicht gefunden.', code: 'category_not_found' })); return; }
+            if (catToDelete.label.trim().toLowerCase() === FALLBACK_LABEL_NORM) {
+              resolve(fail(409, { error: 'Die Rubrik „Sonstiges“ ist eine Systemrubrik (Auffangrubrik) und kann nicht gelöscht werden.', code: 'category_fallback_protected' }));
+              return;
+            }
+            var qs = m[2] || '';
+            var confirmed = /(^|&)confirm=true(&|$)/.test(qs);
+            var usage = 0;
+            Object.keys(blocks).forEach(function (cid) { usage += (blocks[cid] || []).filter(function (b) { return b.categoryId === m[1]; }).length; });
+            if (!confirmed && usage > 0) {
+              resolve(fail(409, { error: 'Diese Rubrik wird von ' + usage + ' Infoblöcken verwendet.', code: 'category_in_use', usageCount: usage, fallbackLabel: 'Sonstiges' }));
+              return;
+            }
+            var fallbackCat = categories.filter(function (c) { return c.label.trim().toLowerCase() === FALLBACK_LABEL_NORM; })[0];
+            var reassignedCount = 0;
+            if (usage > 0 && fallbackCat) {
+              Object.keys(blocks).forEach(function (cid) {
+                (blocks[cid] || []).forEach(function (b) {
+                  if (b.categoryId === m[1]) { b.categoryId = fallbackCat.id; reassignedCount++; }
+                });
+              });
+            }
+            categories = categories.filter(function (c) { return c.id !== m[1]; });
+            resolve(ok({ ok: true, reassignedCount: reassignedCount, fallbackCategoryId: fallbackCat ? fallbackCat.id : null }));
+            return;
+          }
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'GET') {
+            resolve(ok({ blocks: blocks[m[1]] || [], categories: categories }));
+            return;
+          }
           if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks$/)) && method === 'POST') {
-            var nb = { id: 'b' + Date.now(), categoryId: body.categoryId, bodyHtml: body.bodyHtml, updatedAt: new Date().toISOString() };
+            // Server-Feldname ist `body` (nicht `bodyHtml`) - siehe
+            // lib/contacts/routes.js planBody(body.body).
+            var nb = { id: 'b' + Date.now(), contactId: m[1], categoryId: body.categoryId, bodyHtml: body.body, sortOrder: (blocks[m[1]] || []).length, isLegacyDescription: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
             (blocks[m[1]] = blocks[m[1]] || []).push(nb);
-            resolve(ok(nb));
+            resolve(ok({ block: nb }));
+            return;
+          }
+          // Muss VOR der generischen PUT .../info-blocks/:blockId-Route
+          // geprüft werden, sonst matcht ".../info-blocks/reorder"
+          // fälschlich als :blockId="reorder" (identisches Registrierungs-
+          // Problem wie im echten Express-Router, siehe Kommentar dort).
+          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/reorder$/)) && method === 'PUT') {
+            // Server-Feldname ist `orderedIds` (nicht `order`) - siehe
+            // lib/contacts/routes.js.
+            var contactBlocks = blocks[m[1]] || [];
+            var catId = body.categoryId;
+            var orderedIds = Array.isArray(body.orderedIds) ? body.orderedIds : [];
+            var inCat = contactBlocks.filter(function (x) { return x.categoryId === catId; });
+            var others = contactBlocks.filter(function (x) { return x.categoryId !== catId; });
+            var byId = {};
+            inCat.forEach(function (x) { byId[x.id] = x; });
+            var wanted = orderedIds.filter(function (id) { return byId[id]; }).map(function (id) { return byId[id]; });
+            var remainder = inCat.filter(function (x) { return orderedIds.indexOf(x.id) === -1; });
+            var finalCat = wanted.concat(remainder);
+            finalCat.forEach(function (x, i) { x.sortOrder = i; });
+            blocks[m[1]] = others.concat(finalCat);
+            resolve(ok({ blocks: finalCat }));
             return;
           }
           if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'PUT') {
             var list = blocks[m[1]] || [];
             var b = list.filter(function (x) { return x.id === m[2]; })[0];
-            if (b) { b.categoryId = body.categoryId; b.bodyHtml = body.bodyHtml; b.updatedAt = new Date().toISOString(); }
-            resolve(ok(b));
+            if (!b) { resolve(fail(404, { error: 'Infoblock nicht gefunden.', code: 'block_not_found' })); return; }
+            if (b.categoryId !== body.categoryId || b.bodyHtml !== body.body) {
+              b.categoryId = body.categoryId; b.bodyHtml = body.body; b.updatedAt = new Date().toISOString();
+            }
+            resolve(ok({ block: b }));
             return;
           }
           if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/([^/]+)$/)) && method === 'DELETE') {
+            var before = (blocks[m[1]] || []).length;
             blocks[m[1]] = (blocks[m[1]] || []).filter(function (x) { return x.id !== m[2]; });
-            resolve(ok({ ok: true }));
+            resolve(ok({ ok: true, deleted: before !== (blocks[m[1]] || []).length }));
             return;
           }
-          if ((m = url.match(/^\/api\/contacts\/([^/]+)\/info-blocks\/reorder$/)) && method === 'PUT') { resolve(ok({ ok: true })); return; }
           if (url === '/api/themes' && method === 'GET') { resolve(ok(themes)); return; }
           if ((m = url.match(/^\/api\/contacts\/([^/]+)\/assignments/)) && method === 'GET') {
             // B3-Format (siehe contacts.js loadAssignments()): verschachteltes
