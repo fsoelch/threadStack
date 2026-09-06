@@ -4732,7 +4732,7 @@ function renderAssignedContactsChipsHtml(item) {
   const list = Array.isArray(item?.contacts) ? item.contacts : [];
   if (!list.length) return '';
   return TSContacts.assignedContactsHtml(list, {
-    onClickAttr: c => `onclick="event.stopPropagation(); openContactFromChip('${escHtml(String(c.contactId)).replace(/'/g, "\\'")}')"`
+    onClickAttr: c => `onclick="event.stopPropagation(); openContactFromChip('${escJsAttr(String(c.contactId))}')"`
   });
 }
 

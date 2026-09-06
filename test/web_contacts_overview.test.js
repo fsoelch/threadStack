@@ -159,7 +159,7 @@ test('Kontaktkarte: contactBadgesHtml ersetzt das reine description-Snippet (Rub
 // veraltetes/anderes Feld, das theoretisch privaten Klartext enthalten
 // könnte — die Karte darf NUR über das serverseitig bereits gefilterte
 // `snippet`-Feld rendern, niemals über einen Fallback auf `description`.
-test('Kontaktkarte: Text aus "Privates"-Rubrik erscheint nicht, auch bei gemischten Rubriken (Datenschutz-Regressionsschutz)', async () => {
+test('Kontaktkarte rendert ausschließlich das serverseitig bereinigte snippet, nie einen description-Fallback (auch bei gemischten Rubriken)', async () => {
   const { window, document } = loadApp();
   await tick();
   const PRIVATE_MARKER = '<privater Testtext>';
@@ -226,6 +226,41 @@ test('Chip-Anzeige: zugeordnete Ansprechpartner erscheinen als Chips auf Todo- u
   const topicHtml = window.renderTopicCard('m1', { id: 'top1', title: 'Y', done: false, contacts: assignedContacts }, {}, {}, false);
   assert.match(topicHtml, /tsc-assigned-chip/);
   assert.match(topicHtml, /Anna Müller/);
+});
+
+// Sicherheits-Regressionstest (Code-Review-Auflage "Hoch"): renderAssignedContactsChipsHtml()
+// muss escJsAttr() statt der wirkungslosen Kombination escHtml()+.replace(/'/g,"\\'")
+// verwenden, um das im onclick-Attribut eingebettete String-Literal abzusichern.
+// escHtml() alleine wandelt ' bereits in &#039; um, wodurch der nachgelagerte
+// .replace(/'/g,...) nichts mehr findet - der HTML-Parser dekodiert &#039; aber
+// wieder zu ' BEVOR der Attributinhalt als JavaScript geparst wird, sodass das
+// String-Literal trotzdem aufbricht (siehe Kommentar bei escJsAttr in app.js).
+test('Chip-onclick: bösartige contactId kann das String-Literal nicht aufbrechen (escJsAttr-Regressionstest)', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  const maliciousId = "x'); window.__pwned = 1; ('";
+  const assignedContacts = [{ contactId: maliciousId, name: 'Anna Müller', role: 'PM', email: '', assignedAt: '2026-01-01T00:00:00.000Z' }];
+  const todoHtml = window.renderPersonalTodoCard({ id: 't1', title: 'X', description: '', done: false, contacts: assignedContacts }, false, {});
+
+  // Die im Attribut eingebetteten Anführungszeichen müssen als \uXXXX-Escape
+  // vorliegen (escJsAttr), nicht als rohes ' oder als HTML-Entity &#039;, die
+  // beide vom HTML-Parser vor dem JS-Parsing wieder aufgelöst würden.
+  assert.match(todoHtml, /\\u0027/, 'contactId muss ueber escJsAttr (\\uXXXX-Escapes) eingebettet werden');
+  assert.doesNotMatch(todoHtml, /&#039;/, 'kein HTML-Entity-Escaping fuer das JS-String-Literal im onclick-Attribut');
+
+  let receivedId = null;
+  window.openContactFromChip = (id) => { receivedId = id; };
+
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  host.innerHTML = todoHtml;
+  const chip = host.querySelector('.tsc-assigned-chip');
+  assert.ok(chip, 'Chip muss gerendert werden');
+  chip.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+  assert.equal(window.__pwned, undefined, 'kein injizierter Code darf beim Klick ausgefuehrt worden sein');
+  assert.equal(receivedId, maliciousId, 'openContactFromChip muss die unveraenderte, unversehrte contactId erhalten');
+  host.remove();
 });
 
 test('renderTodoCardBody liefert contactsHtml (gemeinsame Basis fuer Todo- und Meeting-Topic-Todo-Karte)', async () => {
@@ -372,7 +407,10 @@ for (const [label, closeVia] of [
   ['ueber "Schließen" (.modal-footer .btn-secondary)', (window, document) => document.querySelector('#theme-link-modal .modal-footer .btn-secondary').click()],
   ['ueber Klick auf das Overlay-Element', (window, document) => {
     const overlay = document.getElementById('theme-link-modal');
-    overlay.dispatchEvent(new window.MouseEvent('click', { bubbles: true, target: overlay }));
+    // `target` ist keine gueltige MouseEventInit-Option und wird ignoriert;
+    // event.target === overlay ergibt sich bereits daraus, dass overlay
+    // selbst das Dispatch-Ziel ist.
+    overlay.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
   }],
   ['ueber die Escape-Taste', (window, document) => {
     document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
