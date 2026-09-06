@@ -67,6 +67,21 @@ struct ContactCategoryInUseError: Error, LocalizedError {
     }
 }
 
+/// Geworfen von `deleteContactCategory`, wenn der Server einen 409
+/// `category_fallback_protected` (Rubrik "Sonstiges", Auffangrubrik) oder
+/// `category_private_protected` (Rubrik "Privates", Datenschutz-Filter)
+/// meldet — siehe `lib/contacts/routes.js`. Anders als bei den Start-
+/// Rubriken "Zuständigkeit"/"Wichtiges" (die wie jede eigene Rubrik frei
+/// löschbar sind, inkl. Zwangslöschung mit Umhängen nach "Sonstiges" bei
+/// Nutzung) ist eine Löschung dieser beiden Rubriken serverseitig
+/// grundsätzlich verboten. Trägt die vom Server bereits gelieferte,
+/// nutzerverständliche deutsche Fehlermeldung mit, statt sie clientseitig
+/// erneut zu hardcoden (vermeidet Textdrift zwischen Server und Client).
+struct ContactCategoryProtectedError: Error, LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 /// Geworfen von den Zuständigkeits-Methoden (`setAssignments`), wenn der
 /// Server einen `409 assignment_limit_reached` meldet — trägt keine
 /// zusätzlichen Daten, das Limit (20) ist bereits clientseitig in
@@ -990,18 +1005,40 @@ final class AppState: ObservableObject {
         return resp.category
     }
 
-    /// Wirft `ContactCategoryInUseError`, wenn die Rubrik noch von
-    /// Infoblöcken verwendet wird (409 `category_in_use`) — Startrubriken
-    /// (`isDefault == true`) werden clientseitig in `ContactCategorySheet`
-    /// gar nicht erst zum Löschen angeboten, dieser Serverfehler bleibt aber
-    /// als Fail-Safe bestehen.
-    func deleteContactCategory(id: String) async throws {
-        let (data, http) = try await performRequest("DELETE", "/contact-categories/\(id)")
+    /// Löscht eine Rubrik. Feature-Parität mit dem Web-Client
+    /// (`public/contacts.js`, `deleteCategory()`): NICHT clientseitig anhand
+    /// von `isDefault` einschränken, sondern den Server per Fehlercode
+    /// entscheiden lassen — nur die Auffangrubrik "Sonstiges" und die
+    /// Datenschutz-Rubrik "Privates" sind serverseitig unlöschbar
+    /// (`409 category_fallback_protected`/`category_private_protected`,
+    /// siehe `ContactCategoryProtectedError`). Alle anderen Rubriken
+    /// (inkl. der Start-Rubriken "Zuständigkeit"/"Wichtiges") sind frei
+    /// löschbar, auch wenn sie noch von Infoblöcken verwendet werden.
+    ///
+    /// Wird eine noch verwendete Rubrik ohne `confirm: true` gelöscht,
+    /// antwortet der Server mit `409 category_in_use`
+    /// (`ContactCategoryInUseError`, trägt `usageCount` mit). Der Aufrufer
+    /// (`ContactCategorySheet`) zeigt daraufhin einen zweiten Bestätigungs-
+    /// dialog ("Trotzdem löschen? Blöcke werden nach „Sonstiges" umgehängt")
+    /// und ruft bei Bestätigung erneut mit `confirm: true` auf — analog zum
+    /// zweistufigen Web-Flow (`?confirm=true`-Query-Parameter, siehe
+    /// `lib/contacts/routes.js`).
+    func deleteContactCategory(id: String, confirm: Bool = false) async throws {
+        let path = "/contact-categories/\(id)" + (confirm ? "?confirm=true" : "")
+        let (data, http) = try await performRequest("DELETE", path)
         if http.statusCode >= 400 {
             if http.statusCode == 409,
-               let body = try? decoder.decode(ContactCategoryInUseBody.self, from: data),
-               body.code == "category_in_use" {
-                throw ContactCategoryInUseError(usageCount: body.usageCount ?? 0)
+               let body = try? decoder.decode(ContactCategoryInUseBody.self, from: data) {
+                switch body.code {
+                case "category_in_use":
+                    throw ContactCategoryInUseError(usageCount: body.usageCount ?? 0)
+                case "category_fallback_protected", "category_private_protected":
+                    throw ContactCategoryProtectedError(
+                        message: body.error ?? "Diese Rubrik ist eine Systemrubrik und kann nicht gelöscht werden."
+                    )
+                default:
+                    break
+                }
             }
             throw mapGenericError(data: data, status: http.statusCode)
         }
