@@ -306,6 +306,74 @@ struct AssignmentTarget: Codable, Equatable, Identifiable {
     var assignedAt: String
 }
 
+// MARK: - Contact-API Envelopes (Nachbesserung Security-Review 2026-09-06)
+//
+// Der reale Server (`lib/contacts/routes.js`/`lib/contacts/assignments/router.js`)
+// verpackt fast alle Contact-bezogenen Listen-/Objekt-Antworten in ein
+// Envelope-Objekt statt sie flach zu liefern (verifiziert per Lesen des
+// Server-Codes, NICHT nur laut Vertragsdokument). `AppState` dekodiert bei den
+// betroffenen Endpunkten jeweils den passenden Envelope-Typ hier und entpackt
+// das eigentliche Feld — siehe dortige Kommentare für die 1:1-Zuordnung
+// Endpunkt -> Envelope.
+
+/// `GET /api/contact-categories` -> `{categories: [...]}`.
+struct ContactCategoriesResponse: Codable { let categories: [ContactCategory] }
+
+/// `POST/PUT /api/contact-categories[/:id]` (Erfolgsfall) -> `{category: {...}}`.
+struct ContactCategoryResponse: Codable { let category: ContactCategory }
+
+/// `GET /api/contacts/:contactId/info-blocks` -> `{blocks: [...], categories: [...]}`.
+struct ContactInfoBlocksResponse: Codable { let blocks: [ContactInfoBlock]; let categories: [ContactCategory] }
+
+/// `POST/PUT /api/contacts/:contactId/info-blocks[/:blockId]` (Erfolgsfall) -> `{block: {...}}`.
+struct ContactInfoBlockResponse: Codable { let block: ContactInfoBlock }
+
+/// Themen-Verknüpfung eines Kontakts, wie sie `GET /api/contacts/:contactId`
+/// unter `themeLinks` liefert (`{linkId, themeId, themeTitle}`).
+struct ContactThemeLinkSummary: Codable, Equatable {
+    let linkId: String
+    let themeId: String
+    let themeTitle: String
+}
+
+/// `GET /api/contacts/:contactId` -> `{contact, infoBlocks, categories, themeLinks}`.
+struct ContactDetailResponse: Codable {
+    let contact: Contact
+    let infoBlocks: [ContactInfoBlock]
+    let categories: [ContactCategory]
+    let themeLinks: [ContactThemeLinkSummary]
+}
+
+/// `GET /api/assignments/:refType/:refId` -> `{contacts: [...], limit}` UND
+/// `PUT /api/assignments/:refType/:refId` -> `{contacts: [...]}` (ohne `limit`,
+/// daher optional statt non-optional, damit beide Endpunkte denselben
+/// Envelope-Typ nutzen können).
+struct AssignmentsResponse: Codable {
+    let contacts: [AssignedContact]
+    let limit: Int?
+}
+
+/// Paginierungs-Metadaten aus `GET /api/contacts/:contactId/assignments`.
+struct AssignmentPage: Codable, Equatable {
+    let limit: Int
+    let offset: Int
+    let total: Int
+    let hasMore: Bool
+}
+
+/// Kennzahlen (offen/erledigt) aus `GET /api/contacts/:contactId/assignments`.
+struct AssignmentCounts: Codable, Equatable {
+    let open: Int
+    let done: Int
+}
+
+/// `GET /api/contacts/:contactId/assignments` -> `{items, page, counts}`.
+struct ContactAssignmentsResponse: Codable {
+    let items: [AssignmentTarget]
+    let page: AssignmentPage
+    let counts: AssignmentCounts
+}
+
 // MARK: - Users
 
 struct AppUser: Codable, Equatable {

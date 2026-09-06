@@ -49,11 +49,17 @@ struct LoadAssignedContactIdsTests {
     }
 
     @Test func returnsSuccessWithLoadedContactIds() async {
+        // Server-Vertrag (`GET /assignments/:refType/:refId`,
+        // `assignments/router.js`): Envelope `{contacts:[...], limit}`, kein
+        // flaches Array (Nachbesserung Security-Review 2026-09-06).
         let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/assignments/todo/t1")
             return (200, mockJSONData([
-                ["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"],
-                ["contactId": "c2", "name": "Ben", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]
+                "contacts": [
+                    ["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"],
+                    ["contactId": "c2", "name": "Ben", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]
+                ],
+                "limit": 20
             ]))
         }
         let result = await loadAssignedContactIds(state: state, refType: "todo", refId: "t1")
@@ -206,8 +212,10 @@ struct ContactAssignmentSaveGuardEndToEndTests {
         let state = makeMockAppState { req in
             box.record(req)
             box.lastContactIds = requestBodyJSON(req)["contactIds"] as? [String]
+            // Server-Vertrag (`PUT /assignments/:refType/:refId`): Envelope
+            // `{contacts:[...]}` (ohne `limit`), kein flaches Array.
             return (200, mockJSONData([
-                ["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]
+                "contacts": [["contactId": "c1", "name": "Anna", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]]
             ]))
         }
         try await runSaveFlow(
@@ -283,8 +291,11 @@ struct ContactAssignmentPickerEntryGuardTests {
     @Test func staleSuccessfulLoadDoesNotOverwriteAlreadyConfirmedSelection() async {
         let state = makeMockAppState { req in
             #expect(req.url?.path == "/api/assignments/todo/t1")
+            // Server-Vertrag (`GET /assignments/:refType/:refId`): Envelope
+            // `{contacts:[...], limit}`, kein flaches Array.
             return (200, mockJSONData([
-                ["contactId": "c-server-stand", "name": "Alt", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]
+                "contacts": [["contactId": "c-server-stand", "name": "Alt", "role": "", "email": "", "assignedAt": "2026-01-01T00:00:00.000Z"]],
+                "limit": 20
             ]))
         }
         // Nachbildung des View-Zustands: Nutzer hat im Picker bereits eine
