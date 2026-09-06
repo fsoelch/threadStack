@@ -113,6 +113,30 @@ struct ContactCategoryAPITests {
         #expect(state.contactCategories.isEmpty)
     }
 
+    @Test func loadAllDecodesContactCategoriesEnvelope() async throws {
+        // Security-Review-Nachbesserung (MITTEL 2): `loadAll()` fragte
+        // `/contact-categories` bislang als FLACHES Array ab, obwohl der
+        // Server (siehe `lib/contacts/routes.js`, `GET /contact-categories`)
+        // immer `{categories:[...]}` liefert — der Decode-Fehler wurde durch
+        // `try?` verschluckt und `contactCategories` blieb dauerhaft leer/
+        // veraltet. Dieser Test belegt, dass `loadAll()` (nicht nur die
+        // bereits separat getestete `loadContactCategories()`) das echte
+        // Envelope-Format korrekt dekodiert.
+        let state = makeMockAppState { req in
+            switch req.url?.path {
+            case "/api/contact-categories":
+                return (200, mockJSONData(["categories": [["id": "cat1", "label": "Allgemein"]]]))
+            case "/api/meetings", "/api/todos", "/api/themes", "/api/contacts", "/api/knowledge":
+                return (200, mockJSONData([]))
+            default:
+                return (404, Data())
+            }
+        }
+        try await state.loadAll()
+        #expect(state.contactCategories.count == 1)
+        #expect(state.contactCategories.first?.id == "cat1")
+    }
+
     @Test func createContactCategoryAppendsToPublishedState() async throws {
         // Server-Vertrag (`POST /contact-categories`, `routes.js`): Erfolgsfall
         // antwortet mit `{category:{...}}`, kein flaches Objekt.

@@ -308,6 +308,46 @@ test('DELETE /contact-categories/:id: nach fälschlichem Löschversuch von "Sons
   assert.ok(r.body.fallbackCategoryId);
 });
 
+test('DELETE /contact-categories/:id?confirm=true: "Privates" ist geschützt (409, sonst wäre der Datenschutz-Filter über den Lösch-Pfad umgehbar)', async (t) => {
+  // Security-Review-Fund MITTEL 1: der PUT-Pfad (Umbenennen) schützte
+  // "Privates" bereits per label_norm-Prüfung - der DELETE-Pfad hatte
+  // denselben Leck-Effekt, da ?confirm=true die Infoblöcke stillschweigend
+  // nach "Sonstiges" umgehängt hätte. Danach wären sie NICHT mehr vom
+  // Datenschutz-Filter im Kontaktkarten-Snippet (batchContactExtras()/
+  // PRIVATE_CATEGORY_LABEL_NORM) erfasst gewesen, da dieser rein
+  // label-basiert auf der AKTUELLEN Rubrik des Blocks greift.
+  const { app, db, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const cats = await agent.get('/api/contact-categories');
+  const privates = cats.body.categories.find((c) => c.label === 'Privates');
+  makeContact(db, { id: 'c1' });
+  const block = await agent.post('/api/contacts/c1/info-blocks').send({ categoryId: privates.id, body: '<p>Geheim</p>' });
+  assert.equal(block.status, 201);
+
+  const r = await agent.delete(`/api/contact-categories/${privates.id}?confirm=true`);
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, 'category_private_protected');
+
+  // Rubrik "Privates" bleibt unverändert bestehen ...
+  const stillThere = await agent.get('/api/contact-categories');
+  assert.ok(stillThere.body.categories.some((c) => c.id === privates.id), '"Privates" darf weiterhin existieren');
+
+  // ... und ihr Infoblock bleibt weiterhin der Rubrik "Privates" zugeordnet
+  // (kein stillschweigendes Umhängen nach "Sonstiges" trotz confirm=true).
+  const blocks = await agent.get('/api/contacts/c1/info-blocks');
+  assert.equal(blocks.body.blocks.length, 1);
+  assert.equal(blocks.body.blocks[0].categoryId, privates.id);
+  assert.equal(blocks.body.blocks[0].categoryLabel, 'Privates');
+
+  // Vorher/Nachher-Beleg für den Snippet-Leak: die Kontaktliste darf den
+  // Inhalt des "Privates"-Blocks NIE im Snippet zeigen - weder vor noch
+  // (insbesondere) nach dem fehlgeschlagenen Löschversuch.
+  const list = await agent.get('/api/contacts');
+  const entry = list.body.find((c) => c.id === 'c1');
+  assert.ok(!entry.snippet.includes('Geheim'), 'Snippet darf "Privates"-Inhalt nach dem Löschversuch weiterhin nicht enthalten');
+});
+
 test('PUT /contact-categories/:id: "Sonstiges" kann nicht umbenannt werden (409, sonst würde Fund "Kritisch #1" umgangen)', async (t) => {
   const { app, dir } = buildTestApp();
   t.after(() => cleanup(dir));

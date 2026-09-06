@@ -323,11 +323,11 @@ final class AppState: ObservableObject {
         async let th: [Theme]    = request("GET", "/themes")
         async let co: [Contact]  = request("GET", "/contacts")
         async let kp: [KnowledgePage] = request("GET", "/knowledge")
-        async let cc: [ContactCategory] = request("GET", "/contact-categories")
+        async let cc: ContactCategoriesResponse = request("GET", "/contact-categories")
         meetings = try await m; todos = try await t; themes = try await th
         contacts = (try? await co) ?? contacts   // contacts ist neu, alte Server tolerieren
         knowledgePages = (try? await kp) ?? knowledgePages // Wissen ist neu, alte Server tolerieren
-        contactCategories = (try? await cc) ?? contactCategories // Rubriken sind neu, alte Server tolerieren
+        contactCategories = (try? await cc)?.categories ?? contactCategories // Rubriken sind neu, alte Server tolerieren
     }
 
     // MARK: - Meetings
