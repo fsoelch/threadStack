@@ -180,6 +180,84 @@ struct ContactCategoryAPITests {
         #expect(box.wasCalled == true)
         #expect(state.contactCategories.isEmpty)
     }
+
+    // MARK: - Feature-Paritäts-Fund (2026-09-06): Start-Rubriken sind KEINE
+    // pauschale Sonderklasse mehr — nur "Sonstiges"/"Privates" sind
+    // serverseitig geschützt (`category_fallback_protected`/
+    // `category_private_protected`), "Zuständigkeit"/"Wichtiges" verhalten
+    // sich wie jede eigene, genutzte Rubrik (frei löschbar, inkl.
+    // Zwangslöschung mit Umhängen nach "Sonstiges" über `confirm: true`).
+
+    @Test func deleteContactCategorySucceedsForFormerlyProtectedDefaultCategory() async throws {
+        // "Zuständigkeit"/"Wichtiges": Löschversuch führt zu 200, exakt wie
+        // bei jeder eigenen Rubrik — verifiziert, dass `isDefault == true`
+        // clientseitig KEINE Sonderbehandlung mehr auslöst.
+        let box = HandlerCallBox()
+        let state = makeMockAppState { req in
+            box.wasCalled = true
+            #expect(req.httpMethod == "DELETE")
+            #expect(req.url?.path == "/api/contact-categories/cat-wichtiges")
+            return (200, mockJSONData(["ok": true, "reassignedCount": 0, "fallbackCategoryId": NSNull()]))
+        }
+        state.contactCategories = [
+            ContactCategory(id: "cat-wichtiges", label: "Wichtiges", isDefault: true, sortOrder: 2, usageCount: nil)
+        ]
+        try await state.deleteContactCategory(id: "cat-wichtiges")
+        #expect(box.wasCalled == true)
+        #expect(state.contactCategories.isEmpty)
+    }
+
+    @Test func deleteContactCategoryWithConfirmAppendsQueryParameterAndSucceeds() async throws {
+        // Zwangslöschung mit Umhängen nach "Sonstiges" bei Nutzung: der
+        // zweite Löschversuch (nach Bestätigung im "Rubrik wird verwendet"-
+        // Dialog) muss den Server-Vertrag `?confirm=true`
+        // (`lib/contacts/routes.js`) exakt treffen.
+        let box = HandlerCallBox()
+        let state = makeMockAppState { req in
+            box.wasCalled = true
+            #expect(req.httpMethod == "DELETE")
+            #expect(req.url?.path == "/api/contact-categories/cat-zust")
+            #expect(req.url?.query == "confirm=true")
+            return (200, mockJSONData(["ok": true, "reassignedCount": 4, "fallbackCategoryId": "cat-sonstiges"]))
+        }
+        state.contactCategories = [
+            ContactCategory(id: "cat-zust", label: "Zuständigkeit", isDefault: true, sortOrder: 0, usageCount: 4)
+        ]
+        try await state.deleteContactCategory(id: "cat-zust", confirm: true)
+        #expect(box.wasCalled == true)
+        #expect(state.contactCategories.isEmpty)
+    }
+
+    @Test func deleteContactCategoryThrowsProtectedErrorForFallbackCategory() async throws {
+        let state = makeMockAppState { req in
+            #expect(req.url?.query != "confirm=true")
+            return (409, mockJSONData([
+                "error": "Die Rubrik „Sonstiges“ ist eine Systemrubrik (Auffangrubrik) und kann nicht gelöscht werden.",
+                "code": "category_fallback_protected"
+            ]))
+        }
+        do {
+            try await state.deleteContactCategory(id: "cat-sonstiges")
+            Issue.record("expected ContactCategoryProtectedError")
+        } catch let e as ContactCategoryProtectedError {
+            #expect(e.errorDescription?.contains("Sonstiges") == true)
+        }
+    }
+
+    @Test func deleteContactCategoryThrowsProtectedErrorForPrivateCategory() async throws {
+        let state = makeMockAppState { _ in
+            (409, mockJSONData([
+                "error": "Die Rubrik „Privates“ ist eine Systemrubrik (Datenschutz-Filter) und kann nicht gelöscht werden.",
+                "code": "category_private_protected"
+            ]))
+        }
+        do {
+            try await state.deleteContactCategory(id: "cat-privates")
+            Issue.record("expected ContactCategoryProtectedError")
+        } catch let e as ContactCategoryProtectedError {
+            #expect(e.errorDescription?.contains("Privates") == true)
+        }
+    }
 }
 
 // MARK: - Kontakt-Detail (Envelope): reloadContact(id:)

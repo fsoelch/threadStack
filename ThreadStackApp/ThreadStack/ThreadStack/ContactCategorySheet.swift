@@ -5,15 +5,24 @@
 //  Arbeitspaket A1 ("Erweiterung Ansprechpartner-Konzept"): Verwaltung der
 //  frei erweiterbaren Rubriken für Kontakt-Infoblöcke. Liste aller Rubriken
 //  (`AppState.contactCategories`), Umbenennen inline, Löschen mit
-//  Bestätigung — Startrubriken (`isDefault == true`) sind nicht löschbar.
+//  Bestätigung.
 //
-//  Löschbestätigung: `ContactCategory.usageCount` ist bereits Teil des
-//  Server-Vertrags (siehe `GET /api/contact-categories`) — der
-//  Bestätigungstext kann damit VOR dem eigentlichen Löschversuch aus dem
-//  bereits geladenen Zustand abgeleitet werden (kein zusätzlicher
-//  Server-Roundtrip nötig). Der eigentliche `DELETE`-Aufruf bleibt trotzdem
-//  gegen einen `409 category_in_use` abgesichert (Wettlauf mit einem anderen
-//  Gerät, siehe `AppState.deleteContactCategory`/`ContactCategoryInUseError`).
+//  Nachbesserung Feature-Paritäts-Fund (2026-09-06): der Löschen-Button wird
+//  für ALLE Rubriken angezeigt (auch die vier Start-Rubriken), analog zum
+//  Web-Client (`public/contacts.js`, `deleteCategory()`). NICHT
+//  clientseitig anhand von `isDefault` einschränken — das würde
+//  "Zuständigkeit"/"Wichtiges" fälschlich unlöschbar machen, obwohl nur
+//  "Sonstiges" (Auffangrubrik) und "Privates" (Datenschutzfilter)
+//  tatsächlich serverseitig geschützt sind. Stattdessen entscheidet der
+//  Server per Fehlercode (`409 category_fallback_protected`/
+//  `category_private_protected`, siehe `ContactCategoryProtectedError`).
+//
+//  Löschablauf (zweistufig, analog Web-Client): erster Löschversuch ohne
+//  Bestätigung; meldet der Server `409 category_in_use` (Rubrik wird noch
+//  von Infoblöcken verwendet), wird ein zweiter Bestätigungsdialog gezeigt
+//  ("Trotzdem löschen? Blöcke werden nach „Sonstiges" umgehängt") und bei
+//  Zustimmung erneut mit `confirm: true` gelöscht (siehe
+//  `AppState.deleteContactCategory`).
 //
 
 import SwiftUI
@@ -32,6 +41,10 @@ struct ContactCategorySheet: View {
     @State private var renaming = false
 
     @State private var deleteCandidate: ContactCategory?
+    // Zweite Bestätigungsstufe, wenn der erste Löschversuch mit
+    // `409 category_in_use` abgelehnt wurde (siehe Datei-Kommentar oben).
+    @State private var forceDeleteCandidate: ContactCategory?
+    @State private var forceDeleteUsageCount: Int = 0
     @State private var deleting = false
     @State private var blockedDeleteMessage: String?
 
@@ -86,6 +99,16 @@ struct ContactCategorySheet: View {
                 Button("Löschen", role: .destructive) { performDelete() }
                 Button("Abbrechen", role: .cancel) { deleteCandidate = nil }
             }
+            .confirmationDialog(
+                "Rubrik wird verwendet",
+                isPresented: forceDeleteCandidateBinding,
+                titleVisibility: .visible
+            ) {
+                Button("Trotzdem löschen", role: .destructive) { performForceDelete() }
+                Button("Abbrechen", role: .cancel) { forceDeleteCandidate = nil }
+            } message: {
+                Text(forceDeleteMessage)
+            }
             .errorAlert($blockedDeleteMessage)
         }
     }
@@ -101,6 +124,18 @@ struct ContactCategorySheet: View {
     private var deleteDialogTitle: String {
         guard let cat = deleteCandidate else { return "" }
         return "Rubrik „\(cat.label)“ löschen?"
+    }
+
+    private var forceDeleteCandidateBinding: Binding<Bool> {
+        Binding(get: { forceDeleteCandidate != nil }, set: { if !$0 { forceDeleteCandidate = nil } })
+    }
+
+    private var forceDeleteMessage: String {
+        guard let cat = forceDeleteCandidate else { return "" }
+        let usageText = forceDeleteUsageCount == 1
+            ? "einem Infoblock"
+            : "\(forceDeleteUsageCount) Infoblöcken"
+        return "Die Rubrik „\(cat.label)“ wird noch von \(usageText) verwendet. Diese werden stattdessen der Rubrik „Sonstiges“ zugeordnet. Trotzdem löschen?"
     }
 
     /// Zeigt einen `ProgressView`-Indikator, solange ein Umbenennen/Löschen
@@ -139,16 +174,19 @@ struct ContactCategorySheet: View {
             .disabled(renaming || deleting)
             .accessibilityLabel("\(cat.label) umbenennen")
 
-            if cat.isDefault != true {
-                Button(role: .destructive) {
-                    requestDelete(cat)
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
-                .disabled(renaming || deleting)
-                .accessibilityLabel("\(cat.label) löschen")
+            // Fund Feature-Parität (2026-09-06): Löschen-Button für ALLE
+            // Rubriken anzeigen (nicht mehr per `isDefault != true`
+            // ausblenden) — nur "Sonstiges"/"Privates" sind serverseitig
+            // geschützt, der Server entscheidet per Fehlercode (siehe
+            // Datei-Kommentar oben und `requestDelete`).
+            Button(role: .destructive) {
+                requestDelete(cat)
+            } label: {
+                Image(systemName: "trash")
             }
+            .buttonStyle(.plain)
+            .disabled(renaming || deleting)
+            .accessibilityLabel("\(cat.label) löschen")
         }
     }
 
@@ -199,22 +237,32 @@ struct ContactCategorySheet: View {
         }
     }
 
-    /// Startrubriken werden gar nicht erst zum Löschen angeboten (siehe
-    /// `categoryRow`). Wird die Rubrik bereits laut lokal bekanntem
-    /// `usageCount` verwendet, wird — statt eines destruktiven Bestätigungs-
-    /// dialogs — direkt der blockierende Hinweistext gezeigt (kein Löschen
-    /// möglich, siehe Vertrag `409 category_in_use`).
+    /// Zeigt für JEDE Rubrik (auch Start-Rubriken) den ersten Löschen-
+    /// Bestätigungsdialog — es gibt keine clientseitige `isDefault`-Sperre
+    /// mehr (siehe Datei-Kommentar oben). Ob eine Rubrik tatsächlich
+    /// geschützt ist ("Sonstiges"/"Privates") oder noch verwendet wird,
+    /// entscheidet ausschließlich der Server beim eigentlichen `DELETE`-
+    /// Aufruf (`performDelete`).
     private func requestDelete(_ cat: ContactCategory) {
-        if let count = cat.usageCount, count > 0 {
-            blockedDeleteMessage = ContactCategoryInUseError(usageCount: count).errorDescription
-        } else {
-            deleteCandidate = cat
-        }
+        deleteCandidate = cat
     }
 
     private func performDelete() {
         guard let cat = deleteCandidate else { return }
         deleteCandidate = nil
+        attemptDelete(cat, confirm: false)
+    }
+
+    /// Zweite Bestätigungsstufe (siehe Datei-Kommentar oben): wird nach
+    /// Zustimmung im "Rubrik wird verwendet"-Dialog mit `confirm: true`
+    /// erneut versucht.
+    private func performForceDelete() {
+        guard let cat = forceDeleteCandidate else { return }
+        forceDeleteCandidate = nil
+        attemptDelete(cat, confirm: true)
+    }
+
+    private func attemptDelete(_ cat: ContactCategory, confirm: Bool) {
         deleting = true
         error = nil
         // Siehe Kommentar in `commitRename()` (Code-Review Fund 7): verhindert,
@@ -223,9 +271,21 @@ struct ContactCategorySheet: View {
         // erneut `createCategory()` statt des Löschversuchs aufrufen lässt.
         isOffline = false
         Task {
-            do { try await state.deleteContactCategory(id: cat.id) }
-            catch let inUse as ContactCategoryInUseError {
-                blockedDeleteMessage = inUse.errorDescription
+            do {
+                try await state.deleteContactCategory(id: cat.id, confirm: confirm)
+            } catch let inUse as ContactCategoryInUseError {
+                if confirm {
+                    // Sollte nach explizitem `confirm: true` nicht mehr
+                    // auftreten — Fail-Safe für einen Wettlauf mit einem
+                    // anderen Gerät (z.B. neuer Infoblock zwischen den
+                    // beiden Aufrufen angelegt).
+                    blockedDeleteMessage = inUse.errorDescription
+                } else {
+                    forceDeleteUsageCount = inUse.usageCount
+                    forceDeleteCandidate = cat
+                }
+            } catch let protectedErr as ContactCategoryProtectedError {
+                blockedDeleteMessage = protectedErr.errorDescription
             } catch {
                 self.error = isTransportFailure(error)
                     ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
