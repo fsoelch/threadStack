@@ -251,6 +251,64 @@ test('GET /contacts (Liste): categories/infoBlockCount/snippet über Batch-Queri
   assert.equal(prepareCount, 3, `erwartet genau 3 vorbereitete Statements (Liste + 2 Batch-Queries), erhalten: ${prepareCount}`);
 });
 
+// ── Code-Review-Fund "Kritisch": "Privates"-Infoblöcke dürfen NIE im
+// aggregierten `snippet` landen, auch nicht bei gemischten Rubriken ────────
+
+test('GET /contacts (Liste): snippet enthält bei gemischten Rubriken NICHT den Text der "Privates"-Rubrik', async (t) => {
+  const { app, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const created = await agent.post('/api/contacts').send({ name: 'Max' });
+  const contactId = created.body.id;
+  const cats = await agent.get('/api/contact-categories');
+  const zustaendigkeit = cats.body.categories.find((c) => c.label === 'Zuständigkeit');
+  const privates = cats.body.categories.find((c) => c.label === 'Privates');
+  assert.ok(zustaendigkeit && privates, 'Standardrubriken müssen vorhanden sein');
+
+  await agent.post(`/api/contacts/${contactId}/info-blocks`)
+    .send({ categoryId: zustaendigkeit.id, body: '<p>Region Nord, Budgetfreigaben</p>' });
+  await agent.post(`/api/contacts/${contactId}/info-blocks`)
+    .send({ categoryId: privates.id, body: '<p>Scheidung, zwei Kinder</p>' });
+
+  const list = await agent.get('/api/contacts');
+  assert.equal(list.status, 200);
+  const entry = list.body.find((c) => c.id === contactId);
+  assert.match(entry.snippet, /Region Nord, Budgetfreigaben/, 'nicht-privater Text muss weiterhin im Snippet erscheinen');
+  assert.doesNotMatch(entry.snippet, /Scheidung/, 'privater Text darf NIE im Snippet erscheinen');
+  assert.doesNotMatch(entry.snippet, /zwei Kinder/, 'privater Text darf NIE im Snippet erscheinen');
+
+  // Badge/Zähler bleiben von der Snippet-Filterung UNBERÜHRT: beide
+  // Rubriken erscheinen weiterhin, die Gesamtzahl bleibt korrekt (2).
+  assert.equal(entry.infoBlockCount, 2);
+  const labels = entry.categories.map((c) => c.label).sort();
+  assert.deepEqual(labels, ['Privates', 'Zuständigkeit']);
+
+  // Auch die Einzelabruf-Route (GET /contacts/:id) muss denselben Schutz haben.
+  const single = await agent.get(`/api/contacts/${contactId}`);
+  assert.match(single.body.contact.snippet, /Region Nord, Budgetfreigaben/);
+  assert.doesNotMatch(single.body.contact.snippet, /Scheidung/);
+  assert.equal(single.body.contact.infoBlockCount, 2);
+});
+
+test('GET /contacts (Liste): snippet ist leer, wenn ein Kontakt AUSSCHLIESSLICH einen "Privates"-Infoblock hat', async (t) => {
+  const { app, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  const created = await agent.post('/api/contacts').send({ name: 'Nur Privat' });
+  const contactId = created.body.id;
+  const cats = await agent.get('/api/contact-categories');
+  const privates = cats.body.categories.find((c) => c.label === 'Privates');
+
+  await agent.post(`/api/contacts/${contactId}/info-blocks`)
+    .send({ categoryId: privates.id, body: '<p>Streng vertraulich</p>' });
+
+  const list = await agent.get('/api/contacts');
+  const entry = list.body.find((c) => c.id === contactId);
+  assert.equal(entry.snippet, '', 'ohne nicht-privaten Text darf gar kein Snippet erscheinen');
+  assert.equal(entry.infoBlockCount, 1, 'Zähler bleibt trotzdem korrekt');
+  assert.deepEqual(entry.categories, [{ id: privates.id, label: 'Privates' }]);
+});
+
 // ── search_text / search_index Integration ────────────────────────
 
 test('Infoblock-Text fließt in contacts.search_text UND search_index ein', async (t) => {
