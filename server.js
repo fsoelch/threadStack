@@ -2335,19 +2335,20 @@ if (BASE) app.use(`${BASE}/assets`, assetsGuard, assetsStatic);
 app.get(BASE || '/', (req, res) => {
   const fs = require('fs');
   let html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-  // Graph-/Progress-/App-Assets sind im Quelltext auf "/assets/..." verlinkt
-  // (funktioniert direkt gegen den Node-Prozess). Hinter einem Reverse-Proxy,
-  // der nur BASE_PATH an die App weiterleitet (siehe deploy.sh-
-  // Beispielkonfiguration), muss der ausgelieferte Pfad das BASE-Präfix
-  // tragen, sonst laden /assets/graph.js/.css, progress.js/.css und app.js
-  // nie. (Contacts-Assets kommen aus einem separaten Frontend-Arbeitspaket
-  // und ergänzen ihre eigenen <link>/<script>-Tags samt BASE-Handling dort.)
+  // Graph-/Progress-/Contacts-/App-Assets sind im Quelltext auf "/assets/..."
+  // verlinkt (funktioniert direkt gegen den Node-Prozess). Hinter einem
+  // Reverse-Proxy, der nur BASE_PATH an die App weiterleitet (siehe
+  // deploy.sh-Beispielkonfiguration), muss der ausgelieferte Pfad das
+  // BASE-Präfix tragen, sonst laden /assets/graph.js/.css, progress.js/.css,
+  // contacts.js/.css und app.js nie.
   if (BASE) {
     html = html
       .replace('href="/assets/graph.css"', `href="${BASE}/assets/graph.css"`)
       .replace('src="/assets/graph.js"', `src="${BASE}/assets/graph.js"`)
       .replace('href="/assets/progress.css"', `href="${BASE}/assets/progress.css"`)
       .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`)
+      .replace('href="/assets/contacts.css"', `href="${BASE}/assets/contacts.css"`)
+      .replace('src="/assets/contacts.js"', `src="${BASE}/assets/contacts.js"`)
       .replace('src="/assets/app.js"', `src="${BASE}/assets/app.js"`);
   }
   html = html.replace('</head>',
