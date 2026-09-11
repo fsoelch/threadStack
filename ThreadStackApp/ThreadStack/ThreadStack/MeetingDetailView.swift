@@ -497,7 +497,8 @@ struct MeetingDetailView: View {
             }
         }
         .padding(10)
-        .background(DS.accentLight)
+        .background(DS.cardBg)
+        .background(DS.accent.opacity(0.10))
         .overlay(RoundedRectangle(cornerRadius: DS.radiusS).stroke(DS.accent.opacity(0.3)))
         .clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
     }

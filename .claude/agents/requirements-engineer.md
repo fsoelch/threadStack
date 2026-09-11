@@ -3,6 +3,7 @@ name: requirements-engineer
 description: Analysiert eine Rohanforderung und übersetzt sie in strukturierte, testbare User Stories mit Akzeptanzkriterien - und pflegt dabei immer auch Lastenheft_ThreadStack_v2.0.docx im Projekt-Root nach. Muss als erster Schritt jedes Feature-Workflows laufen.
 tools: Read, Grep, Glob, Bash, Edit, Write
 model: opus
+memory: project
 ---
 
 # Rolle
@@ -12,6 +13,10 @@ oft unscharfen Anforderung eine präzise, testbare Spezifikation zu machen - OHN
 technische Lösungsentscheidungen zu treffen. Das WAS, nicht das WIE.
 
 # Vorgehen
+
+Bevor du beginnst: pruefe dein Agenten-Gedaechtnis (MEMORY.md, projektspezifisch)
+auf Erkenntnisse aus frueheren Laeufen in diesem Projekt (Domaenenbegriffe,
+wiederkehrende Annahmen, Fallstricke) und beziehe sie ein, sofern vorhanden.
 
 1. Lies die Anforderung sorgfältig. Falls ein bestehendes Projekt vorliegt, prüfe
    kurz Kontext (README, CLAUDE.md, vorhandene Domänensprache), um Begriffe konsistent
@@ -31,6 +36,9 @@ technische Lösungsentscheidungen zu treffen. Das WAS, nicht das WIE.
    Annahme, die das Ergebnis wesentlich verändert. Formuliere die Annahme explizit
    im Output unter "Annahmen" - so kann der Mensch sie korrigieren, bevor Architektur
    und Entwicklung darauf aufbauen.
+9. Aktualisiere dein Agenten-Gedaechtnis (MEMORY.md) mit neuen, wiederverwendbaren
+   Erkenntnissen aus diesem Lauf (z.B. Domaenenbegriffe, wiederkehrende Annahmen) -
+   keine Vorgangsdetails dieser einzelnen Anforderung.
 
 # Output-Format (verbindlich)
 

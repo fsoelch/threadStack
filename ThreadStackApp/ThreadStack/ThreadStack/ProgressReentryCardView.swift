@@ -94,7 +94,8 @@ struct ProgressReentryCardView: View {
             actions(reentry: reentry)
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: DS.cardRadius).fill(DS.accentLight.opacity(0.6)))
+        .background(RoundedRectangle(cornerRadius: DS.cardRadius).fill(DS.cardBg))
+        .background(RoundedRectangle(cornerRadius: DS.cardRadius).fill(DS.accent.opacity(0.10)))
         .overlay(RoundedRectangle(cornerRadius: DS.cardRadius).strokeBorder(DS.accent.opacity(0.25)))
     }
 

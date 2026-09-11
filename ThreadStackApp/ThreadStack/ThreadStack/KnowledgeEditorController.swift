@@ -256,6 +256,18 @@ final class KnowledgeEditorController: ObservableObject {
         _ = try? await callBridgeNoArg("focus")
     }
 
+    /// Synchronisiert Dark-Mode/Schriftskalierung des Editor-Inhalts mit dem
+    /// nativen Erscheinungsbild (Bug-Fix: `html.ts-dark` in
+    /// `knowledge-editor.css` existierte bereits, wurde aber nie über die
+    /// JS-Bridge `TSEditor.setAppearance` aktiviert — der Editor blieb daher
+    /// im Dunkelmodus immer hell/mit dunklem Text, unabhängig vom Gerät).
+    func setAppearance(dark: Bool, fontScale: Double = 1.0) async {
+        _ = try? await callBridge("setAppearance", argument: [
+            "dark": dark,
+            "fontScale": fontScale
+        ])
+    }
+
     /// Wird bei Terminierung des Web-Content-Prozesses aufgerufen, BEVOR die
     /// Seite neu geladen wird. Setzt `isReady` zurueck, damit ein erneutes
     /// "ready" nach dem Reload wieder als Zustandswechsel erkannt wird (der

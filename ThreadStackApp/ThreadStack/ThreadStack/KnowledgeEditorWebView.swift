@@ -56,6 +56,7 @@ final class KnowledgeEditorCoordinator: NSObject {
 
     private weak var webView: WKWebView?
     private var expectedInitialURL: URL?
+    private var lastSyncedDarkAppearance: Bool?
 
     #if os(iOS)
     init(controller: KnowledgeEditorController, heightBinding: Binding<CGFloat>?) {
@@ -126,6 +127,19 @@ final class KnowledgeEditorCoordinator: NSObject {
         webView.loadFileURL(expectedInitialURL, allowingReadAccessTo: expectedInitialURL.deletingLastPathComponent())
     }
 
+    /// Aktiviert die bereits im CSS vorhandenen `html.ts-dark`-Regeln über
+    /// die JS-Bridge, sobald der Editor bereit ist bzw. sich das
+    /// Erscheinungsbild (Environment `colorScheme`) ändert. Erneuter Reload
+    /// nach Prozessabbruch setzt `isReady`/`lastSyncedDarkAppearance` zurück,
+    /// ein anschließendes `updateUIView`/`updateNSView` synchronisiert dann
+    /// automatisch erneut.
+    func syncAppearanceIfNeeded(dark: Bool) {
+        guard controller.isReady else { return }
+        guard lastSyncedDarkAppearance != dark else { return }
+        lastSyncedDarkAppearance = dark
+        Task { await controller.setAppearance(dark: dark) }
+    }
+
     /// Aufgerufen von dismantleUIView/dismantleNSView, wenn SwiftUI die
     /// zugehoerige Repraesentation abbaut. Kein deinit-Pendant noetig: der
     /// WKUserContentController haelt nur den WeakScriptMessageHandler-Proxy
@@ -170,6 +184,7 @@ extension KnowledgeEditorCoordinator: WKNavigationDelegate {
         // Zustand, und ein zwischenzeitlicher Speichern-Aufruf wuerde den nach
         // dem Reload leeren Editorinhalt faelschlich als aktuellen Stand lesen.
         controller.handleWebContentProcessTerminated()
+        lastSyncedDarkAppearance = nil
         reloadInitialPage()
     }
 }
@@ -248,6 +263,7 @@ extension KnowledgeEditorCoordinator: WKScriptMessageHandler {
 struct KnowledgeEditorWebView: UIViewRepresentable {
     @ObservedObject var controller: KnowledgeEditorController
     var measuredHeight: Binding<CGFloat>?
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> KnowledgeEditorCoordinator {
         KnowledgeEditorCoordinator(controller: controller, heightBinding: measuredHeight)
@@ -259,7 +275,10 @@ struct KnowledgeEditorWebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         // Inhalt/Zustand werden ausschließlich über die Bridge-Methoden des
-        // extern gehaltenen Controllers gesteuert, nicht über Re-Renders.
+        // extern gehaltenen Controllers gesteuert, nicht über Re-Renders —
+        // Ausnahme: Dark-Mode-Synchronisierung (siehe
+        // `KnowledgeEditorCoordinator.syncAppearanceIfNeeded`).
+        context.coordinator.syncAppearanceIfNeeded(dark: colorScheme == .dark)
     }
 
     static func dismantleUIView(_ webView: WKWebView, coordinator: KnowledgeEditorCoordinator) {
@@ -270,6 +289,7 @@ struct KnowledgeEditorWebView: UIViewRepresentable {
 /// `NSViewRepresentable` für den Wissens-Editor (macOS-Variante).
 struct KnowledgeEditorWebView: NSViewRepresentable {
     @ObservedObject var controller: KnowledgeEditorController
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> KnowledgeEditorCoordinator {
         KnowledgeEditorCoordinator(controller: controller)
@@ -281,7 +301,10 @@ struct KnowledgeEditorWebView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         // Inhalt/Zustand werden ausschließlich über die Bridge-Methoden des
-        // extern gehaltenen Controllers gesteuert, nicht über Re-Renders.
+        // extern gehaltenen Controllers gesteuert, nicht über Re-Renders —
+        // Ausnahme: Dark-Mode-Synchronisierung (siehe
+        // `KnowledgeEditorCoordinator.syncAppearanceIfNeeded`).
+        context.coordinator.syncAppearanceIfNeeded(dark: colorScheme == .dark)
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: KnowledgeEditorCoordinator) {

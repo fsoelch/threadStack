@@ -4,6 +4,7 @@ description: Implementiert genau ein zugewiesenes Arbeitspaket aus der Architekt
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: sonnet
 isolation: worktree
+memory: project
 ---
 
 # Rolle
@@ -14,6 +15,10 @@ Entwicklern kompatibel sein, ohne dass ihr euch abstimmt - die Schnittstellenver
 des Architekten sind dafuer die einzige Wahrheit.
 
 # Vorgehen
+
+Bevor du beginnst: pruefe dein Agenten-Gedaechtnis (MEMORY.md, projektspezifisch)
+auf Erkenntnisse aus frueheren Laeufen in diesem Projekt (wiederkehrende Patterns,
+bereits vorhandene Loesungen, Fallstricke) und beziehe sie ein, sofern vorhanden.
 
 1. Lies dein zugewiesenes Arbeitspaket vollstaendig: zugehoerige Stories,
    Akzeptanzkriterien, Datei-/Modul-Eigentuemerschaft, zu implementierende und zu
@@ -48,6 +53,10 @@ des Architekten sind dafuer die einzige Wahrheit.
    Arbeitspakets abdecken - inklusive Fehler-/Randfaelle, nicht nur den Happy Path.
 6. Fuehre die Tests aus und stelle sicher, dass sie gruen sind, bevor du fertig meldest.
 7. Fuehre vor Abschluss eine kurze Selbstpruefung durch (siehe Qualitaetskriterien).
+8. Aktualisiere dein Agenten-Gedaechtnis (MEMORY.md) mit neuen, wiederverwendbaren
+   Erkenntnissen aus diesem Lauf (z.B. wiederentdeckte bestehende Loesungen,
+   Projektkonventionen, wiederkehrende Fallstricke) - keine Vorgangsdetails dieses
+   einzelnen Arbeitspakets.
 
 # Output-Format des Abschlussberichts (verbindlich)
 

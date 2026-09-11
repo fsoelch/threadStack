@@ -149,11 +149,17 @@ async function api(method, path, body) {
   const opts = { method, credentials: 'same-origin' };
   if (body != null) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
   const res  = await fetch(API + path, opts);
-  if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
+  if (res.status === 401) { handleSessionExpiry(); throw new Error('Sitzung abgelaufen'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.error || 'Fehler');
     err.status = res.status;
+    // Server-Fehler-Envelope ist { error, code, ...extra } (siehe server.js
+    // fail()) - err.code wird analog zu linkApiFetch() durchgereicht, damit
+    // Aufrufer (z.B. progress.js#mapError/mapSnoozeError) code-spezifische
+    // Meldungen (rate_limited, ARCHIVED_READONLY, ref_done, ...) zeigen
+    // koennen, statt sich nur auf den HTTP-Status zu verlassen.
+    err.code   = data.code;
     err.body   = data;
     throw err;
   }
@@ -540,6 +546,10 @@ function mountProgressArea(idPrefix, refType, item) {
       openOnMount: true,
       onSaved: (result) => onTodoProgressEntrySaved(refType, item.id, result),
       onError: (err) => toast(err?.message || 'Zwischenstand konnte nicht gespeichert werden', 'error'),
+      onSnoozeSave: async (val) => {
+        await saveComposerSnooze(refType, item.id, val);
+        syncSnoozeFormIfModalOpen(refType, item.id);
+      },
     });
   }
   if (typeof TSProgress.mountTimeline === 'function') {
@@ -549,6 +559,44 @@ function mountProgressArea(idPrefix, refType, item) {
 
 function mountTodoProgressArea(t) { mountProgressArea('todo', 'todo', t); }
 function mountTopicProgressArea(t) { mountProgressArea('t', 'topic', t); }
+
+// ── "Schlafen bis"-Kurzoption im Zwischenstand-Composer (Story 2) ──────
+// Persistiert snoozedUntil ueber dieselben Endpunkte wie das "Weitere
+// Details"-Feld im jeweiligen Bearbeiten-Dialog (todo-snooze/t-snooze) -
+// kein zweiter Mechanismus, nur ein weiterer, unaufaelligerer Einstiegspunkt
+// dafuer (CLAUDE.md: Wiederverwendung vor Neuentwicklung). Wird sowohl von
+// mountCardComposer (Uebersichtskarte) als auch mountProgressArea
+// (Bearbeiten-Dialog) als TSProgress.mountInlineComposer-Option
+// "onSnoozeSave" injiziert, damit progress.js selbst keine Kenntnis von
+// Meeting-IDs/Endpunkt-Pfaden braucht.
+async function saveComposerSnooze(refType, refId, snoozedUntilOrNull) {
+  if (refType === 'todo') {
+    await api('PUT', `/todos/${refId}`, { snoozedUntil: snoozedUntilOrNull });
+    const t = todos.find(x => x.id === refId);
+    if (t) t.snoozedUntil = snoozedUntilOrNull;
+  } else if (refType === 'topic') {
+    const found = findTopicAnywhere(refId);
+    if (!found) { const e = new Error('Dieses Thema wurde inzwischen gelöscht.'); e.status = 404; throw e; }
+    await api('PUT', `/meetings/${found.meeting.id}/topics/${refId}`, { snoozedUntil: snoozedUntilOrNull });
+    found.topic.snoozedUntil = snoozedUntilOrNull;
+  } else {
+    throw new Error('Für diesen Vorhaben-Typ nicht unterstützt.');
+  }
+  render();
+}
+
+// Haelt die "Weitere Details"-Felder (todo-snooze/t-snooze) synchron, falls
+// der jeweilige Bearbeiten-Dialog gerade fuer GENAU dieses Vorhaben offen
+// ist - sonst wuerden zwei Bedienelemente fuer denselben Wert (Composer-
+// Kurzoption vs. "Weitere Details") auseinanderlaufen (CLAUDE.md: Divergenz
+// zwischen gleichwertigen Bedienstellen ist ein Bug).
+function syncSnoozeFormIfModalOpen(refType, refId) {
+  if (refType === 'todo' && editTodoId === refId) applyTodoSnoozeToForm(todos.find(x => x.id === refId));
+  else if (refType === 'topic') {
+    const found = findTopicAnywhere(refId);
+    if (found && editTopicId === refId && editTopicMid === found.meeting.id) applyTopicSnoozeToForm(found.topic);
+  }
+}
 
 // ── Karten: Composer "Zwischenstand erfassen" (Story 6, Übersichtsliste) ─
 function mountCardComposer(container, refType, refId) {
@@ -568,6 +616,10 @@ function mountCardComposer(container, refType, refId) {
     openOnMount: true,
     onSaved: (result) => onTodoProgressEntrySaved(refType, refId, result),
     onError: (err) => toast(err?.message || 'Zwischenstand konnte nicht gespeichert werden', 'error'),
+    onSnoozeSave: async (val) => {
+      await saveComposerSnooze(refType, refId, val);
+      syncSnoozeFormIfModalOpen(refType, refId);
+    },
   });
 }
 
@@ -1157,7 +1209,7 @@ async function linkApiFetch(method, path, body, signal) {
   const opts = { method, credentials: 'same-origin', signal };
   if (body !== undefined) { opts.headers = { 'Content-Type': 'application/json' }; opts.body = JSON.stringify(body); }
   const res = await fetch(API + path, opts);
-  if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
+  if (res.status === 401) { handleSessionExpiry(); throw new Error('Sitzung abgelaufen'); }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(data.error || 'Fehler');
@@ -1431,6 +1483,7 @@ function rtInsertImage(editorId) {
         headers: { 'Content-Type': file.type || 'application/octet-stream' },
         body: file,
       });
+      if (resp.status === 401) { handleSessionExpiry(); throw new Error('Sitzung abgelaufen'); }
       if (!resp.ok) { const t = await resp.text(); throw new Error(t || resp.statusText); }
       const att = await resp.json();
       _restoreSelection();
@@ -1675,13 +1728,39 @@ function rgbToHex(rgb) {
 }
 
 // ── Auth ─────────────────────────────────────────────────────
-function showLogin() {
+// `expired: true` blendet den Hinweistext "Sitzung abgelaufen" oberhalb des
+// Formulars ein (Story 2: sichtbarer, erklärter Wechsel statt kommentarloser
+// Rückkehr zum Login) - der normale Logout-Pfad (doLogout) lässt das Flag
+// weg, damit der Hinweis dort NICHT erscheint.
+function showLogin({ expired = false } = {}) {
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('app').style.display = 'none';
   document.getElementById('login-user').value = '';
   document.getElementById('login-pw').value = '';
   document.getElementById('login-error').style.display = 'none';
+  document.getElementById('login-session-expired').style.display = expired ? '' : 'none';
   setTimeout(() => document.getElementById('login-user').focus(), 50);
+}
+
+// Schließt JEDES offene Bearbeiten-/Detail-Modal ohne die jeweils dort
+// hinterlegte "Verwerfen?"-Rückfrage (z.B. requestCloseTopicModal) - bei
+// Sitzungsende ist das gewollt (UX-Vorgabe): der Nutzer sieht sofort den
+// Login-Screen samt Erklärtext, statt an einem nicht mehr speicherbaren
+// Formular hängen zu bleiben. Generischer Selektor statt einer festen
+// Modal-ID-Liste, damit neue Modals automatisch erfasst werden.
+function closeAllModals() {
+  document.querySelectorAll('.modal-overlay').forEach(m => { m.style.display = 'none'; });
+}
+
+// Zentraler Sitzungsende-Handler für ALLE Stellen, die eine Server-Antwort
+// mit HTTP 401 sehen (api(), linkApiFetch(), runExport() sowie die beiden
+// rohen fetch()-Attachment-Uploads, die bislang keine 401-Behandlung hatten -
+// Story 2 verlangt explizit, dass JEDE 401-Antwort erkannt wird). Ersetzt die
+// bisher 3x duplizierte `clearClientSessionState(); showLogin();`-Sequenz.
+function handleSessionExpiry() {
+  clearClientSessionState();
+  closeAllModals();
+  showLogin({ expired: true });
 }
 
 function showApp() {
@@ -2781,6 +2860,7 @@ async function uploadAttachment(refType, refId, file) {
       headers: { 'Content-Type': file.type || 'application/octet-stream' },
       body: file,
     });
+    if (resp.status === 401) { handleSessionExpiry(); throw new Error('Sitzung abgelaufen'); }
     if (!resp.ok) { const t = await resp.text(); throw new Error(t || resp.statusText); }
     await loadAttachments(refType, refId);
     updateAttachBadge(refType, refId);
@@ -2899,11 +2979,7 @@ function openTodoModal(id, presetThemeId) {
     document.getElementById('todo-desc-readview').style.display = 'none';
     document.getElementById('todo-desc-wrapper').style.display = '';
   }
-  document.getElementById('todo-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
-  const todoSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
-  document.getElementById('todo-snooze-has-time').checked = todoSnoozeHasTime;
-  document.getElementById('todo-snooze-time').value = todoSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
-  onTodoSnoozeChange();
+  applyTodoSnoozeToForm(t);
   document.getElementById('todo-due').value = t?.dueDate?.slice(0, 10) || '';
   document.getElementById('todo-private').checked = !!t?.isPrivate;
   const dr = document.getElementById('todo-done-row');
@@ -3340,11 +3416,7 @@ function openTopicModal(mid, tid) {
     document.getElementById('t-desc-readview').style.display = 'none';
     document.getElementById('t-desc-wrapper').style.display = '';
   }
-  document.getElementById('t-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
-  const topicSnoozeHasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
-  document.getElementById('t-snooze-has-time').checked = topicSnoozeHasTime;
-  document.getElementById('t-snooze-time').value = topicSnoozeHasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
-  onTopicSnoozeChange();
+  applyTopicSnoozeToForm(t);
   updateTopicMoreDetailsSummary();
   const rs = document.getElementById('t-result-section');
   if (t) {
@@ -5272,7 +5344,7 @@ async function runExport() {
   setBusy('export-run-btn', true);
   try {
     const res = await fetch(`${API}/export?${params.toString()}`, { method: 'GET', credentials: 'same-origin' });
-    if (res.status === 401) { clearClientSessionState(); showLogin(); throw new Error('Sitzung abgelaufen'); }
+    if (res.status === 401) { handleSessionExpiry(); throw new Error('Sitzung abgelaufen'); }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || 'Export fehlgeschlagen');
@@ -5864,6 +5936,26 @@ function openStackPopModalFor(frameId) {
   onPopResolutionChange();
   document.getElementById('pop-error').style.display = 'none';
   document.getElementById('stack-pop-modal').style.display = 'flex';
+}
+
+// Traegt snoozedUntil (Datum + optionale Uhrzeit) in die "Weitere Details"-
+// Felder des Todo-/Themen-Bearbeiten-Dialogs ein - beim Oeffnen des Dialogs
+// UND wenn die Composer-Kurzoption "Schlafen bis" den Wert waehrenddessen
+// aendert (siehe syncSnoozeFormIfModalOpen), damit beide Bedienstellen nie
+// auseinanderlaufen.
+function applyTodoSnoozeToForm(t) {
+  document.getElementById('todo-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
+  const hasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
+  document.getElementById('todo-snooze-has-time').checked = hasTime;
+  document.getElementById('todo-snooze-time').value = hasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
+  onTodoSnoozeChange();
+}
+function applyTopicSnoozeToForm(t) {
+  document.getElementById('t-snooze').value = t?.snoozedUntil?.slice(0, 10) || '';
+  const hasTime = !!(t?.snoozedUntil && t.snoozedUntil.length > 10);
+  document.getElementById('t-snooze-has-time').checked = hasTime;
+  document.getElementById('t-snooze-time').value = hasTime ? new Date(t.snoozedUntil).toTimeString().slice(0, 5) : '';
+  onTopicSnoozeChange();
 }
 
 function onTodoSnoozeChange() {

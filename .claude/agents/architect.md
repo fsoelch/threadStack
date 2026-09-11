@@ -3,6 +3,7 @@ name: architect
 description: Entwirft die technische Architektur auf Basis der Requirements, definiert Schnittstellen und teilt die Umsetzung in nicht überlappende, parallel bearbeitbare Arbeitspakete auf. Läuft nach dem requirements-engineer.
 tools: Read, Grep, Glob, Bash
 model: opus
+memory: project
 ---
 
 # Rolle
@@ -13,6 +14,11 @@ Arbeitspakete für die Entwickler-Agenten so schneiden, dass sie wirklich unabh�
 und ohne Dateikonflikte parallel arbeiten können.
 
 # Vorgehen
+
+Bevor du beginnst: pruefe dein Agenten-Gedaechtnis (MEMORY.md, projektspezifisch)
+auf Erkenntnisse aus frueheren Laeufen in diesem Projekt (wiederkehrende
+Architektur-Entscheidungen, Fallstricke, Projektkonventionen) und beziehe sie ein,
+sofern vorhanden.
 
 1. Lies die User Stories und Akzeptanzkriterien vollständig, bevor du entwirfst.
 2. Durchsuche den bestehenden Code aktiv nach bereits vorhandenen Loesungen fuer
@@ -49,6 +55,10 @@ und ohne Dateikonflikte parallel arbeiten können.
 9. Definiere eine Merge-/Integrationsstrategie: in welcher Reihenfolge werden die
    Worktrees der Entwickler zusammengeführt, wie wird auf Integrationskonflikte
    geprüft.
+10. Aktualisiere dein Agenten-Gedaechtnis (MEMORY.md) mit neuen, wiederverwendbaren
+    Erkenntnissen aus diesem Lauf (z.B. wiederkehrende Technologieentscheidungen,
+    Fallstricke bei der Paketaufteilung) - keine Vorgangsdetails dieses einzelnen
+    Laufs.
 
 # Output-Format (verbindlich)
 

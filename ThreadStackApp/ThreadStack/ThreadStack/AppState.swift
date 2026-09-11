@@ -131,6 +131,20 @@ final class AppState: ObservableObject {
     private var refreshTimer: Timer?
     private let autoRefreshInterval: TimeInterval = 60   // Sekunden
 
+    // Session-Auto-Renew (Anforderung: laufende Bearbeitung soll eine
+    // abgelaufene Sitzung nicht mehr unterbrechen). Mehrere Requests, die
+    // gleichzeitig auf 401 laufen, teilen sich EINEN Renewal-Versuch statt
+    // je einen eigenen Re-Login/Biometrie-Vorgang auszulösen.
+    private var pendingSessionRenewal: Task<Bool, Never>?
+
+    /// Test-only seam: `tryServerReLogin()` geht über die echte, Biometrie-
+    /// geschützte Keychain, die in einem automatisierten Testlauf entweder
+    /// leer ist oder einen System-Prompt auslösen würde. Ist dieser Override
+    /// gesetzt, verwendet `attemptSessionRenewal()` ihn statt
+    /// `tryServerReLogin()` — Produktionscode lässt ihn `nil` (Default) und
+    /// ist davon unberührt.
+    var sessionRenewalOverride: (() async -> Bool)?
+
     // Graph-Zustand lebt seit der Lesbarkeits-/Wartbarkeits-Aufteilung in
     // `GraphStore` (analog zu `ProgressStore`/`SummaryStore`). `AppState`
     // haelt nur noch diese schwache Rueckreferenz, damit `logout()` weiterhin
@@ -182,6 +196,16 @@ final class AppState: ObservableObject {
         return u
     }
 
+    /// Pfade, die NIE einen automatischen Renewal-Versuch auslösen dürfen:
+    /// `/login` und `/logout` würden sonst bei einem 401 (z.B. falsches
+    /// Passwort) `tryServerReLogin()` → `login()` → erneut `performRequest`
+    /// auf demselben Pfad aufrufen, während der ursprüngliche Renewal-Task
+    /// noch läuft — ein Task, der auf sich selbst wartet, würde deadlocken.
+    /// `/me` ist zusätzlich ausgenommen, da ein 401 dort auch den normalen
+    /// "noch keine Sitzung vorhanden"-Kaltstart-Fall abbildet, für den ein
+    /// Renewal-Versuch ohne vorherigen Login sinnlos wäre.
+    private static let sessionRenewalExemptPaths: Set<String> = ["/login", "/logout", "/me"]
+
     /// Gemeinsamer Kern von `request`/`aiRequest`/`archiveRequest`/
     /// `knowledgeRequest` (Arbeit zur Lesbarkeit/Wartbarkeit - aus 4 fast
     /// identischen Kopien extrahiert): baut die `URLRequest`, sendet sie und
@@ -190,8 +214,19 @@ final class AppState: ObservableObject {
     /// Fehler-Zuordnung (structured error body je Feature-Bereich) - dafür
     /// bekommen sie hier Rohdaten + HTTP-Status zurück, statt die
     /// Entscheidung selbst zu treffen.
+    ///
+    /// Bei einem 401 wird (außer für `sessionRenewalExemptPaths` oder wenn
+    /// bereits ein Retry läuft) EINMAL versucht, die Sitzung über
+    /// `tryServerReLogin()` automatisch zu erneuern und die ursprüngliche
+    /// Anfrage danach transparent zu wiederholen — damit läuft eine während
+    /// der Bearbeitung ablaufende Sitzung nicht mehr in eine sichtbare
+    /// Fehlermeldung, solange gespeicherte Zugangsdaten vorhanden sind.
+    /// Schlägt die Erneuerung fehl (oder sind keine Zugangsdaten
+    /// gespeichert), bleibt das bisherige Verhalten (`APIError.unauthorized`)
+    /// unverändert erhalten.
     private func performRequest(_ method: String, _ path: String,
-                                 body: [String: Any]? = nil) async throws -> (data: Data, http: HTTPURLResponse) {
+                                 body: [String: Any]? = nil,
+                                 allowSessionRenewal: Bool = true) async throws -> (data: Data, http: HTTPURLResponse) {
         var req = URLRequest(url: try url(path))
         req.httpMethod = method
         if let body, !body.isEmpty {
@@ -200,8 +235,32 @@ final class AppState: ObservableObject {
         }
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse else { throw APIError.network }
-        if http.statusCode == 401 { throw APIError.unauthorized }
+        if http.statusCode == 401 {
+            let canRenew = allowSessionRenewal && !Self.sessionRenewalExemptPaths.contains(path)
+            if canRenew, await attemptSessionRenewal() {
+                return try await performRequest(method, path, body: body, allowSessionRenewal: false)
+            }
+            throw APIError.unauthorized
+        }
         return (data, http)
+    }
+
+    /// Bündelt gleichzeitige Renewal-Anfragen mehrerer parallel laufender
+    /// Requests auf EINEN `tryServerReLogin()`-Aufruf, statt pro betroffenem
+    /// Request einen eigenen (ggf. mit eigenem Biometrie-Prompt) zu starten.
+    private func attemptSessionRenewal() async -> Bool {
+        if let existing = pendingSessionRenewal {
+            return await existing.value
+        }
+        let task = Task { [weak self] () -> Bool in
+            guard let self else { return false }
+            if let override = self.sessionRenewalOverride { return await override() }
+            return await self.tryServerReLogin()
+        }
+        pendingSessionRenewal = task
+        let result = await task.value
+        pendingSessionRenewal = nil
+        return result
     }
 
     /// Fallback-Fehlerzuordnung für ≥400-Antworten, die kein feature-
@@ -309,7 +368,9 @@ final class AppState: ObservableObject {
 
     /// Direkter Server-Re-Login mit gespeicherten Credentials (ohne Biometrie-Prompt).
     /// Nur erfolgreich wenn Keychain seit dem letzten Unlock authentifiziert wurde — sonst wirft Keychain.
-    /// Genutzt für transparenten 401-Fallback während die App läuft.
+    /// Wird automatisch von `performRequest`/`attemptSessionRenewal` bei einem
+    /// 401 während laufender Requests aufgerufen (transparenter 401-Fallback
+    /// während die App läuft, siehe dort).
     func tryServerReLogin() async -> Bool {
         guard hasStoredCredentials else { return false }
         do {

@@ -3,6 +3,7 @@ name: code-reviewer
 description: Prueft den Code eines einzelnen, gerade fertiggestellten Entwickler-Arbeitspakets als erfahrener Senior-Entwickler auf Code-Qualitaet, saubere Struktur und langfristige Wartbarkeit - NICHT auf Sicherheit (macht security-reviewer) und NICHT auf fachliche Korrektheit (macht tester). Laeuft nach JEDEM developer-Arbeitspaket, vor dessen Merge in den Zielbranch.
 tools: Read, Grep, Glob, Bash
 model: opus
+memory: project
 ---
 
 # Rolle
@@ -21,6 +22,10 @@ konkret und schnell nachbesserbar, statt sich am Ende ueber mehrere Pakete hinwe
 anzuhaeufen.
 
 # Vorgehen
+
+Bevor du beginnst: pruefe dein Agenten-Gedaechtnis (MEMORY.md, projektspezifisch)
+auf Erkenntnisse aus frueheren Laeufen in diesem Projekt (wiederkehrende
+Qualitaetsprobleme, Projektkonventionen) und beziehe sie ein, sofern vorhanden.
 
 1. Verschaffe dir Ueberblick ueber die Aenderungen dieses Arbeitspakets (z.B. per
    `git diff` gegen den Basis-Branch im jeweiligen Worktree) sowie ueber dessen
@@ -65,6 +70,9 @@ anzuhaeufen.
 4. Kritische und hohe Funde muessen konkret genug beschrieben sein, dass der
    zustaendige developer sie ohne Rueckfrage beheben kann (Datei, Stelle, Problem,
    konkreter Verbesserungsvorschlag).
+5. Aktualisiere dein Agenten-Gedaechtnis (MEMORY.md) mit neuen, wiederverwendbaren
+   Erkenntnissen aus diesem Lauf (z.B. wiederkehrende Qualitaetsprobleme,
+   Projektkonventionen) - keine Vorgangsdetails dieses einzelnen Arbeitspakets.
 
 # Output-Format (verbindlich, IMMER vollstaendig - siehe unten)
 

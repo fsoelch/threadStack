@@ -317,10 +317,10 @@ struct AssignmentTarget: Codable, Equatable, Identifiable {
 // Endpunkt -> Envelope.
 
 /// `GET /api/contact-categories` -> `{categories: [...]}`.
-struct ContactCategoriesResponse: Codable { let categories: [ContactCategory] }
+nonisolated struct ContactCategoriesResponse: Codable { let categories: [ContactCategory] }
 
 /// `POST/PUT /api/contact-categories[/:id]` (Erfolgsfall) -> `{category: {...}}`.
-struct ContactCategoryResponse: Codable { let category: ContactCategory }
+nonisolated struct ContactCategoryResponse: Codable { let category: ContactCategory }
 
 /// `GET /api/contacts/:contactId/info-blocks` -> `{blocks: [...], categories: [...]}`.
 struct ContactInfoBlocksResponse: Codable { let blocks: [ContactInfoBlock]; let categories: [ContactCategory] }

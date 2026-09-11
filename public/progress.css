@@ -76,14 +76,14 @@
 }
 .progress-btn:disabled { opacity: .5; cursor: not-allowed; }
 .progress-btn-primary {
-  background: var(--p-primary); color: #fff;
+  background: var(--p-primary, #1D6FE8); color: #fff;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 1px 3px rgba(29,111,232,.30);
 }
-.progress-btn-primary:hover:not(:disabled) { background: var(--p-primary-dark); }
+.progress-btn-primary:hover:not(:disabled) { background: var(--p-primary-dark, #1560CC); }
 .progress-btn-secondary {
-  background: var(--p-card); color: var(--p-text); border: 1px solid var(--p-border-md);
+  background: var(--p-card, #ffffff); color: var(--p-text, #111210); border: 1px solid var(--p-border-md, #EEEEE9);
 }
-.progress-btn-secondary:hover:not(:disabled) { background: var(--p-card2); }
+.progress-btn-secondary:hover:not(:disabled) { background: var(--p-card2, #F9F9F7); }
 
 .progress-icon-btn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -263,11 +263,14 @@
    Zeitstrahl/der Wiedereinstiegskarte oben - daher eigene Token-Definition. */
 .progress-line, .progress-inline-composer, .progress-summary-box {
   --p-card:          var(--card, #ffffff);
+  --p-card2:         var(--card2, #F9F9F7);
   --p-border:        var(--border, #E8E7E2);
+  --p-border-md:     var(--border-md, #EEEEE9);
   --p-text:          var(--text, #111210);
   --p-text-muted:    var(--text-muted, #5A5850);
   --p-text-light:    var(--text-light, #9A9890);
   --p-primary:       var(--primary, #1D6FE8);
+  --p-primary-dark:  var(--primary-dark, #1560CC);
   --p-r:             var(--r, 8px);
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 13px;
@@ -295,6 +298,25 @@
 .progress-composer-counter { font-size: .6875rem; color: var(--p-text-light); }
 .progress-composer-counter-over { color: #b91c1c; font-weight: 600; }
 .progress-composer-actions { display: flex; gap: .4rem; }
+
+/* ─── "Schlafen bis"-Kurzoption (Story 2) — bewusst klein/unauffaellig:
+   eingeklappt nur ein kleiner, mutedfarbener Text-Trigger, keine eigene
+   Box/kein Rahmen wie die uebrigen Aktionen. ────────────────────────── */
+.progress-composer-snooze { display: flex; flex-direction: column; gap: .3rem; }
+.progress-composer-snooze-toggle {
+  align-self: flex-start; display: inline-flex; align-items: center; gap: .3rem;
+  background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; font-size: .75rem; color: var(--p-text-muted, #5A5850);
+  text-decoration: underline; text-decoration-color: transparent; transition: text-decoration-color .12s;
+}
+.progress-composer-snooze-toggle:hover { text-decoration-color: currentColor; }
+.progress-composer-snooze-row { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+.progress-composer-snooze-label { font-size: .75rem; color: var(--p-text-muted, #5A5850); }
+.progress-composer-snooze-input {
+  font: inherit; font-size: .75rem; padding: .2rem .4rem; border-radius: 6px;
+  border: 1px solid var(--p-border, #E8E7E2); background: var(--p-card, #ffffff); color: var(--p-text, #111210);
+}
+.progress-composer-snooze-status { font-size: .6875rem; color: var(--p-text-light, #9A9890); }
 
 .progress-summary-box {
   display: flex; flex-direction: column; gap: .3rem;

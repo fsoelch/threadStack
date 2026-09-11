@@ -454,3 +454,176 @@ test('Themen-Modal: Fortschrittsverlauf begrenzt auf die letzten 3 Eintraege wie
   assert.equal(calls.length, 1);
   assert.equal(calls[0].limit, 3);
 });
+
+// ── "Schlafen bis"-Kurzoption im Zwischenstand-Composer (Story 2) ────────
+// TSProgress selbst wird (wie in den uebrigen Tests dieser Datei) durch
+// einen Spy ersetzt - die interne progress.js-Logik der Kurzoption ist
+// Gegenstand von test/progress_web_helpers.test.js bzw. eigenstaendiger
+// progress.js-Tests; hier wird ausschliesslich die Verdrahtung durch
+// app.js (mountCardComposer/mountProgressArea -> onSnoozeSave ->
+// saveComposerSnooze -> PUT-Endpunkt -> State-Sync) geprueft.
+function stubFetchJsonOk(window, matcher, jsonBody) {
+  const calls = [];
+  const prevFetch = window.fetch;
+  window.fetch = (url, opts) => {
+    calls.push({ url, opts });
+    if (matcher(url, opts)) {
+      return Promise.resolve({
+        status: 200, ok: true,
+        json: () => Promise.resolve(jsonBody || {}),
+      });
+    }
+    return prevFetch(url, opts);
+  };
+  return calls;
+}
+
+test('mountCardComposer (Todo): onSnoozeSave persistiert ueber PUT /api/todos/:id und aktualisiert den lokalen State', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'todos', [{ id: 'o1', title: 'X', description: '', done: false, snoozedUntil: null }]);
+  let composerOpts = null;
+  window.TSProgress = {
+    mountInlineComposer: (el, opts) => { composerOpts = opts; return { destroy() {} }; },
+    mountTimeline: () => ({ destroy() {} }),
+  };
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  window.mountCardComposer(container, 'todo', 'o1');
+  assert.equal(typeof composerOpts.onSnoozeSave, 'function');
+
+  const fetchCalls = stubFetchJsonOk(window, (url, opts) =>
+    url.endsWith('/api/todos/o1') && opts.method === 'PUT', { id: 'o1', snoozedUntil: '2026-09-20' });
+
+  await composerOpts.onSnoozeSave('2026-09-20');
+  assert.equal(fetchCalls.length, 1);
+  assert.deepEqual(JSON.parse(fetchCalls[0].opts.body), { snoozedUntil: '2026-09-20' });
+  assert.equal(getAppGlobal(window, 'todos')[0].snoozedUntil, '2026-09-20');
+});
+
+test('mountCardComposer (Todo): onSnoozeSave mit null loescht "Schlafen bis" ueber denselben Endpunkt', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'todos', [{ id: 'o2', title: 'X', description: '', done: false, snoozedUntil: '2026-09-20' }]);
+  let composerOpts = null;
+  window.TSProgress = {
+    mountInlineComposer: (el, opts) => { composerOpts = opts; return { destroy() {} }; },
+    mountTimeline: () => ({ destroy() {} }),
+  };
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  window.mountCardComposer(container, 'todo', 'o2');
+
+  const fetchCalls = stubFetchJsonOk(window, (url, opts) =>
+    url.endsWith('/api/todos/o2') && opts.method === 'PUT', { id: 'o2', snoozedUntil: null });
+
+  await composerOpts.onSnoozeSave(null);
+  assert.deepEqual(JSON.parse(fetchCalls[0].opts.body), { snoozedUntil: null });
+  assert.equal(getAppGlobal(window, 'todos')[0].snoozedUntil, null);
+});
+
+test('Todo-Modal offen: Composer-Kurzoption "Schlafen bis" haelt die "Weitere Details"-Felder synchron (kein Auseinanderlaufen zweier Bedienstellen)', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'todos', [{ id: 'o3', title: 'X', description: '', done: false, snoozedUntil: null }]);
+  let composerOpts = null;
+  window.TSProgress = {
+    mountInlineComposer: (el, opts) => { composerOpts = opts; return { destroy() {} }; },
+    mountTimeline: () => ({ destroy() {} }),
+  };
+  window.openTodoModal('o3');
+  assert.equal(typeof composerOpts.onSnoozeSave, 'function');
+  assert.equal(document.getElementById('todo-snooze').value, '');
+
+  stubFetchJsonOk(window, (url, opts) => url.endsWith('/api/todos/o3') && opts.method === 'PUT');
+  await composerOpts.onSnoozeSave('2026-10-01');
+
+  assert.equal(document.getElementById('todo-snooze').value, '2026-10-01');
+  assert.equal(document.getElementById('todo-snooze-has-time').checked, false);
+});
+
+test('mountCardComposer (Thema): onSnoozeSave persistiert ueber PUT /api/meetings/:mid/topics/:tid', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'meetings', [{ id: 'm2', topics: [
+    { id: 'top9', title: 'X', description: '', done: false, snoozedUntil: null },
+  ] }]);
+  let composerOpts = null;
+  window.TSProgress = {
+    mountInlineComposer: (el, opts) => { composerOpts = opts; return { destroy() {} }; },
+    mountTimeline: () => ({ destroy() {} }),
+  };
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  window.mountCardComposer(container, 'topic', 'top9');
+
+  const fetchCalls = stubFetchJsonOk(window, (url, opts) =>
+    url.endsWith('/api/meetings/m2/topics/top9') && opts.method === 'PUT', { id: 'top9', snoozedUntil: '2026-09-21' });
+
+  await composerOpts.onSnoozeSave('2026-09-21');
+  assert.equal(fetchCalls.length, 1);
+  assert.deepEqual(JSON.parse(fetchCalls[0].opts.body), { snoozedUntil: '2026-09-21' });
+  assert.equal(getAppGlobal(window, 'meetings')[0].topics[0].snoozedUntil, '2026-09-21');
+});
+
+test('mountCardComposer (Thema): onSnoozeSave fuer bereits geloeschtes Thema wirft 404-artigen Fehler ohne Netzwerkaufruf', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'meetings', []);
+  let composerOpts = null;
+  window.TSProgress = {
+    mountInlineComposer: (el, opts) => { composerOpts = opts; return { destroy() {} }; },
+    mountTimeline: () => ({ destroy() {} }),
+  };
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  window.mountCardComposer(container, 'topic', 'gone');
+
+  const fetchCalls = stubFetchJsonOk(window, () => true);
+  await assert.rejects(() => composerOpts.onSnoozeSave('2026-09-21'), /gelöscht/);
+  assert.equal(fetchCalls.length, 0);
+});
+
+// Server-Fehler-Envelope ist { error, code, ...extra } (server.js#fail) -
+// analog zu stubFetchJsonOk, liefert aber eine !ok-Antwort mit Status+Body,
+// damit api()s Fehlerpfad (err.status/err.code/err.body) durchlaufen wird.
+function stubFetchJsonError(window, matcher, status, body) {
+  const calls = [];
+  const prevFetch = window.fetch;
+  window.fetch = (url, opts) => {
+    calls.push({ url, opts });
+    if (matcher(url, opts)) {
+      return Promise.resolve({
+        status, ok: false,
+        json: () => Promise.resolve(body || {}),
+      });
+    }
+    return prevFetch(url, opts);
+  };
+  return calls;
+}
+
+test('mountCardComposer (Todo): onSnoozeSave-Fehler eines archivierten Meetings behaelt err.code=ARCHIVED_READONLY (fuer progress.js#mapSnoozeError)', async () => {
+  const { window, document } = loadApp();
+  await tick();
+  setAppGlobal(window, 'todos', [{ id: 'o4', title: 'X', description: '', done: false, snoozedUntil: null }]);
+  let composerOpts = null;
+  window.TSProgress = {
+    mountInlineComposer: (el, opts) => { composerOpts = opts; return { destroy() {} }; },
+    mountTimeline: () => ({ destroy() {} }),
+  };
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  window.mountCardComposer(container, 'todo', 'o4');
+
+  stubFetchJsonError(window, (url, opts) => url.endsWith('/api/todos/o4') && opts.method === 'PUT',
+    409, { error: 'Dieses Meeting ist archiviert. Zum Bearbeiten bitte wiederherstellen.', code: 'ARCHIVED_READONLY' });
+
+  await assert.rejects(
+    () => composerOpts.onSnoozeSave('2026-09-22'),
+    (err) => { assert.equal(err.status, 409); assert.equal(err.code, 'ARCHIVED_READONLY'); return true; },
+  );
+  // Kein optimistisches Update bei fehlgeschlagenem Speichern.
+  assert.equal(getAppGlobal(window, 'todos')[0].snoozedUntil, null);
+});
+

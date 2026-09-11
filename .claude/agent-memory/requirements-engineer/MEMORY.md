@@ -27,3 +27,26 @@
 - "Zwischenstand" = ein Fortschritts-Eintrag (`lib/progress/`, Tabelle
   `progress_entries`) an einem Todo oder Thema, ueber `TSProgress.
   mountInlineComposer` (public/progress.js) erfasst.
+
+## Objekttyp-Steckbriefe
+
+- [Kontakte / Ansprechpartner](domain_contacts.md) — minimales Datenmodell, kein Zwischenstand/Anhang/Stack, bekannte Web-vs-iOS-Divergenz
+- [Zwischenstand-Mechanik](domain_progress_mechanik.md) — konkrete Limits/Paging/Ownership-Regeln fuer "gleiche Bedienung wie bei ToDos"; `topics` hat kein user_id
+
+## Lastenheft-Pflege
+
+- [Lastenheft-Eintraege aktualisieren](workflow_lastenheft.md) — Eintrag ersetzen statt duplizieren, sichere Ersetzungsgrenzen
+
+## Session-/Logout-Handling (2026-09-11)
+- iOS: `tryServerReLogin()` (AppState.swift) existierte bereits vor diesem Feature,
+  wurde aber NIRGENDS aufgerufen (dead code) - "automatische Sitzungserneuerung"
+  war technisch schon vorbereitet, nur nicht verdrahtet. Vor jeder neuen
+  Session-Anforderung erst pruefen, ob so ein ungenutzter Baustein existiert.
+- Web: `.modal-overlay`-Dialoge (`index.html`) liegen als Geschwister NACH dem
+  schliessenden `</div>` von `#app`, nicht darin verschachtelt - `showLogin()`
+  (versteckt nur `#app`) schliesst sie NICHT automatisch. Bei jeder
+  "Login-Screen soll sichtbar werden"-Anforderung diesen Fallstrick pruefen.
+- Web-Session-Store ist `express-session` MemoryStore (kein Redis/DB-Store) -
+  jeder Serverneustart invalidiert SOFORT alle Sitzungen unabhaengig vom
+  12h-maxAge. Relevant als Kontext fuer Session-Timeout-Anforderungen, aber
+  kein eigenstaendiges Anforderungsthema ohne expliziten Wunsch.

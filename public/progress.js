@@ -1086,6 +1086,13 @@
     this.done = !!opts.done;
     this.onSaved = typeof opts.onSaved === 'function' ? opts.onSaved : function () {};
     this.onError = typeof opts.onError === 'function' ? opts.onError : function () {};
+    // `onSnoozeSave` ist optional (z.B. fuer Kontakte, die kein
+    // snoozedUntil-Feld haben, siehe app.js#saveComposerSnooze) - ohne ihn
+    // wird die "Schlafen bis"-Kurzoption gar nicht erst gerendert.
+    this.onSnoozeSave = typeof opts.onSnoozeSave === 'function' ? opts.onSnoozeSave : null;
+    this.snoozeOpen = false;
+    this.snoozeSaving = false;
+    this.snoozeError = null;
     this.destroyed = false;
     // `openOnMount`: ueberspringt den sonst noetigen ersten Klick auf den
     // 💬-Trigger und zeigt das Textfeld direkt beim Einhaengen (siehe
@@ -1106,6 +1113,7 @@
     this._onClick = this.handleClick.bind(this);
     this.rootEl.addEventListener('click', this._onClick);
     this._onInput = this.handleInput.bind(this);
+    this._onChange = this.handleChange.bind(this);
     this.render();
     if (this.open) {
       var ta = this.rootEl.querySelector('[data-role="composer-text"]');
@@ -1144,7 +1152,60 @@
       this.render();
     } else if (action === 'save-composer') {
       this.save();
+    } else if (action === 'toggle-snooze') {
+      this.snoozeOpen = !this.snoozeOpen;
+      this.snoozeError = null;
+      this.render();
+      if (this.snoozeOpen) {
+        var dateInput = this.rootEl.querySelector('[data-role="composer-snooze-date"]');
+        if (dateInput) dateInput.focus();
+      }
+    } else if (action === 'clear-snooze') {
+      this.saveSnooze(null);
     }
+  };
+
+  ComposerInstance.prototype.handleChange = function (ev) {
+    if (ev.target && ev.target.matches && ev.target.matches('[data-role="composer-snooze-date"]')) {
+      this.saveSnooze(ev.target.value || null);
+    }
+  };
+
+  // Speichert "Schlafen bis" sofort bei Auswahl/Loeschen des Datums, ganz
+  // unabhaengig vom eigentlichen Zwischenstand-Text/-"Speichern"-Knopf -
+  // genau das macht die Option unaufdringlich nutzbar, ohne den sonst noch
+  // noetigen Umweg ueber den vollen Bearbeiten-Dialog (siehe Requirements
+  // Story 2: "passiert im Arbeitsablauf sehr oft").
+  ComposerInstance.prototype.saveSnooze = function (dateOrNull) {
+    if (this.snoozeSaving || !this.onSnoozeSave) return;
+    this.snoozeSaving = true;
+    this.snoozeError = null;
+    this.render();
+    var self = this;
+    Promise.resolve(this.onSnoozeSave(dateOrNull)).then(function () {
+      if (self.destroyed) return;
+      self.snoozedUntil = dateOrNull;
+      self.snoozeSaving = false;
+      self.render();
+    }).catch(function (err) {
+      if (self.destroyed) return;
+      self.snoozeSaving = false;
+      self.snoozeError = self.mapSnoozeError(err);
+      self.render();
+    });
+  };
+
+  ComposerInstance.prototype.mapSnoozeError = function (err) {
+    var status = err && err.status;
+    var code = err && err.code;
+    if (status === 429 || code === 'rate_limited') return 'Zu viele Änderungen. Bitte kurz warten.';
+    if (status === 404 || code === 'ref_not_found') {
+      return this.refType === 'topic' ? 'Dieses Thema wurde inzwischen gelöscht.' : 'Dieses Todo wurde inzwischen gelöscht.';
+    }
+    if (status === 400) return 'Ungültiges Datum für „Schlafen bis“.';
+    if (status === 409 && code === 'ARCHIVED_READONLY') return 'Dieses Meeting ist archiviert. Zum Bearbeiten bitte wiederherstellen.';
+    if (status == null) return 'Keine Verbindung zum Server. „Schlafen bis“ wurde nicht gespeichert.';
+    return genericErrorMessage();
   };
 
   ComposerInstance.prototype.save = function () {
@@ -1211,6 +1272,7 @@
     if (this.destroyed) return;
     var root = this.rootEl;
     root.removeEventListener('input', this._onInput);
+    root.removeEventListener('change', this._onChange);
     root.innerHTML = '';
 
     if (this.done) return; // Erledigte Todos bieten keine Zwischenstand-Erfassung an.
@@ -1252,12 +1314,64 @@
     footer.appendChild(actions);
     box.appendChild(footer);
 
+    // ── "Schlafen bis"-Kurzoption (Story 2) — bewusst klein/unauffaellig
+    // unterhalb der eigentlichen Speichern-Aktion, standardmaessig
+    // eingeklappt, und unabhaengig vom Zwischenstand-Text sofort
+    // persistiert (siehe saveSnooze). Nur bei Vorhaben-Typen sichtbar, fuer
+    // die der Aufrufer einen onSnoozeSave-Callback uebergeben hat (z.B.
+    // nicht bei Kontakten, die kein snoozedUntil-Feld haben).
+    if (this.onSnoozeSave) {
+      var snoozeBox = el('div', { class: 'progress-composer-snooze' });
+      if (!this.snoozeOpen) {
+        var toggleLabel = (typeof this.snoozedUntil === 'string' && this.snoozedUntil)
+          ? ('Schläft bis ' + escHtml(formatAbsolute(this.snoozedUntil)))
+          : 'Schlafen bis';
+        snoozeBox.appendChild(el('button', {
+          type: 'button', class: 'progress-composer-snooze-toggle', 'data-action': 'toggle-snooze', 'aria-expanded': 'false'
+        }, '<span aria-hidden="true">🌙</span> ' + toggleLabel));
+      } else {
+        var snoozeInputId = 'progress-composer-snooze-' + this.clientToken;
+        var row = el('div', { class: 'progress-composer-snooze-row' });
+        row.appendChild(el('label', { class: 'progress-composer-snooze-label', for: snoozeInputId }, 'Schlafen bis'));
+        var dateInput = document.createElement('input');
+        dateInput.type = 'date';
+        dateInput.id = snoozeInputId;
+        dateInput.className = 'progress-composer-snooze-input';
+        dateInput.setAttribute('data-role', 'composer-snooze-date');
+        dateInput.value = (typeof this.snoozedUntil === 'string' && this.snoozedUntil) ? this.snoozedUntil.slice(0, 10) : '';
+        dateInput.disabled = this.snoozeSaving;
+        row.appendChild(dateInput);
+        if (this.snoozedUntil) {
+          var clearSnoozeBtn = el('button', {
+            type: 'button', class: 'progress-icon-btn', 'data-action': 'clear-snooze',
+            'aria-label': 'Schlafen bis entfernen', title: 'Schlafen bis entfernen'
+          }, '×');
+          clearSnoozeBtn.disabled = this.snoozeSaving;
+          row.appendChild(clearSnoozeBtn);
+        }
+        var closeSnoozeBtn = el('button', {
+          type: 'button', class: 'progress-icon-btn', 'data-action': 'toggle-snooze',
+          'aria-label': 'Schlafen bis schließen', 'aria-expanded': 'true'
+        }, '<span aria-hidden="true">︿</span>');
+        row.appendChild(closeSnoozeBtn);
+        snoozeBox.appendChild(row);
+        if (this.snoozeSaving) {
+          snoozeBox.appendChild(el('span', { class: 'progress-composer-snooze-status', role: 'status' }, 'Speichert …'));
+        }
+        if (this.snoozeError) {
+          snoozeBox.appendChild(el('p', { class: 'progress-error-text', role: 'alert' }, escHtml(this.snoozeError)));
+        }
+      }
+      box.appendChild(snoozeBox);
+    }
+
     if (this.errorMsg) {
       box.appendChild(el('p', { class: 'progress-error-text', role: 'alert' }, escHtml(this.errorMsg)));
     }
 
     root.appendChild(box);
     root.addEventListener('input', this._onInput);
+    root.addEventListener('change', this._onChange);
     this.updateCounter();
   };
 
@@ -1266,8 +1380,10 @@
     this.destroyed = true;
     this.rootEl.removeEventListener('click', this._onClick);
     this.rootEl.removeEventListener('input', this._onInput);
+    this.rootEl.removeEventListener('change', this._onChange);
     if (this.container) this.container.innerHTML = '';
   };
+
 
   function mountInlineComposer(container, opts) {
     if (!hasDom) throw new Error('mountInlineComposer benötigt eine DOM-Umgebung');

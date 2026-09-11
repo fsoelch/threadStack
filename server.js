@@ -410,7 +410,7 @@ app.get(`${A}/meetings`, requireAuth, (req, res) => {
 });
 
 app.post(`${A}/meetings`, requireAuth, (req, res) => {
-  const { title, description='', participants=[], isRecurring=false, recurrencePattern='', nextDate='', color='#4f46e5' } = req.body;
+  const { title, description='', participants=[], isRecurring=false, recurrencePattern='', nextDate='', color='#4f46e5' } = req.body || {};
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (title.length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
@@ -426,7 +426,7 @@ app.post(`${A}/meetings`, requireAuth, (req, res) => {
 });
 
 app.put(`${A}/meetings/reorder`, requireAuth, (req, res) => {
-  const { ids } = req.body;
+  const { ids } = req.body || {};
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids erforderlich' });
   // Archivierte Meetings werden hier still ignoriert (kein Fehler) - sie
   // tauchen in der vom Client gesendeten Reorder-Liste ohnehin nicht mehr
@@ -442,7 +442,7 @@ app.put(`${A}/meetings/:id`, requireAuth, (req, res) => {
   const m = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!m) return res.status(404).json({ error: 'Nicht gefunden' });
   if (meetingArchivedGuard(res, m.id)) return;
-  const { title=m.title, description=m.description, participants, isRecurring, recurrencePattern, nextDate, color=m.color } = req.body;
+  const { title=m.title, description=m.description, participants, isRecurring, recurrencePattern, nextDate, color=m.color } = req.body || {};
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (!isValidHexColor(color)) return res.status(400).json({ error: 'Ungültige Farbe' });
@@ -530,7 +530,7 @@ function archivedFlagsForTopics(topicIds) {
 app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   if (meetingArchivedGuard(res, req.params.id)) return;
-  const { title, description='', snoozedUntil, isTodo } = req.body;
+  const { title, description='', snoozedUntil, isTodo } = req.body || {};
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
@@ -548,7 +548,7 @@ app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
 app.put(`${A}/meetings/:id/topics/reorder`, requireAuth, (req, res) => {
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   if (meetingArchivedGuard(res, req.params.id)) return;
-  const { ids } = req.body;
+  const { ids } = req.body || {};
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids erforderlich' });
   const update = db.prepare('UPDATE topics SET sort_order=? WHERE id=? AND meeting_id=?');
   db.transaction(() => ids.forEach((id, i) => update.run(i, id, req.params.id)))();
@@ -660,7 +660,7 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT * FROM topics WHERE id=? AND meeting_id=?').get(req.params.tid, req.params.id);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   if (topicArchivedGuard(res, t.id)) return;
-  const { title=t.title, description=t.description, done, result, resultDate, isTodo, snoozedUntil } = req.body;
+  const { title=t.title, description=t.description, done, result, resultDate, isTodo, snoozedUntil } = req.body || {};
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (resultDate !== undefined && !isValidDate(resultDate)) return res.status(400).json({ error: 'Ungültiges Ergebnis-Datum' });
@@ -771,7 +771,7 @@ app.get(`${A}/todos`, requireAuth, (req, res) => {
 });
 
 app.post(`${A}/todos`, requireAuth, (req, res) => {
-  const { title, description='', dueDate, isPrivate, snoozedUntil } = req.body;
+  const { title, description='', dueDate, isPrivate, snoozedUntil } = req.body || {};
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
@@ -791,7 +791,7 @@ app.post(`${A}/todos`, requireAuth, (req, res) => {
 });
 
 app.put(`${A}/todos/reorder`, requireAuth, (req, res) => {
-  const { ids } = req.body;
+  const { ids } = req.body || {};
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids erforderlich' });
   const upd = db.prepare('UPDATE todos SET sort_order=? WHERE id=? AND user_id=?');
   db.transaction(() => ids.forEach((id, i) => upd.run(i, id, req.session.uid)))();
@@ -801,7 +801,7 @@ app.put(`${A}/todos/reorder`, requireAuth, (req, res) => {
 app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
-  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate, isPrivate } = req.body;
+  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate, isPrivate } = req.body || {};
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (dueDate !== undefined && !isValidDate(dueDate)) return res.status(400).json({ error: 'Ungültiges Fälligkeitsdatum' });
@@ -943,7 +943,7 @@ app.post(`${A}/themes`, requireAuth, (req, res) => {
 });
 
 app.put(`${A}/themes/reorder`, requireAuth, (req, res) => {
-  const { ids } = req.body;
+  const { ids } = req.body || {};
   if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids erforderlich' });
   const upd = db.prepare('UPDATE themes SET sort_order=? WHERE id=? AND user_id=?');
   db.transaction(() => ids.forEach((id, i) => upd.run(i, id, req.session.uid)))();

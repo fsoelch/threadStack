@@ -51,6 +51,10 @@ html.ts-dark body {
   pointer-events: none;
 }
 
+html.ts-dark .ts-editor:empty:before {
+  color: #98989d;
+}
+
 .ts-editor a {
   color: #1D6FE8;
   text-decoration: underline;
