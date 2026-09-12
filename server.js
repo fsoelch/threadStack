@@ -19,7 +19,8 @@ const summaries = require('./lib/summaries');
 const contacts = require('./lib/contacts');
 const assignments = require('./lib/contacts/assignments');
 const momentum = require('./lib/momentum');
-const { runCoreMigrations } = require('./db/schema');
+const backup = require('./lib/backup');
+const { runCoreMigrations, rebuildSearchIndex } = require('./db/schema');
 let summaryScheduler; // wird nach dem Laden von ai/index.js weiter unten gesetzt
 
 const app      = express();
@@ -36,6 +37,11 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+// Arbeitspaket B2 (Backup/Restore, Admin, Web-only): eigenes Verzeichnis
+// außerhalb von UPLOADS_DIR/public, niemals über express.static erreichbar.
+const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
+fs.mkdirSync(BACKUPS_DIR, { recursive: true });
 
 // Session secret — generated once, persisted so restarts don't invalidate sessions
 let sessionSecret;
@@ -112,6 +118,11 @@ assignments.purgeAssignmentOrphans(db);
 // konsistent mit der sonstigen "Kern zuerst, dann Erweiterungen"-Reihenfolge).
 momentum.runMomentumMigrations(db);
 momentum.purgeMomentumOrphans(db);
+
+// ── Migration: Backup/Restore (Admin, Web-only, Arbeitspaket B1/B2) ──────
+// Rein additiv (Singleton-Zeile backup_settings, referenziert users(id)) -
+// läuft nach den Kern-Migrationen, da users bereits existieren muss.
+backup.runBackupMigrations(db);
 
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
@@ -252,8 +263,16 @@ app.use((req, res, next) => {
   next();
 });
 
+// Expliziter Store statt des impliziten express-session-Defaults: nötig,
+// damit die Backup-Wiederherstellung (Arbeitspaket B2) nach einem Restore
+// per `sessionStore.clear()` gezielt ALLE Sitzungen invalidieren kann (siehe
+// Architektur-Sicherheitskonzept). Verhalten sonst unverändert (MemoryStore
+// war bereits der implizite Default).
+const sessionStore = new session.MemoryStore();
+
 app.use(session({
   secret: sessionSecret,
+  store: sessionStore,
   resave: false,
   saveUninitialized: false,
   rolling: true,                                // Sliding-Expiration: jedes Request erneuert den Cookie
@@ -2401,6 +2420,8 @@ app.get(BASE || '/', (req, res) => {
       .replace('src="/assets/contacts.js"', `src="${BASE}/assets/contacts.js"`)
       .replace('href="/assets/momentum.css"', `href="${BASE}/assets/momentum.css"`)
       .replace('src="/assets/momentum.js"', `src="${BASE}/assets/momentum.js"`)
+      .replace('href="/assets/backup.css"', `href="${BASE}/assets/backup.css"`)
+      .replace('src="/assets/backup.js"', `src="${BASE}/assets/backup.js"`)
       .replace('src="/assets/app.js"', `src="${BASE}/assets/app.js"`);
   }
   html = html.replace('</head>',
@@ -2594,6 +2615,18 @@ app.use(`${A}/momentum`, momentum.createMomentumRouter({
   now: () => new Date(),
 }));
 
+// ── Backup-API (DB-Sicherung/Wiederherstellung, Admin, Web-only, B1/B2) ──
+// Mount-Pfad folgt derselben App-weiten BASE_PATH-Konvention wie die
+// übrigen Module oben (`${A}/backup`).
+app.use(`${A}/backup`, backup.createBackupRouter({
+  db,
+  requireAdmin,
+  backupsDir: BACKUPS_DIR,
+  sessionStore,
+  rebuildSearchIndex,
+  now: () => new Date(),
+}));
+
 // ── Globaler Error-Handler (letzte Middleware) ────────────────
 // Loggt den Stacktrace ausschließlich nach stderr, niemals in der Antwort an
 // den Endnutzer (keine internen Details wie Pfade/Query-Strings/Stacktraces).
@@ -2612,6 +2645,14 @@ if (require.main === module) {
     aiJobs.start({ db, encryptionKey });
   } catch (e) {
     console.error('[ai/jobs] start failed:', e.message || e);
+  }
+  // Arbeitspaket B2: schlanker In-Prozess-Scheduler für automatische Backups
+  // (Muster wie ai/jobs.js oben) - läuft nur im echten Serverprozess, nicht
+  // in Tests (die server.js per require() ohne require.main===module laden).
+  try {
+    backup.startScheduler({ db, backupsDir: BACKUPS_DIR });
+  } catch (e) {
+    console.error('[backup/scheduler] start failed:', e.message || e);
   }
 }
 
