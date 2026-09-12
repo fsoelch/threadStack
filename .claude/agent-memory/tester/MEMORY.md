@@ -66,3 +66,30 @@
   eigenen Aenderungen (per `git stash` verifizierbar) - nicht als eigenen
   Bug melden, sondern als bekannten Kalibrierungs-Fund im Testbericht
   vermerken.
+
+## Backup/Restore-Feature (2026-09-12) — wiederkehrende Pruefpunkte fuer aehnliche Scheduler-Features
+- Stundengenaue "zu Uhrzeit X automatisch"-Scheduler nach dem ai/jobs.js-
+  Muster (30s-Catch-up-Tick nach Prozessstart) holen einen verpassten Lauf
+  NUR nach, wenn der Prozess INNERHALB DERSELBEN STUNDE neu startet - ein
+  Neustart NACH Ablauf der konfigurierten Stunde (aber noch am selben Tag)
+  wird NICHT nachgeholt, da `tickOnce` strikt `now.getHours() === settings.
+  hour` prueft. Bei einer woertlichen Anforderung "verpasster Lauf desselben
+  Tages wird nachgeholt" ist das eine tatsaechliche Luecke gegenueber dem
+  Wortlaut - aber ein bewusst wiederverwendetes, bereits im Projekt
+  etabliertes Scheduler-Verhalten (identisch zu ai/jobs.js), kein neuer Bug.
+  Empirisch verifiziert per manuellem tickOnce()-Aufruf mit einer Uhrzeit
+  NACH der konfigurierten Stunde. Als bekannte Einschraenkung im Testbericht
+  vermerken, nicht als Go/No-Go-Blocker werten, wenn das Muster bewusst
+  aus einem bestehenden Vorbild uebernommen wurde.
+- Bei Backup/Restore-artigen Features gezielt den REALISTISCHEN Fehlerfall
+  pruefen (z.B. Backup-Zielverzeichnis read-only via `fs.chmodSync(dir,
+  0o500)`), nicht nur den Fall "Zielpfad existiert als Datei statt
+  Verzeichnis" - letzterer erzeugt ein irreführendes `EEXIST` bereits bei
+  `fs.mkdirSync(dir,{recursive:true})` und wuerde SELBST BEREITS
+  FUNKTIONIERENDE Endpunkte (z.B. die Liste laden) als "kaputt" erscheinen
+  lassen, obwohl das nur an der unrealistischen Testkonstruktion liegt.
+- Nebenlaeufigkeits-ACs ("zweiter gleichzeitiger Request wird abgelehnt")
+  brauchen einen ECHTEN parallelen Request (`Promise.all([...])` gegen den
+  wirklichen Router), nicht nur einen Unit-Test des zugrundeliegenden Locks
+  - Race-Bedingungen beim Zusammenspiel von Middleware-Reihenfolge (Rate-
+  Limit-Check vs. Lock-Erwerb) fallen sonst nicht auf.
