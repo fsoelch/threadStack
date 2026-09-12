@@ -9,6 +9,7 @@
 - [Worktree-Sandbox vs. "arbeite auf main"](pitfall_worktree_sandbox_vs_main_instruction.md) — Task sagt main-Checkout, Sandbox isoliert trotzdem aufs eigene Worktree; git reset --hard auf main-Tip im eigenen Branch statt cd in shared checkout.
 - [Momentum-Modul (Sichtbarer Fortschritt)](project_momentum_module.md) — completed_at-Vertrag, Kontakt-Meilenstein ohne Vorher/Nachher-Vergleich, Client-Zeitzone, kein Scheduler noetig.
 - [Backup/Restore-Modul (Arbeitspaket B1)](project_backup_module.md) — db.backup() API, lazy-SQLite-Validierungsfalle, FK-Pragma ausserhalb Transaktion, injection-sichere Tabellenkopie, sendFile dotfiles-404-Falle, 413 braucht manuellen body-parser-Wrapper.
+- [Backup/Restore-Web-Frontend (Arbeitspaket B3)](project_backup_web_module.md) — TSHost.confirm um danger/focus erweitert, neue TSHost.uploadRaw/forceLogout-Wrapper, Datei-Download per simplem `<a href>` statt Fetch+Blob, drei Stellen fuer Modal-Handle-destroy() (×-Button/overlayClick/Escape).
 
 ## Session-Auto-Renew AppState.swift (2026-09-11)
 - `performRequest` ist der EINZIGE Netzwerk-Kern (von request/aiRequest/

@@ -1,0 +1,69 @@
+/* ThreadStack — DB-Backup & Wiederherstellung (Arbeitspaket B3, Admin, Web-only).
+   Nutzt die Design-Tokens von index.html (--border, --shadow-xs, --r, ...)
+   direkt über var(), mit Fallback-Werten, identisch zum Muster in
+   public/momentum.css. Bewusst wenige neue Klassen - Formulare selbst nutzen
+   die bestehenden .form-group/.form-control/.btn*-Klassen aus index.html. */
+
+.backup-view {
+  --bk-card2:      var(--card2, #F9F9F7);
+  --bk-border:     var(--border, #E8E7E2);
+  --bk-text-muted: var(--text-muted, #5A5850);
+  --bk-text-light: var(--text-light, #9A9890);
+  --bk-primary:    var(--primary, #1D6FE8);
+  --bk-red:        var(--red, #EF4444);
+  --bk-r:          var(--r, 8px);
+  --bk-r-lg:       var(--r-lg, 12px);
+
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  display: flex; flex-direction: column; gap: 1.25rem;
+}
+
+.backup-section {
+  background: var(--bk-card2); border: 1px solid var(--bk-border);
+  border-radius: var(--bk-r-lg); padding: 1.25rem;
+}
+.backup-section h3 { font-size: .875rem; font-weight: 700; margin: 0 0 .75rem; }
+
+.backup-toggle-row { display: flex; align-items: center; gap: .6rem; padding: .2rem 0 .75rem; font-size: .875rem; }
+.backup-toggle-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--bk-primary); }
+
+.backup-next-run { font-size: .8125rem; color: var(--bk-text-muted); margin: .5rem 0 .75rem; }
+
+.backup-list-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .75rem; }
+.backup-list-header h3 { margin: 0; }
+
+.backup-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+.backup-item {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  background: #fff; border: 1px solid var(--bk-border); border-radius: var(--bk-r);
+  padding: .6rem .75rem; font-size: .8125rem;
+}
+.backup-item-main { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.backup-timestamp { font-weight: 600; }
+.backup-size { color: var(--bk-text-muted); }
+
+.backup-type-badge {
+  font-size: .6875rem; font-weight: 700; padding: .15rem .5rem; border-radius: 999px;
+  background: var(--bk-border); color: var(--bk-text-muted); text-transform: uppercase; letter-spacing: .02em;
+}
+.backup-type-manual   { background: #EBF2FD; color: var(--bk-primary); }
+.backup-type-auto      { background: #F0FDF8; color: #14A87C; }
+.backup-type-prerestore{ background: #FFFBEB; color: #B45309; }
+
+.backup-item-actions { display: flex; align-items: center; gap: .25rem; flex-shrink: 0; }
+.backup-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: var(--bk-r); border: 1px solid var(--bk-border);
+  background: #fff; color: inherit; text-decoration: none; cursor: pointer; font-size: .875rem;
+}
+.backup-icon-btn:hover { background: var(--bk-card2); }
+.backup-icon-btn-danger:hover { background: #FEF2F2; color: var(--bk-red); }
+
+.backup-empty, .backup-error {
+  text-align: center; color: var(--bk-text-muted); padding: 1.5rem 1rem;
+  background: #fff; border-radius: var(--bk-r); border: 1px dashed var(--bk-border);
+}
+.backup-error { color: #991b1b; }
+.backup-loading { text-align: center; color: var(--bk-text-light); padding: 2rem 1rem; }
+
+.backup-section input[type="file"] { display: block; margin: .25rem 0 .75rem; font-size: .8125rem; }

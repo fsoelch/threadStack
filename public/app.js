@@ -167,12 +167,37 @@ async function api(method, path, body) {
   return data;
 }
 
+// Analog zu api(), aber für binäre Uploads (Arbeitspaket B3, Backup-Restore
+// aus Datei) - api() setzt immer 'Content-Type: application/json' und
+// JSON.stringify()t den Body, das passt nicht für einen rohen Datei-Body.
+// Gleiches 401-/Fehler-Envelope-Verhalten wie api(), damit Aufrufer
+// (public/backup.js) denselben err.code/err.status-Vertrag nutzen können.
+async function uploadRawViaHost(path, file) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+  if (res.status === 401) { handleSessionExpiry(); throw new Error('Sitzung abgelaufen'); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const err = new Error(data.error || 'Fehler');
+    err.status = res.status;
+    err.code   = data.code;
+    err.body   = data;
+    throw err;
+  }
+  return data;
+}
+
 // ── TSHost — Schnittstelle für das Graph-Modul (public/graph.js) ──
 window.TSHost = {
   // graph.js ruft Pfade inkl. führendem "/api" auf (z.B. "/api/graph"), die
   // interne api()-Funktion baut die URL bereits als `${_path}/api${path}` —
   // ohne dieses Kürzen entsteht ein doppeltes "/api/api/...".
   api: (method, path, body, opts) => api(method, path.replace(/^\/api(?=\/|$)/, ''), body),
+  uploadRaw: (path, file) => uploadRawViaHost(path, file),
   toast: (msg, type) => toast(msg, type),
   escHtml: (s) => escHtml(s),
   themeAncestorsPath: (id) => themeAncestorsPath(id),
@@ -204,7 +229,14 @@ window.TSHost = {
     }
     else if (type === 'contact') { selectView('__contacts__'); openContactModal(id); }
   },
-  confirm: ({ title, message, confirmLabel, cancelLabel }) => genericConfirm(title, message, confirmLabel, cancelLabel),
+  confirm: ({ title, message, confirmLabel, cancelLabel, danger, focus }) =>
+    genericConfirm(title, message, confirmLabel, cancelLabel, { danger, focus }),
+  // Arbeitspaket B3 (Backup-Restore): der Server invalidiert nach einer
+  // erfolgreichen Wiederherstellung ALLE Sitzungen serverseitig - der
+  // aktuelle Tab weiss das aber nicht automatisch, bis der nächste Request
+  // 401 liefert. forceLogout() löst denselben Sitzungsende-Screen sofort
+  // aktiv aus, statt auf den nächsten (zufälligen) 401 zu warten.
+  forceLogout: () => handleSessionExpiry(),
   reducedMotion: () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
   // ── Fortschritt/KI-Zusammenfassungen (Arbeitspaket W2) ──────────────
   // Wird von window.TSProgress (public/progress.js, Paket W1) konsumiert.
@@ -1772,6 +1804,8 @@ function showApp() {
   document.getElementById('nav-username').innerHTML   = `<strong>${escHtml(currentUser.username)}</strong>`;
   const adminEntry = document.getElementById('user-menu-admin');
   if (adminEntry) adminEntry.style.display = currentUser.role === 'admin' ? '' : 'none';
+  const backupEntry = document.getElementById('user-menu-backup');
+  if (backupEntry) backupEntry.style.display = currentUser.role === 'admin' ? '' : 'none';
   // Addin-Download-Link auf korrekten Basis-Pfad setzen
   const addinLink = document.getElementById('addin-download-link');
   if (addinLink) addinLink.href = (window.__TS_BASE__ || '') + '/addin/manifest.xml';
@@ -5070,6 +5104,31 @@ async function doAdvanceDate(id) {
 // ── Admin ────────────────────────────────────────────────────
 let adminUsers = [];
 
+// Arbeitspaket B3 (Backup/Restore, Admin, Web-only): Handle des aktuell
+// gemounteten TSBackup-Panels, analog contactDetailHandle - muss beim
+// Schließen des Modals destroy()t werden (sonst blieben z.B. laufende
+// Reload-Timer/Event-Listener an einem bereits ersetzten DOM-Host hängen).
+let backupPanelHandle = null;
+
+function openBackupPanel() {
+  document.getElementById('backup-modal').style.display = 'flex';
+  const host = document.getElementById('backup-panel-host');
+  if (backupPanelHandle && typeof backupPanelHandle.destroy === 'function') backupPanelHandle.destroy();
+  if (!window.TSBackup || typeof TSBackup.mount !== 'function') {
+    host.innerHTML = '<p class="form-error">Datensicherung konnte nicht geladen werden.</p>';
+    return;
+  }
+  backupPanelHandle = TSBackup.mount(host);
+}
+
+function closeBackupPanel() {
+  document.getElementById('backup-modal').style.display = 'none';
+  if (backupPanelHandle && typeof backupPanelHandle.destroy === 'function') {
+    try { backupPanelHandle.destroy(); } catch (e) { console.warn('closeBackupPanel: destroy() fehlgeschlagen', e); }
+  }
+  backupPanelHandle = null;
+}
+
 async function openAdminPanel() {
   document.getElementById('admin-modal').style.display = 'flex';
   document.getElementById('new-user-form').style.display = 'none';
@@ -5295,6 +5354,7 @@ function overlayClick(e, id) {
   // einem bereits verworfenen Host hängen).
   if (id === 'theme-link-modal') { closeThemeLinkModal(); return; }
   if (id === 'contact-modal') { closeContactModal(); return; }
+  if (id === 'backup-modal') { closeBackupPanel(); return; }
   modal.style.display = 'none';
 }
 
@@ -7039,6 +7099,7 @@ document.addEventListener('keydown', e => {
     if (document.getElementById('topic-modal').style.display !== 'none') requestCloseTopicModal();
     if (document.getElementById('theme-link-modal').style.display !== 'none') closeThemeLinkModal();
     if (document.getElementById('contact-modal').style.display !== 'none') closeContactModal();
+    if (document.getElementById('backup-modal').style.display !== 'none') closeBackupPanel();
     if (document.getElementById('rt-link-modal').style.display !== 'none') closeLinkModal();
     if (document.getElementById('progress-entry-modal').style.display !== 'none') closeProgressEntryDialog('cancelled');
     return;

@@ -1816,6 +1816,8 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
 <script defer src="/assets/contacts.js"></script>
 <link rel="stylesheet" href="/assets/momentum.css">
 <script defer src="/assets/momentum.js"></script>
+<link rel="stylesheet" href="/assets/backup.css">
+<script defer src="/assets/backup.js"></script>
 </head>
 <body>
 
@@ -1858,6 +1860,9 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
     </button>
     <button class="user-menu-item" id="user-menu-admin" style="display:none" onclick="closeUserMenu(); openAdminPanel()">
       <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z"/></svg></span><span>Benutzerverwaltung</span>
+    </button>
+    <button class="user-menu-item" id="user-menu-backup" style="display:none" onclick="closeUserMenu(); openBackupPanel()">
+      <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 3.75c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125"/></svg></span><span>Datensicherung</span>
     </button>
     <button class="user-menu-item" onclick="closeUserMenu(); openPasswordModal()">
       <span class="icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z"/></svg></span><span>Passwort ändern</span>
@@ -2206,6 +2211,19 @@ details.more-details-native .form-group:last-child { margin-bottom:.5rem; }
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="document.getElementById('edit-user-modal').style.display='none'">Abbrechen</button>
       <button class="btn btn-primary" id="eu-save-btn" onclick="saveEditUser()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Backup-Panel (Admin, Web-only, Arbeitspaket B3) ──────────── -->
+<div id="backup-modal" class="modal-overlay" style="display:none" onclick="overlayClick(event,'backup-modal')">
+  <div class="modal modal-wide" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h2>Datensicherung</h2>
+      <button class="modal-close" onclick="closeBackupPanel()">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="backup-panel-host"></div>
     </div>
   </div>
 </div>
