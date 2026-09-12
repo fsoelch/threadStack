@@ -12,6 +12,43 @@
 //
 // Ausschliesslich additiv: CREATE TABLE/INDEX IF NOT EXISTS, ALTER TABLE ADD
 // COLUMN nach PRAGMA-table_info-Existenzcheck. Kein DROP/Datenverlust-Pfad.
+
+// Befuellt search_index (FTS5) komplett neu aus den Inhaltstabellen -
+// extrahiert aus der Erst-Migration unten (Arbeitspaket B1, Backup/Restore),
+// damit lib/backup/restore.js denselben Aufbau-Code wiederverwenden kann,
+// statt die FTS5-Schattentabellen 1:1 zu kopieren (fehleranfaellig). Nutzt
+// `content_text` fuer Wissensseiten, falls die Spalte existiert (Phase-4-
+// Migration unten), sonst das aeltere `content` (Erststart vor dieser
+// Migration) - identische Fallunterscheidung wie beim content_text-Rollout.
+function hasColumn(db, table, column) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+}
+
+function rebuildSearchIndex(db) {
+  const knowledgeBody = hasColumn(db, 'knowledge_pages', 'content_text') ? 'content_text' : 'content';
+  db.transaction(() => {
+    db.exec(`DELETE FROM search_index;`);
+    db.exec(`
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+        SELECT 'meeting', id, user_id, title, description FROM meetings;
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+        SELECT 'theme', id, user_id, title, description FROM themes;
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+        SELECT 'topic', t.id, m.user_id, t.title, t.description || ' ' || t.result
+        FROM topics t JOIN meetings m ON m.id = t.meeting_id;
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+        SELECT 'todo', id, user_id, title, description || ' ' || result FROM todos;
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+        SELECT 'contact', id, user_id, name,
+          COALESCE(role,'') || ' ' || COALESCE(email,'') || ' ' || COALESCE(description,'') FROM contacts;
+    `);
+    db.exec(`
+      INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
+        SELECT 'knowledge', id, user_id, title, ${knowledgeBody} FROM knowledge_pages;
+    `);
+  })();
+}
+
 function runCoreMigrations(db, { htmlToText }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -323,22 +360,7 @@ function runCoreMigrations(db, { htmlToText }) {
             ref_type UNINDEXED, ref_id UNINDEXED, user_id UNINDEXED, title, body
           );
         `);
-        db.exec(`
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'meeting', id, user_id, title, description FROM meetings;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'theme', id, user_id, title, description FROM themes;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'topic', t.id, m.user_id, t.title, t.description || ' ' || t.result
-            FROM topics t JOIN meetings m ON m.id = t.meeting_id;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'todo', id, user_id, title, description || ' ' || result FROM todos;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'contact', id, user_id, name,
-              COALESCE(role,'') || ' ' || COALESCE(email,'') || ' ' || COALESCE(description,'') FROM contacts;
-          INSERT INTO search_index(ref_type, ref_id, user_id, title, body)
-            SELECT 'knowledge', id, user_id, title, content FROM knowledge_pages;
-        `);
+        rebuildSearchIndex(db);
         db.exec(`
           CREATE TRIGGER trg_search_meetings_ai AFTER INSERT ON meetings BEGIN
             INSERT INTO search_index(ref_type, ref_id, user_id, title, body) VALUES ('meeting', new.id, new.user_id, new.title, new.description);
@@ -491,4 +513,4 @@ function runCoreMigrations(db, { htmlToText }) {
   }
 }
 
-module.exports = { runCoreMigrations };
+module.exports = { runCoreMigrations, rebuildSearchIndex };

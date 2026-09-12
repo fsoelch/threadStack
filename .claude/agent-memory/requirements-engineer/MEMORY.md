@@ -33,6 +33,7 @@
 - [Kontakte / Ansprechpartner](domain_contacts.md) — minimales Datenmodell, kein Zwischenstand/Anhang/Stack, bekannte Web-vs-iOS-Divergenz
 - [Zwischenstand-Mechanik](domain_progress_mechanik.md) — konkrete Limits/Paging/Ownership-Regeln fuer "gleiche Bedienung wie bei ToDos"; `topics` hat kein user_id
 - [Momentum (Streak/Erledigt-Moment/Wochen-Rueckblick)](domain_momentum.md) — "Thema" bei Meilensteinen ist ein atomares `topics`-Objekt ohne Kind-Todos; Modulname bewusst `momentum` statt `progress` wegen Namenskollision
+- [DB-Backup/Restore (Admin)](domain_backup.md) — Abgrenzung zum bestehenden Pro-Nutzer-Export-Feature; Referenz-Scheduler-Muster aus ai/jobs.js fuer "zu Uhrzeit X automatisch"
 
 ## Lastenheft-Pflege
 
