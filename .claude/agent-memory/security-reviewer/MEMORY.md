@@ -6,6 +6,7 @@
 - [Privates-Rubrik-Invariante](pattern_private_rubrik_label_invariante.md) — Datenschutzfilter haengt am veraenderbaren Label statt an einem Flag
 - [Momentum-Schreibrouten brauchen Rate-Limit von Anfang an](pattern_momentum_writes_need_rate_limit.md) — neue lib/<feature>/routes.js-Module sofort mit dem etablierten 60/10min-Profil ausstatten, nicht erst im Review nachziehen
 - [Client/Backend-Envelope-Drift](pattern_client_backend_envelope_drift.md) — Clients + Test-Mocks nehmen flache Arrays an, Backend liefert Envelopes
+- [Backup-Restore Double-Fault-Falle](pattern_backup_restore_double_fault.md) — fehlschlagender Revert-Versuch wurde faelschlich als reverted:true gemeldet; os.tmpdir() fuer sensible Zwischendateien vermeiden
 
 ## Wiederkehrende, bereits etablierte sichere Muster (als Referenz fuer neue Endpunkte)
 

@@ -137,10 +137,13 @@ test('restoreFromFile: nach Commit erkannte FK-Verletzung wird automatisch zurü
   srcDb.close();
 
   let rebuildCalls = 0;
+  let caughtErr;
   await assert.rejects(
-    restoreFromFile(liveDb, { sourcePath, backupsDir, rebuildSearchIndex: () => { rebuildCalls++; } }),
+    restoreFromFile(liveDb, { sourcePath, backupsDir, rebuildSearchIndex: () => { rebuildCalls++; } }).catch((e) => { caughtErr = e; throw e; }),
     (err) => err instanceof RestoreFailedError && err.reverted === true
   );
+  assert.equal(caughtErr.dbState, 'reverted');
+  assert.match(caughtErr.preRestoreBackup, /^backup-prerestore-/);
 
   // Zurückgerollt: Live-DB zeigt wieder den ORIGINALEN Stand (nicht den defekten Restore-Zwischenstand).
   assert.equal(liveDb.prepare('SELECT username FROM users WHERE id=?').get('u1').username, 'live-vorher');
@@ -151,6 +154,57 @@ test('restoreFromFile: nach Commit erkannte FK-Verletzung wird automatisch zurü
   // revertierenden Restore-Durchlauf aufgerufen.
   assert.equal(rebuildCalls, 1);
 });
+
+test('restoreFromFile: schlaegt der Revert-VERSUCH selbst fehl (z.B. Backup-Datei waehrend des Laufs beschaedigt), wird das NICHT als reverted:true gemeldet (Security-Review-Fund)', async (t) => {
+  const dir = tempDir();
+  t.after(() => cleanup(dir));
+
+  const liveDb = new Database(path.join(dir, 'live.db'));
+  liveDb.exec(REQUIRED_SCHEMA);
+  liveDb.exec(`CREATE TABLE assignments (id TEXT PRIMARY KEY, todo_id TEXT NOT NULL REFERENCES todos(id));`);
+  liveDb.prepare("INSERT INTO users VALUES ('u1','live-vorher')").run();
+  liveDb.prepare("INSERT INTO todos VALUES ('t-live','Live-Todo')").run();
+  liveDb.prepare("INSERT INTO assignments VALUES ('a1','t-live')").run();
+
+  const backupsDir = path.join(dir, 'backups');
+  const sourcePath = path.join(dir, 'restore-source.sqlite');
+  const srcDb = new Database(sourcePath);
+  srcDb.exec(REQUIRED_SCHEMA); // KEIN assignments hier -> FK-Verletzung nach Commit
+  srcDb.prepare("INSERT INTO users VALUES ('u1','aus-backup')").run();
+  srcDb.close();
+
+  // Simuliert einen Revert-VERSUCH, der selbst scheitert: das zweite ATTACH
+  // (Ziel = das automatische Vor-Restore-Backup) wirft absichtlich, das
+  // ERSTE ATTACH (Ziel = die hochgeladene/gewaehlte Restore-Datei) bleibt
+  // unangetastet.
+  const origPrepare = liveDb.prepare.bind(liveDb);
+  let attachCalls = 0;
+  liveDb.prepare = function (sql) {
+    const stmt = origPrepare(sql);
+    if (sql === 'ATTACH DATABASE ? AS restore_src') {
+      const origRun = stmt.run.bind(stmt);
+      stmt.run = function (p) {
+        attachCalls += 1;
+        if (attachCalls === 2) throw new Error('simulierter Revert-Fehler');
+        return origRun(p);
+      };
+    }
+    return stmt;
+  };
+
+  let caughtErr;
+  await assert.rejects(
+    restoreFromFile(liveDb, { sourcePath, backupsDir, rebuildSearchIndex: () => {} }).catch((e) => { caughtErr = e; throw e; }),
+    (err) => err instanceof RestoreFailedError
+  );
+  assert.equal(caughtErr.reverted, false);
+  assert.equal(caughtErr.dbState, 'needs_manual_recovery');
+  assert.match(caughtErr.preRestoreBackup, /^backup-prerestore-/);
+  // Live-DB verharrt im FEHLERHAFTEN Zwischenzustand (NICHT zurueckgerollt) -
+  // das ist der Kern des Fundes: reverted MUSS false sein, nicht true.
+  assert.equal(liveDb.prepare('SELECT username FROM users WHERE id=?').get('u1').username, 'aus-backup');
+});
+
 
 test('restoreFromFile: kopiert nur Tabellen, die in Live-Schema UND Quelle existieren (keine Fremdtabellen-Injektion)', async (t) => {
   const dir = tempDir();
