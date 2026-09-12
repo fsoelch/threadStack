@@ -2,6 +2,7 @@
 
 - [Paketschnitt: Hotspot-Dateien](paketschnitt-hotspot-dateien.md) — server.js, app.js, index.html, pbxproj gehoeren je genau EINEM Paket; Fachlogik in neue Module.
 - [Architektur-Konventionen ThreadStack](architektur-konventionen-threadstack.md) — Modul-Migrationen, DI-Router, FTS-Aggregation, topics-Ownership, Fehler-Envelope, Rate-Limit-Profil.
+- [Paketschnitt Momentum-Feature](paket_momentum.md) — additives Antwortfeld statt Extra-Request fuer Sofort-Feedback, Client-Zeitzone statt gespeicherter Zeitzone, Migration neuer Spalten auf Fremdtabellen im Feature-Modul.
 
 ## Session-Renewal-Architektur (2026-09-11)
 - Bei "401 automatisch abfangen" IMMER pruefen, ob `login`/`logout`/`/me`-Probe-

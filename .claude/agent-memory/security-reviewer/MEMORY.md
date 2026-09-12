@@ -4,6 +4,7 @@
 
 - [escJsAttr vs. escHtml](pattern_escjsattr_vs_eschtml.md) — wirkungsloses onclick-Escaping in app.js, CSP erlaubt unsafe-inline
 - [Privates-Rubrik-Invariante](pattern_private_rubrik_label_invariante.md) — Datenschutzfilter haengt am veraenderbaren Label statt an einem Flag
+- [Momentum-Schreibrouten brauchen Rate-Limit von Anfang an](pattern_momentum_writes_need_rate_limit.md) — neue lib/<feature>/routes.js-Module sofort mit dem etablierten 60/10min-Profil ausstatten, nicht erst im Review nachziehen
 - [Client/Backend-Envelope-Drift](pattern_client_backend_envelope_drift.md) — Clients + Test-Mocks nehmen flache Arrays an, Backend liefert Envelopes
 
 ## Wiederkehrende, bereits etablierte sichere Muster (als Referenz fuer neue Endpunkte)

@@ -18,6 +18,7 @@ const archive = require('./lib/archive');
 const summaries = require('./lib/summaries');
 const contacts = require('./lib/contacts');
 const assignments = require('./lib/contacts/assignments');
+const momentum = require('./lib/momentum');
 const { runCoreMigrations } = require('./db/schema');
 let summaryScheduler; // wird nach dem Laden von ai/index.js weiter unten gesetzt
 
@@ -104,6 +105,14 @@ contacts.ensureContactNoteTriggers(db);
 contacts.purgeContactOrphans(db);
 assignments.purgeAssignmentOrphans(db);
 
+// ── Migration: Sichtbarer Fortschritt (Arbeitspaket M1/M2) ──────
+// Läuft NACH Kontakten/Zuweisungen, da die Meilenstein-Erkennung
+// (lib/momentum/completion.js) bereits gegen `contact_assignments`/
+// `contacts` abgleicht (rein additiv, keine Reihenfolge-Pflicht, aber
+// konsistent mit der sonstigen "Kern zuerst, dann Erweiterungen"-Reihenfolge).
+momentum.runMomentumMigrations(db);
+momentum.purgeMomentumOrphans(db);
+
 // ── Encryption key for AI provider secrets (analogous to session secret) ──
 const ENC_FILE = path.join(DATA_DIR, '.encryption-key');
 let encryptionKey;
@@ -172,6 +181,15 @@ function isValidDate(s) {
   const [, y, mo, d] = m.map(Number);
   const asUtc = new Date(Date.UTC(y, mo - 1, d));
   return asUtc.getUTCFullYear() === y && asUtc.getUTCMonth() === mo - 1 && asUtc.getUTCDate() === d;
+}
+
+// Client-UTC-Offset (Minuten) für den Momentum-Wochenzähler (Arbeitspaket
+// M2). Fehlt er oder ist er ungültig, wird UTC (0) angenommen - ein falscher/
+// fehlender Zeitzonenwert darf das eigentliche Speichern von Todo/Thema
+// niemals verhindern (siehe Architektur-Vertrag M1/M2).
+function momentumUtcOffsetMinutes(raw) {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= -1440 && n <= 1440 ? n : 0;
 }
 
 const MAX_TITLE = 300;
@@ -660,13 +678,15 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT * FROM topics WHERE id=? AND meeting_id=?').get(req.params.tid, req.params.id);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
   if (topicArchivedGuard(res, t.id)) return;
-  const { title=t.title, description=t.description, done, result, resultDate, isTodo, snoozedUntil } = req.body || {};
+  const { title=t.title, description=t.description, done, result, resultDate, isTodo, snoozedUntil, utcOffsetMinutes } = req.body || {};
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (resultDate !== undefined && !isValidDate(resultDate)) return res.status(400).json({ error: 'Ungültiges Ergebnis-Datum' });
   const cleanDesc = stripUnsafeHtml(description);
   const descriptionChanged = cleanDesc !== t.description;
-  const nowIso = new Date().toISOString();
+  const doneChanged = done !== undefined && !!done !== !!t.done;
+  const nowDate = new Date();
+  const nowIso = nowDate.toISOString();
   db.prepare('UPDATE topics SET title=?,description=?,done=?,result=?,result_date=?,is_todo=?,snoozed_until=?,updated_at=? WHERE id=?').run(
     title, cleanDesc,
     done !== undefined ? (done?1:0) : t.done,
@@ -698,6 +718,21 @@ app.put(`${A}/meetings/:id/topics/:tid`, requireAuth, (req, res) => {
       catch (_) { /* best effort */ }
     }
     responseBody.aiSummary = { pending: pendingSummary };
+  }
+  // Sichtbarer Fortschritt (Arbeitspaket M1/M2): additives Feld, kein
+  // Extra-Request für den Erledigt-Moment-Toast (siehe Architektur-Vertrag).
+  // Ein Thema (topics) hat KEINE Kind-Todos - jeder Abschluss ist laut
+  // fachlicher Entscheidung automatisch ein Meilenstein (siehe
+  // lib/momentum/completion.js).
+  if (doneChanged) {
+    try {
+      const offsetMinutes = momentumUtcOffsetMinutes(utcOffsetMinutes);
+      const { milestones } = momentum.applyTopicDoneChange(db, { topicId: t.id, userId: req.session.uid, done: !!done, topicTitle: title, now: nowDate });
+      const weeklyCompletedCount = momentum.weeklyCompletedCount(db, { userId: req.session.uid, utcOffsetMinutes: offsetMinutes, now: nowDate });
+      responseBody.momentum = { weeklyCompletedCount, milestones };
+    } catch (e) {
+      console.error('[momentum] topic completion hook failed:', e.message || e);
+    }
   }
   res.json(responseBody);
 });
@@ -801,20 +836,22 @@ app.put(`${A}/todos/reorder`, requireAuth, (req, res) => {
 app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
   const t = db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(req.params.id, req.session.uid);
   if (!t) return res.status(404).json({ error: 'Nicht gefunden' });
-  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate, isPrivate } = req.body || {};
+  const { title=t.title, description=t.description, done, result, resultDate, snoozedUntil, dueDate, isPrivate, utcOffsetMinutes } = req.body || {};
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (dueDate !== undefined && !isValidDate(dueDate)) return res.status(400).json({ error: 'Ungültiges Fälligkeitsdatum' });
   if (resultDate !== undefined && !isValidDate(resultDate)) return res.status(400).json({ error: 'Ungültiges Ergebnis-Datum' });
   const cleanDesc = stripUnsafeHtml(description);
   const descriptionChanged = cleanDesc !== t.description;
+  const doneChanged = done !== undefined && !!done !== !!t.done;
+  const nowDate = new Date();
   db.prepare('UPDATE todos SET title=?,description=?,done=?,result=?,result_date=?,snoozed_until=?,due_date=?,is_private=?,updated_at=? WHERE id=?').run(
     title, cleanDesc, done !== undefined ? (done?1:0) : t.done,
     stripUnsafeHtml(result ?? t.result), resultDate ?? t.result_date,
     snoozedUntil !== undefined ? (snoozedUntil || '') : t.snoozed_until,
     dueDate !== undefined ? (dueDate || '') : t.due_date,
     isPrivate !== undefined ? (isPrivate ? 1 : 0) : t.is_private,
-    new Date().toISOString(),
+    nowDate.toISOString(),
     t.id);
   const responseBody = { ok: true };
   if (descriptionChanged) {
@@ -824,6 +861,19 @@ app.put(`${A}/todos/:id`, requireAuth, (req, res) => {
       pendingSummary = !!(r && r.enqueued);
     } catch (_) { /* best effort */ }
     responseBody.aiSummary = { pending: pendingSummary };
+  }
+  // Sichtbarer Fortschritt (Arbeitspaket M1/M2): additives Feld, kein
+  // Extra-Request für den Erledigt-Moment-Toast (siehe Architektur-Vertrag).
+  // Läuft NACH dem obigen UPDATE, damit der `done`-Zustand bereits final ist.
+  if (doneChanged) {
+    try {
+      const offsetMinutes = momentumUtcOffsetMinutes(utcOffsetMinutes);
+      const { milestones } = momentum.applyTodoDoneChange(db, { todoId: t.id, userId: req.session.uid, done: !!done, now: nowDate });
+      const weeklyCompletedCount = momentum.weeklyCompletedCount(db, { userId: req.session.uid, utcOffsetMinutes: offsetMinutes, now: nowDate });
+      responseBody.momentum = { weeklyCompletedCount, milestones };
+    } catch (e) {
+      console.error('[momentum] todo completion hook failed:', e.message || e);
+    }
   }
   res.json(responseBody);
 });
@@ -2349,6 +2399,8 @@ app.get(BASE || '/', (req, res) => {
       .replace('src="/assets/progress.js"', `src="${BASE}/assets/progress.js"`)
       .replace('href="/assets/contacts.css"', `href="${BASE}/assets/contacts.css"`)
       .replace('src="/assets/contacts.js"', `src="${BASE}/assets/contacts.js"`)
+      .replace('href="/assets/momentum.css"', `href="${BASE}/assets/momentum.css"`)
+      .replace('src="/assets/momentum.js"', `src="${BASE}/assets/momentum.js"`)
       .replace('src="/assets/app.js"', `src="${BASE}/assets/app.js"`);
   }
   html = html.replace('</head>',
@@ -2530,6 +2582,16 @@ app.use(A, assignments.createAssignmentsRouter({
   isRefReadOnly,
   now: () => new Date().toISOString(),
   fail,
+}));
+
+// ── Momentum-API (Sichtbarer Fortschritt, Arbeitspaket M1/M2) ────
+// Mount-Pfad folgt derselben App-weiten BASE_PATH-Konvention wie Progress-/
+// Archiv-Modul oben (`${A}/momentum`).
+app.use(`${A}/momentum`, momentum.createMomentumRouter({
+  db,
+  requireAuth,
+  uid: (req) => req.session.uid,
+  now: () => new Date(),
 }));
 
 // ── Globaler Error-Handler (letzte Middleware) ────────────────

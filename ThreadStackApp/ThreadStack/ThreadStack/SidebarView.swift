@@ -28,6 +28,11 @@ struct SidebarView: View {
         filteredMeetings.first(where: { !$0.isPast })?.id
     }
 
+    // Sichtbarer Fortschritt (Arbeitspaket M5): Serie-Badge fürs Nav-Item.
+    private var momentumStreakBadge: String? {
+        state.momentumStreakCount.map { "🔥\($0)" }
+    }
+
     var body: some View {
         #if os(macOS)
         macSidebar
@@ -78,6 +83,11 @@ struct SidebarView: View {
                            item: .digest)
                         .tag(SidebarItem.digest.sentinel)
                 }
+                navRow(icon: "flame.fill", iconColor: .orange,
+                       label: "Fortschritt",
+                       badge: momentumStreakBadge,
+                       item: .momentum)
+                    .tag(SidebarItem.momentum.sentinel)
                 navRow(icon: "archivebox.fill", iconColor: .secondary,
                        label: "Archiv",
                        badge: nil,
@@ -169,6 +179,29 @@ struct SidebarView: View {
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
                 }
+
+                Button {
+                    selectedMeetingId = SidebarItem.momentum.sentinel
+                } label: {
+                    HStack {
+                        Label("Fortschritt", systemImage: "flame.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.subheadline)
+                        if let badge = momentumStreakBadge {
+                            Spacer()
+                            Text(badge)
+                                .font(.caption2).fontWeight(.semibold)
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.15))
+                                .foregroundStyle(.orange)
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
 
                 Button {
                     selectedMeetingId = SidebarItem.archive.sentinel
@@ -394,6 +427,7 @@ extension SidebarItem {
         case .contacts:  return "__contacts__"
         case .todos:     return "__todos__"
         case .digest:    return "__digest__"
+        case .momentum:  return "__momentum__"
         case .graph:     return "__graph__"
         case .archive:   return "__archive__"
         }
@@ -405,6 +439,7 @@ extension SidebarItem {
         case "__contacts__"?:  return .contacts
         case "__todos__"?:     return .todos
         case "__digest__"?:    return .digest
+        case "__momentum__"?:  return .momentum
         case "__graph__"?:     return .graph
         case "__archive__"?:   return .archive
         default:               return .meetings

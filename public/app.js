@@ -106,6 +106,7 @@ let knowledgeSearch     = '';
 let editKnowledgeId     = null;
 let knowledgeThemeSelection = new Set(); // im Wissens-Modal ausgewählte Topic-IDs
 let todoThemeSelection = new Set();      // im Todo-Modal ausgewählte Topic-IDs
+let momentumStreak      = null;         // Sichtbarer Fortschritt (Arbeitspaket M4): aktuelle Tages-Serie fuer den Sidebar-Badge, null = keine/deaktiviert
 
 const COLORS = ['#1D6FE8','#3b82f6','#06b6d4','#10b981','#22c55e','#f59e0b','#ef4444','#ec4899','#a855f7','#64748b'];
 
@@ -1838,6 +1839,7 @@ async function doLogin() {
     await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadKnowledgePages(), loadAiSettings(), loadStack()]);
     await loadDrift();
     showApp(); render();
+    loadMomentumBadge().then(render);
     startSnoozeWakeupsPolling();
   } catch(e) { errEl.textContent = e.message; errEl.style.display = ''; }
   finally { setBusy('login-btn', false); }
@@ -1901,6 +1903,14 @@ async function loadMeetings() { meetings = await api('GET', '/meetings'); }
 async function loadTodos()    { try { todos = await api('GET', '/todos'); } catch { todos = []; } }
 async function loadThemes()   { try { themes   = await api('GET', '/themes');   } catch { themes   = []; } }
 async function loadContacts() { try { contacts = await api('GET', '/contacts'); } catch { contacts = []; } }
+// Sichtbarer Fortschritt (Arbeitspaket M4): bewusst getrennt von den
+// Kern-Ladefunktionen oben und NICHT Teil des kritischen Login-Pfads
+// (siehe Aufrufstellen) - ein langsamer/fehlschlagender Momentum-Abruf darf
+// den Login/das Laden von Meetings/Todos nicht verzögern oder blockieren.
+async function loadMomentumBadge() {
+  try { momentumStreak = window.TSMomentum ? await window.TSMomentum.fetchStreakBadge() : null; }
+  catch { momentumStreak = null; }
+}
 
 // ── Render ───────────────────────────────────────────────────
 function render() { renderSidebarModeSwitch(); renderSidebarTop(); renderTodosNav(); renderSidebar(); renderMain(); }
@@ -1988,6 +1998,11 @@ function renderTodosNav() {
     <div class="todo-nav-item ai-action ${selectedId === '__digest__' ? 'active' : ''}" onclick="selectView('__digest__')">
       <div class="todo-nav-icon digest-icon">${ic('<path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>')}</div>
       <span class="todo-nav-label">Wochen-Digest</span>
+    </div>
+    <div class="todo-nav-item ${selectedId === '__momentum__' ? 'active' : ''}" onclick="selectView('__momentum__')">
+      <div class="todo-nav-icon momentum-icon">${ic('<path d="M2.25 18L9 11.25l4.306 4.306a11.95 11.95 0 015.814-5.518l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"/>')}</div>
+      <span class="todo-nav-label">Fortschritt</span>
+      ${momentumStreak ? `<span class="momentum-nav-badge" aria-label="Serie: ${momentumStreak} Tage aktiv">🔥${momentumStreak}</span>` : ''}
     </div>
     <div class="todo-nav-item archive-nav-item ${selectedId === '__archive__' || selectedId === '__archive_detail__' ? 'active' : ''}"
          role="button" tabindex="0"
@@ -2085,6 +2100,7 @@ function renderMain() {
   if (selectedId === '__eod__')      { renderEodView(el); return; }
   if (selectedId === '__stack_history__') { renderStackHistoryView(el); return; }
   if (selectedId === '__digest__')   { renderDigestView(el); return; }
+  if (selectedId === '__momentum__') { renderMomentumView(el); return; }
   if (selectedId === '__archive__')  { renderArchiveView(el); return; }
   if (selectedId === '__archive_detail__') { renderArchiveDetailView(el); return; }
   if (!selectedId) {
@@ -3132,7 +3148,7 @@ async function markMeetingTopicDone(mid, tid) {
   } catch(e) { toast(e.message, 'error'); }
 }
 
-const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest', '__graph__':'Graph', '__archive__':'Archiv', '__archive_detail__':'Archiv' };
+const VIEW_LABELS = { '__themes__':'Wissen', '__contacts__':'Ansprechpartner', '__todos__':'Meine Todos', '__eod__':'Tagesabschluss', '__stack_history__':'Stack-Historie', '__digest__':'Wochen-Digest', '__momentum__':'Fortschritt', '__graph__':'Graph', '__archive__':'Archiv', '__archive_detail__':'Archiv' };
 function updateTopbar(title) {
   const el = document.getElementById('topbar-title');
   if (el) el.textContent = title || '—';
@@ -3565,17 +3581,28 @@ function closeCompleteModal() { document.getElementById('complete-modal').style.
 
 async function saveCompleteModal() {
   const data = { done: true, result: getRT('c-result'), resultDate: document.getElementById('c-date').value };
+  // Sichtbarer Fortschritt (Arbeitspaket M4): Client-Zeitzone mitschicken,
+  // damit "aktiver Tag"/Wochenzähler serverseitig korrekt zugeordnet werden
+  // (siehe Architektur-Vertrag M1/M2) - additiv, ändert nichts am
+  // bestehenden Verhalten für Nutzer ohne das Momentum-Modul.
+  if (window.TSMomentum) data.utcOffsetMinutes = window.TSMomentum.utcOffsetMinutes();
   setBusy('cm-save-btn', true);
   try {
+    let res;
     if (completeTodoId) {
-      await api('PUT', `/todos/${completeTodoId}`, data);
+      res = await api('PUT', `/todos/${completeTodoId}`, data);
       Object.assign(todos.find(t => t.id === completeTodoId), data);
     } else {
-      await api('PUT', `/meetings/${completeMid}/topics/${completeTid}`, data);
+      res = await api('PUT', `/meetings/${completeMid}/topics/${completeTid}`, data);
       Object.assign(getTopic(completeMid, completeTid), data);
     }
     closeCompleteModal(); render();
-    toast('Als erledigt markiert');
+    if (window.TSMomentum && res?.momentum) {
+      window.TSMomentum.showCompletionToast(res.momentum);
+      loadMomentumBadge().then(render);
+    } else {
+      toast('Als erledigt markiert');
+    }
   } catch(e) { toast(e.message, 'error'); }
   finally { setBusy('cm-save-btn', false); }
 }
@@ -6596,6 +6623,23 @@ function pickDigest(artifactId) {
   if (a) { digestState.current = { artifact_id: a.artifact_id, content: a.content, week: a.week, cached: true }; render(); }
 }
 
+// ── Sichtbarer Fortschritt (Arbeitspaket M4) ─────────────────
+// Fachlogik/Rendering lebt vollständig in public/momentum.js (Arbeitspaket
+// M3, window.TSMomentum.mount) - diese Funktion übernimmt ausschließlich das
+// Einhängen in den bestehenden view-Container, analog zu window.TSGraph.mount
+// oben in renderMain().
+let momentumMounted = null;
+function renderMomentumView(el) {
+  el.innerHTML = `<div class="content-header"><h1>📈 Fortschritt</h1></div><div id="momentum-root"></div>`;
+  const root = document.getElementById('momentum-root');
+  if (!window.TSMomentum) {
+    root.innerHTML = `<div class="content-empty"><p>Fortschritt-Modul konnte nicht geladen werden.</p></div>`;
+    return;
+  }
+  momentumMounted?.destroy?.();
+  momentumMounted = window.TSMomentum.mount(root);
+}
+
 // ── Archiv: "Meetings archivieren statt löschen" (Arbeitspaket W1) ──────
 // Server-Grundlage (bereits gemergt): lib/archive/*, Server-Integration in
 // server.js (Pakete B1-B3). Diese Sektion implementiert ausschließlich den
@@ -7047,6 +7091,7 @@ initRtToolbar('kq-content-tb', 'kq-content', { imageButton: true });
     await Promise.all([loadMeetings(), loadTodos(), loadThemes(), loadContacts(), loadKnowledgePages(), loadAiSettings(), loadStack()]);
     await loadDrift();
     showApp(); render();
+    loadMomentumBadge().then(render);
     startSnoozeWakeupsPolling();
   } catch { showLogin(); }
 })();

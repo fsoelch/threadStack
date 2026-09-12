@@ -18,6 +18,7 @@ struct ContentView: View {
                 StackPanelView().padding(16)
             }
         }
+        .overlay(alignment: .top) { ToastOverlayView() }
         .sheet(isPresented: $showAiSettings) { AISettingsView() }
         #else
         iosLayout
@@ -29,6 +30,7 @@ struct ContentView: View {
                         .background(.clear)
                 }
             }
+            .overlay(alignment: .top) { ToastOverlayView() }
             .sheet(isPresented: $showAiSettings) { AISettingsView() }
         #endif
     }
@@ -165,6 +167,12 @@ struct ContentView: View {
             #else
             DigestView()
             #endif
+        case .momentum:
+            #if os(iOS)
+            NavigationStack { MomentumView() }
+            #else
+            MomentumView()
+            #endif
         case .graph:
             #if os(iOS)
             NavigationStack { GraphView() }
@@ -253,9 +261,10 @@ struct ContentView: View {
         await state.loadAiSettings()
         await state.loadStack()
         await state.aiLoadDrift()
+        await state.refreshMomentumStreakBadge()
         // Auto-Refresh-Timer beim ersten Erscheinen starten (idempotent)
         state.startAutoRefresh()
     }
 }
 
-enum SidebarItem: Hashable { case meetings, todos, themes, knowledge, contacts, digest, graph, archive }
+enum SidebarItem: Hashable { case meetings, todos, themes, knowledge, contacts, digest, momentum, graph, archive }

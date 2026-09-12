@@ -129,6 +129,25 @@ final class AppState: ObservableObject {
     @Published var isRefreshing: Bool = false
     @Published var lastRefreshAt: Date? = nil
     private var refreshTimer: Timer?
+
+    // Sichtbarer Fortschritt (Arbeitspaket M5, Momentum): sequentielle
+    // Toast-Warteschlange, damit mehrere Meilensteine (z.B. Thema UND
+    // Kontakt in derselben Aktion) nacheinander statt überlappend gezeigt
+    // werden. Nur der VORDERSTE Eintrag ist sichtbar (siehe ToastOverlay.swift).
+    @Published private(set) var toastQueue: [ToastMessage] = []
+    var currentToast: ToastMessage? { toastQueue.first }
+    func showToast(_ text: String, emphasized: Bool = false) {
+        toastQueue.append(ToastMessage(text: text, emphasized: emphasized))
+    }
+    func dismissCurrentToast(id: UUID) {
+        // Nur entfernen, wenn es wirklich noch der vorderste (angezeigte)
+        // Eintrag ist - verhindert, dass ein verspäteter Auto-Dismiss-Timer
+        // einen inzwischen bereits nachgerückten, ANDEREN Toast wegwischt.
+        if toastQueue.first?.id == id { toastQueue.removeFirst() }
+    }
+    // Aktuelle Tages-Serie für den Sidebar-Badge - nil bedeutet "keine
+    // Serie/deaktiviert/Fehler", nicht "0" (kein Badge statt "🔥0").
+    @Published var momentumStreakCount: Int? = nil
     private let autoRefreshInterval: TimeInterval = 60   // Sekunden
 
     // Session-Auto-Renew (Anforderung: laufende Bearbeitung soll eine
@@ -603,12 +622,18 @@ final class AppState: ObservableObject {
     }
 
     func completeTopic(meetingId: String, id: String, result: String, resultDate: String) async throws {
-        try await requestOK("PUT", "/meetings/\(meetingId)/topics/\(id)", body: [
-            "done": true, "result": result, "resultDate": resultDate
+        // Sichtbarer Fortschritt (Arbeitspaket M5): utcOffsetMinutes additiv im
+        // Body, `momentum`-Feld additiv in der Antwort (siehe Architektur-Vertrag
+        // M1/M2 - server.js bettet es nur ein, wenn `done` sich tatsächlich
+        // ändert). `CompleteMutationResponse` deckt beide möglichen Formen ab.
+        let response: CompleteMutationResponse = try await request("PUT", "/meetings/\(meetingId)/topics/\(id)", body: [
+            "done": true, "result": result, "resultDate": resultDate,
+            "utcOffsetMinutes": utcOffsetMinutes,
         ])
         updateTopicInState(meetingId: meetingId, id: id) { t in
             t.done = true; t.result = result; t.resultDate = resultDate
         }
+        presentMomentumToasts(response.momentum)
     }
 
     func reopenTopic(meetingId: String, id: String) async throws {
@@ -697,12 +722,16 @@ final class AppState: ObservableObject {
     }
 
     func completeTodo(id: String, result: String, resultDate: String) async throws {
-        try await requestOK("PUT", "/todos/\(id)", body: [
-            "done": true, "result": result, "resultDate": resultDate
+        // Sichtbarer Fortschritt (Arbeitspaket M5): siehe Kommentar bei
+        // completeTopic (identisches Muster).
+        let response: CompleteMutationResponse = try await request("PUT", "/todos/\(id)", body: [
+            "done": true, "result": result, "resultDate": resultDate,
+            "utcOffsetMinutes": utcOffsetMinutes,
         ])
         if let i = todos.firstIndex(where: { $0.id == id }) {
             todos[i].done = true; todos[i].result = result; todos[i].resultDate = resultDate
         }
+        presentMomentumToasts(response.momentum)
     }
 
     func reopenTodo(id: String) async throws {

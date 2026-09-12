@@ -7,6 +7,7 @@
 - [Flaky-Test Datumsdrift](flaky_test_date_drift.md) — badgeHtml-Test in progress_web_helpers.test.js bricht kalenderzeitabhaengig (Tage/Wochen-Schwelle), unabhaengig von W1/contacts.js.
 - [Assignments-API-Mismatch (behoben 2026-09-05/06)](contacts_assignments_api_mismatch.md) — contacts.js an echte Server-Envelopes (assignments UND info-blocks/categories) angepasst; bei Formatkonflikt IMMER Modul+Dev-Harness+Mocks+E2E-Test gegen echten Server in einem Zug fixen.
 - [Worktree-Sandbox vs. "arbeite auf main"](pitfall_worktree_sandbox_vs_main_instruction.md) — Task sagt main-Checkout, Sandbox isoliert trotzdem aufs eigene Worktree; git reset --hard auf main-Tip im eigenen Branch statt cd in shared checkout.
+- [Momentum-Modul (Sichtbarer Fortschritt)](project_momentum_module.md) — completed_at-Vertrag, Kontakt-Meilenstein ohne Vorher/Nachher-Vergleich, Client-Zeitzone, kein Scheduler noetig.
 
 ## Session-Auto-Renew AppState.swift (2026-09-11)
 - `performRequest` ist der EINZIGE Netzwerk-Kern (von request/aiRequest/
