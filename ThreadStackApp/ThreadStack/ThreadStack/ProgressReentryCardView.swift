@@ -61,6 +61,7 @@ struct ProgressReentryCardView: View {
     /// angezeigt (nicht nur deaktiviert).
     var onRequestCompose: (() -> Void)? = nil
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
 
     @State private var aiSummary: String?
     @State private var aiError: String?
@@ -163,6 +164,8 @@ struct ProgressReentryCardView: View {
                     }
                     .buttonStyle(.bordered).controlSize(.small)
                     .disabled(aiLoading)
+                    // KI ist offline nicht verfügbar (UX S11).
+                    .offlineGated(offline.isOffline ? OfflineTexts.unavailableTitle : nil)
                     .accessibilityLabel("KI-Zusammenfassung anfordern")
                 }
                 if let onRequestCompose {

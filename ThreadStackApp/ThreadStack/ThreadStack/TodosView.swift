@@ -30,11 +30,168 @@ enum TodoOverviewLogic {
     }
 }
 
+// MARK: - Offline-Gating (Paket P5, reine Entscheidungslogik, testbar)
+
+/// Gemeinsame Offline-Entscheidungslogik der Feature-Views A (Todos, Themen,
+/// Formulare, Zwischenstände). Regeln (S-12): Neu anlegen bleibt offline
+/// aktiv; Bearbeiten/Verwerfen ist offline nur für lokale (noch nicht
+/// synchronisierte, `local-…`) Einträge möglich; Aktionen, die den Server
+/// brauchen (Erledigen, Wieder öffnen, Snooze, Verschieben, Teilen, Topics,
+/// Ansprechpartner, Stack, Reorder, ...), sind für bestehende Einträge
+/// offline und für lokale Einträge immer (auch online) deaktiviert, weil die
+/// AppState-Fassade dort `OfflineError.pendingNotSynced` wirft.
+enum OfflineFeatureALogic {
+    static let pendingNote = "Dieser Eintrag ist noch nicht übertragen."
+    static let discardTitle = "Eintrag verwerfen?"
+    static let discardButton = "Verwerfen"
+    static let composerOfflineHint = "Offline – dein Zwischenstand wird eingereiht und später übertragen."
+    static let relationsSkippedToast = "Topics und Ansprechpartner können erst nach der Übertragung zugeordnet werden."
+
+    static func isLocal(_ id: String) -> Bool { OfflineIds.isLocal(id) }
+
+    /// Grund, warum eine Server-Aktion auf einen BESTEHENDEN Eintrag
+    /// gesperrt ist; `nil` = erlaubt.
+    static func serverActionDisabledReason(id: String, isOffline: Bool) -> String? {
+        if isLocal(id) { return OfflineError.pendingNotSynced.errorDescription }
+        if isOffline { return OfflineTexts.unavailableTitle }
+        return nil
+    }
+
+    /// Bearbeiten: lokale Einträge immer, synchronisierte nur online.
+    static func editDisabledReason(id: String, isOffline: Bool) -> String? {
+        (!isLocal(id) && isOffline) ? OfflineTexts.unavailableTitle : nil
+    }
+
+    enum DeleteMode: Equatable {
+        /// Normales Löschen auf dem Server.
+        case server
+        /// Lokaler Eintrag: Verwerfen (mit Bestätigung) -> `deleteX` der Fassade.
+        case discardLocal
+        case disabled(reason: String)
+    }
+
+    static func deleteMode(id: String, isOffline: Bool) -> DeleteMode {
+        if isLocal(id) { return .discardLocal }
+        if isOffline { return .disabled(reason: OfflineTexts.unavailableTitle) }
+        return .server
+    }
+
+    /// Topic-/Ansprechpartner-Zuordnung (Konsistenzentscheidung 8): offline
+    /// sowie für lokale Einträge deaktiviert (Server-Request nötig).
+    static func relationFieldsDisabled(isOffline: Bool, entryId: String?) -> Bool {
+        isOffline || (entryId.map(isLocal) ?? false)
+    }
+
+    static func relationFieldsHint(isOffline: Bool) -> String {
+        isOffline ? OfflineTexts.unavailableTitle
+                  : (OfflineError.pendingNotSynced.errorDescription ?? OfflineTexts.unavailableTitle)
+    }
+
+    /// Zuordnungs-Requests nur für Server-IDs; ein lokales Ergebnis (offline
+    /// eingereiht) darf sie nicht senden (sonst `pendingNotSynced`).
+    static func shouldCommitRelations(savedId: String) -> Bool { !isLocal(savedId) }
+
+    static func discardMessage(title: String, dependents: Int, showsDependentsHint: Bool = true) -> String {
+        var text = "'\(title)' wird nicht übertragen und gelöscht."
+        if !showsDependentsHint { return text }
+        text += " "
+        if dependents > 0 {
+            text += dependents == 1
+                ? "Der zugehörige ausstehende Zwischenstand wird ebenfalls verworfen."
+                : "Die \(dependents) zugehörigen ausstehenden Zwischenstände werden ebenfalls verworfen."
+        } else {
+            text += "Zugehörige ausstehende Zwischenstände werden ebenfalls verworfen."
+        }
+        return text
+    }
+
+    /// Ausstehende Zwischenstände eines Vorhabens, neueste zuerst (Anzeige
+    /// oberhalb des Server-Verlaufs; ausstehende sind immer jünger).
+    /// `excludingIds`: bereits im Server-Verlauf enthaltene IDs (kein Duplikat anzeigen).
+    static func pendingEntriesNewestFirst(_ items: [PendingItemSummary],
+                                          excludingIds: Set<String> = []) -> [PendingItemSummary] {
+        items.filter { item in item.entityId.map { !excludingIds.contains($0) } ?? true }
+             .sorted { $0.capturedAt > $1.capturedAt }
+    }
+
+    /// Verlauf eines lokalen Vorhabens wird nie vom Server geladen (kein Request mit `local-`-Pfad).
+    static func shouldLoadHistory(refId: String) -> Bool { !isLocal(refId) }
+
+    /// Baut aus einem ausstehenden Zwischenstand einen `ProgressEntry`
+    /// (id = `local-…`), damit `ProgressEntryEditorSheet` unverändert
+    /// wiederverwendet wird. `nil`, wenn Payload/ID fehlen.
+    static func pendingProgressEntry(summary: PendingItemSummary, payload: PendingPayload?,
+                                     refType: String, refId: String) -> ProgressEntry? {
+        guard let entityId = summary.entityId, case .progress(let p)? = payload else { return nil }
+        let plain = OfflineLocalValidation.plainText(fromHTML: p.bodyHTML)
+        let excerpt = plain.count > 280 ? String(plain.prefix(280)) + "…" : plain
+        return ProgressEntry(id: entityId, refType: refType, refId: refId, kind: "note", source: p.source,
+                             bodyHtml: p.bodyHTML, excerpt: excerpt,
+                             createdAt: OfflineDateText.iso(summary.capturedAt), editedAt: nil,
+                             gapDaysBefore: 0, showDormancyMarker: false, editable: true)
+    }
+
+    /// Erklärtext zu einem Status im Formular-Kopf/Zeilendetail (nur fehlgeschlagen/wartend).
+    static func statusMessage(for status: PendingItemStatus) -> String? {
+        switch status {
+        case .failed(let message), .blocked(let message): return message
+        case .pending, .syncing: return nil
+        }
+    }
+
+    /// Verlauf nie geladen und offline -> `OfflineUnavailableView` statt Fehlertext.
+    static func showsOfflineUnavailable(for error: ProgressError) -> Bool { error == .offline }
+}
+
+/// Anfrage "lokalen Eintrag verwerfen" (Bestätigungsdialog).
+struct OfflineDiscardRequest: Identifiable, Equatable {
+    let id: String        // local-… Entity-ID
+    let title: String
+    let dependents: Int
+    /// Hinweis auf abhängige Zwischenstände (nur für Todo/Thema sinnvoll, nicht für einen Zwischenstand selbst).
+    var showsDependentsHint: Bool = true
+}
+
+extension OfflineStatusStore {
+    func discardRequest(forEntityId id: String, title: String) -> OfflineDiscardRequest {
+        let dependents = summary(forEntityId: id).map { intents.dependentsCount($0.id) } ?? 0
+        return OfflineDiscardRequest(id: id, title: title, dependents: dependents)
+    }
+}
+
+extension View {
+    /// Deaktiviert (inkl. accessibilityHint) wenn `reason != nil`; nutzt den
+    /// bestehenden `disabledWhenOfflineCompact` (P2) ohne Zusatzzeile.
+    func offlineGated(_ reason: String?) -> some View {
+        disabledWhenOfflineCompact(reason != nil, hint: reason ?? "")
+    }
+
+    /// Einheitlicher Bestätigungsdialog für "Eintrag verwerfen?" (UX Screen 7).
+    func offlineDiscardDialog(_ request: Binding<OfflineDiscardRequest?>,
+                              onConfirm: @escaping (OfflineDiscardRequest) -> Void) -> some View {
+        confirmationDialog(
+            OfflineFeatureALogic.discardTitle,
+            isPresented: Binding(get: { request.wrappedValue != nil },
+                                 set: { if !$0 { request.wrappedValue = nil } }),
+            titleVisibility: .visible,
+            presenting: request.wrappedValue
+        ) { r in
+            Button(OfflineFeatureALogic.discardButton, role: .destructive) { onConfirm(r) }
+            Button("Abbrechen", role: .cancel) {}
+        } message: { r in
+            Text(OfflineFeatureALogic.discardMessage(title: r.title, dependents: r.dependents,
+                                                     showsDependentsHint: r.showsDependentsHint))
+        }
+    }
+}
+
 struct TodosView: View {
     @EnvironmentObject var state: AppState
     // Zentrale, app-weite Instanz, registriert in `ThreadStackApp.swift` und
     // über `.environmentObject(...)` injiziert.
     @EnvironmentObject var summaryStore: SummaryStore
+    @EnvironmentObject var offline: OfflineStatusStore
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var search = ""
     @State private var showNew = false
     @State private var hidePrivate = false
@@ -116,6 +273,7 @@ struct TodosView: View {
                 Section(header: sectionHeader("Offen", count: openTodos.count, color: DS.accent)) {
                     ForEach(openTodos) { t in
                         TodoRowView(todo: t, summaryStore: summaryStore)
+                            .deleteDisabled(isDeleteDisabled(t))
                     }
                     .onDelete { deleteTodo(from: openTodos, at: $0) }
                 }
@@ -132,6 +290,7 @@ struct TodosView: View {
                 Section(header: sectionHeader("Erledigt", count: doneTodos.count, color: .secondary)) {
                     ForEach(doneTodos) { t in
                         TodoRowView(todo: t, summaryStore: summaryStore)
+                            .deleteDisabled(isDeleteDisabled(t))
                     }
                     .onDelete { deleteTodo(from: doneTodos, at: $0) }
                 }
@@ -178,6 +337,10 @@ struct TodosView: View {
         #endif
         .sheet(isPresented: $showNew) { TodoFormView() }
         .errorAlert($error)
+        .offlineDiscardDialog($discardRequest) { r in
+            Task { do { try await state.deleteTodo(id: r.id) }
+                  catch { self.error = error.localizedDescription } }
+        }
         .onAppear {
             summaryStore.ingest(from: Self.summaryIngestItems(state.todos))
         }
@@ -208,10 +371,25 @@ struct TodosView: View {
         }.scaledFont(.footnote).fontWeight(.semibold)
     }
 
+    private func isDeleteDisabled(_ todo: TodoItem) -> Bool {
+        if case .disabled = OfflineFeatureALogic.deleteMode(id: todo.id, isOffline: offline.isOffline) { return true }
+        return false
+    }
+
     private func deleteTodo(from list: [TodoItem], at offsets: IndexSet) {
-        let ids = offsets.map { list[$0].id }
+        // Lokale Einträge: Verwerfen mit Bestätigung; bestehende offline: gesperrt.
+        var serverIds: [String] = []
+        for index in offsets {
+            let t = list[index]
+            switch OfflineFeatureALogic.deleteMode(id: t.id, isOffline: offline.isOffline) {
+            case .server: serverIds.append(t.id)
+            case .discardLocal: discardRequest = offline.discardRequest(forEntityId: t.id, title: t.title)
+            case .disabled(let reason): error = reason
+            }
+        }
+        guard !serverIds.isEmpty else { return }
         Task {
-            for id in ids {
+            for id in serverIds {
                 do { try await state.deleteTodo(id: id) }
                 catch { self.error = error.localizedDescription }
             }
@@ -238,6 +416,8 @@ struct TodoRowView: View {
     // Zusammenfassung ueberall identisch aussehen (siehe CLAUDE.md).
     var originBadge: String? = nil
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var showEdit = false
     @State private var showComplete = false
     @State private var showMove = false
@@ -248,6 +428,44 @@ struct TodoRowView: View {
 
     private var themeLinks: [(theme: Theme, link: ThemeLink)] { state.themeLinks(for: todo.id) }
     private var summaryRef: String { "todo:\(todo.id)" }
+
+    // Offline-Gating (P5): lokale/ausstehende Einträge und Offline-Modus.
+    private var pendingSummary: PendingItemSummary? { offline.summary(forEntityId: todo.id) }
+    private var serverActionReason: String? {
+        OfflineFeatureALogic.serverActionDisabledReason(id: todo.id, isOffline: offline.isOffline)
+    }
+    private var editReason: String? {
+        OfflineFeatureALogic.editDisabledReason(id: todo.id, isOffline: offline.isOffline)
+    }
+    private var deleteMode: OfflineFeatureALogic.DeleteMode {
+        OfflineFeatureALogic.deleteMode(id: todo.id, isOffline: offline.isOffline)
+    }
+
+    private func requestEdit() {
+        if let editReason { state.showToast(editReason) } else { showEdit = true }
+    }
+
+    private func performDelete() {
+        switch deleteMode {
+        case .server:
+            Task { do { try await state.deleteTodo(id: todo.id) }
+                  catch { self.error = error.localizedDescription } }
+        case .discardLocal:
+            discardRequest = offline.discardRequest(forEntityId: todo.id, title: todo.title)
+        case .disabled(let reason):
+            state.showToast(reason)
+        }
+    }
+
+    private var deleteGateReason: String? {
+        if case .disabled(let reason) = deleteMode { return reason }
+        return nil
+    }
+
+    private var deleteLabelText: String {
+        deleteMode == .discardLocal ? "Verwerfen" : "Löschen"
+    }
+
     private var aiSummary: AISummaryPair? { summaryStore.pair(for: summaryRef) }
 
     // Farbe des linken Akzentbalkens (siehe `accentBar`) — analog zum Web-
@@ -281,55 +499,66 @@ struct TodoRowView: View {
         }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
-                Task { do { try await state.deleteTodo(id: todo.id) }
-                      catch { self.error = error.localizedDescription } }
-            } label: { Label("Löschen", systemImage: "trash") }
+                performDelete()
+            } label: { Label(deleteLabelText, systemImage: "trash") }
+            .offlineGated(deleteGateReason)
 
             if !todo.done {
                 Button { showComplete = true } label: {
                     Label("Erledigt", systemImage: "checkmark.circle")
                 }.tint(.green)
+                .offlineGated(serverActionReason)
             } else {
                 Button {
                     Task { do { try await state.reopenTodo(id: todo.id) }
                           catch { self.error = error.localizedDescription } }
                 } label: { Label("Öffnen", systemImage: "arrow.uturn.left") }
+                .offlineGated(serverActionReason)
             }
         }
         .swipeActions(edge: .leading) {
             Button { showSnooze = true } label: {
                 Label(todo.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz.fill")
             }.tint(DS.accent)
+            .offlineGated(serverActionReason)
         }
         .contentShape(Rectangle())
-        .onTapGesture { showEdit = true }
+        .onTapGesture { requestEdit() }
+        .accessibilityAction(named: "Bearbeiten") { requestEdit() }
         .contextMenu {
-            Button { showEdit    = true } label: { Label("Bearbeiten", systemImage: "pencil") }
+            Button { requestEdit() } label: { Label("Bearbeiten", systemImage: "pencil") }
+                .offlineGated(editReason)
             Button { showThemes  = true } label: { Label("Topic zuweisen", systemImage: "tag") }
+                .offlineGated(serverActionReason)
             Button { showMove    = true } label: { Label("In Meeting verschieben", systemImage: "arrow.right") }
+                .offlineGated(serverActionReason)
             if !todo.done {
                 Button { showPush = true } label: { Label("Auf Stack legen", systemImage: "square.stack.3d.up") }
+                    .offlineGated(serverActionReason)
             }
             Divider()
             Button { showSnooze = true } label: {
                 Label(todo.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz.fill")
             }
+            .offlineGated(serverActionReason)
             Divider()
             if !todo.done {
                 Button { showComplete = true } label: {
                     Label("Als erledigt markieren", systemImage: "checkmark.circle")
                 }
+                .offlineGated(serverActionReason)
             } else {
                 Button {
                     Task { do { try await state.reopenTodo(id: todo.id) }
                           catch { self.error = error.localizedDescription } }
                 } label: { Label("Wieder öffnen", systemImage: "arrow.uturn.left") }
+                .offlineGated(serverActionReason)
             }
             Divider()
             Button(role: .destructive) {
-                Task { do { try await state.deleteTodo(id: todo.id) }
-                      catch { self.error = error.localizedDescription } }
-            } label: { Label("Löschen", systemImage: "trash") }
+                performDelete()
+            } label: { Label(deleteLabelText, systemImage: "trash") }
+            .offlineGated(deleteGateReason)
         }
         .sheet(isPresented: $showEdit)     { TodoFormView(todo: todo) }
         .sheet(isPresented: $showComplete) { TodoCompleteSheet(todo: todo) }
@@ -347,6 +576,10 @@ struct TodoRowView: View {
         .sheet(isPresented: $showPush) {
             StackPushSheet(target: PushTarget(refType: "todo", refId: todo.id, title: todo.title,
                                                nextStep: todo.progress?.nextStep)) // A3: Vorbelegung
+        }
+        .offlineDiscardDialog($discardRequest) { r in
+            Task { do { try await state.deleteTodo(id: r.id) }
+                  catch { self.error = error.localizedDescription } }
         }
         .errorAlert($error)
     }
@@ -373,8 +606,17 @@ struct TodoRowView: View {
                             .scaledFont(.caption).lineLimit(4)
                     }
 
-                    if !todo.done, let due = todo.dueDateFormatted {
-                        dueBadge(text: due, status: todo.dueStatus)
+                    if (!todo.done && todo.dueDateFormatted != nil) || pendingSummary != nil {
+                        HStack(spacing: 4) {
+                            if !todo.done, let due = todo.dueDateFormatted {
+                                dueBadge(text: due, status: todo.dueStatus)
+                            }
+                            // P5: Offline-Kennzeichnung neben dem Fälligkeits-Badge.
+                            if let pendingSummary {
+                                PendingSyncBadge(status: pendingSummary.status,
+                                                 accessibilityItem: "Todo '\(todo.title)'")
+                            }
+                        }
                     }
                     // Erledigte Todos: keine Fortschrittszeile (Vertrag) —
                     // schlafende Todos behalten sie weiterhin sichtbar.
@@ -402,11 +644,14 @@ struct TodoRowView: View {
                         }
                     }
                     if TodoOverviewLogic.showsAISummary(done: todo.done, isReadOnly: false) {
+                        // KI ist offline nicht verfügbar (UX S11) und für lokale Einträge nicht möglich.
                         AISummaryCardView(kind: .progress, summary: aiSummary?.progress,
                                           refType: "todo", refId: todo.id, store: summaryStore,
-                                          onShowAllEntries: { showEdit = true })
+                                          onShowAllEntries: { requestEdit() })
+                            .offlineGated(serverActionReason)
                         AISummaryCardView(kind: .description, summary: aiSummary?.description,
                                           refType: "todo", refId: todo.id, store: summaryStore)
+                            .offlineGated(serverActionReason)
                     }
                 }
                 Spacer()

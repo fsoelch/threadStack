@@ -342,6 +342,11 @@ struct ContactAssignmentSection: View {
     /// (`TodoFormView`/`TopicFormView`) übergeben diesen ohnehin immer
     /// (Niedrig-Fund, Code-Review: kein optionaler Default mehr nötig).
     let onRetryLoad: () -> Void
+    /// Offline-Modus (P5, Konsistenzentscheidung 8): Auswahl ist deaktiviert
+    /// (Zuordnung braucht den Server), solange `disabledHint != nil` — z.B.
+    /// "Offline nicht verfügbar" oder, für lokale (noch nicht synchronisierte)
+    /// Einträge, der Hinweis `pendingNotSynced`. Default `nil` = unverändert.
+    var disabledHint: String? = nil
 
     @EnvironmentObject var state: AppState
     @State private var showContactPicker = false
@@ -367,10 +372,16 @@ struct ContactAssignmentSection: View {
             // geladen wurde. Im Anlegen-Modus (`refId == nil`) ist `loaded`
             // sofort über den bestehenden `.success([])`-Pfad `true`, dort
             // bleibt der Button also durchgehend nutzbar.
-            .disabled(ContactAssignmentPickerLogic.isPickerEntryDisabled(refId: refId, loaded: loaded))
+            .disabled(ContactAssignmentPickerLogic.isPickerEntryDisabled(refId: refId, loaded: loaded)
+                      || disabledHint != nil)
             .accessibilityLabel("Ansprechpartner: \(summaryText)")
-            .accessibilityHint("Öffnet die Ansprechpartner-Auswahl.")
-            if let loadError {
+            .accessibilityHint(disabledHint ?? "Öffnet die Ansprechpartner-Auswahl.")
+            if let disabledHint {
+                // Pflicht laut UX: sichtbarer Zusatz statt stummem, deaktiviertem Button.
+                Text(disabledHint)
+                    .scaledFont(.caption2).foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            } else if let loadError {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(loadError).scaledFont(.footnote).foregroundStyle(.secondary)
                     Button("Erneut versuchen") { onRetryLoad() }

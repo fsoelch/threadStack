@@ -141,6 +141,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     let refType: String
     let refId: String
     @ObservedObject var store: ProgressStore
+    @EnvironmentObject var offline: OfflineStatusStore
     /// Rohes HTML der Beschreibung des zugehörigen Todos/Themas — wird
     /// unverändert an `ProgressEntryEditorSheet` durchgereicht (Kontextzeile
     /// beim Bearbeiten eines Zwischenstands, siehe dortige Doku). `nil`
@@ -160,6 +161,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     @State private var showNextStepEditor = false
     @State private var entrySheetTarget: EntrySheetTarget?
     @State private var deleteCandidate: ProgressEntry?
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var deleteErrorText: String?
     @State private var expandedEntryIds: Set<String> = []
 
@@ -192,9 +194,11 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             // Ladezustand des restlichen Bereichs abhängig.
             reentryContent()
             // (5) Trenner — nur wenn der Verlaufsbereich Inhalt hat.
-            if historyAreaHasVisibleContent {
+            if historyAreaHasVisibleContent || !pendingEntries.isEmpty {
                 Divider()
             }
+            // (5b) P5: noch nicht übertragene (offline erfasste) Zwischenstände, neueste zuerst.
+            pendingSection
             // (6) Verlauf — Lade-/Fehleranzeige oder Einträge, je nach Zustand.
             historySection
         }
@@ -221,10 +225,59 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             }
             Button("Abbrechen", role: .cancel) { deleteCandidate = nil }
         }
+        .offlineDiscardDialog($discardRequest) { r in
+            Task { await performDiscard(r) }
+        }
         .errorAlert($deleteErrorText)
     }
 
+    // MARK: - Offline (P5)
+
+    private var isLocalRef: Bool { OfflineIds.isLocal(refId) }
+
+    /// Ausstehende Zwischenstände dieses Vorhabens (Quelle: `OfflineStatusStore`,
+    /// verbindlich laut Vertrag) als `ProgressEntry` (id `local-…`).
+    private struct PendingRow: Identifiable {
+        let entry: ProgressEntry
+        let status: PendingItemStatus
+        var id: String { entry.id }
+    }
+
+    private var pendingEntries: [PendingRow] {
+        let serverIds = Set(store.entries(refType: refType, refId: refId).map(\.id))
+        let items = OfflineFeatureALogic.pendingEntriesNewestFirst(
+            offline.pendingProgress(refType: refType, refId: refId), excludingIds: serverIds)
+        return items.compactMap { summary in
+            OfflineFeatureALogic.pendingProgressEntry(
+                summary: summary, payload: summary.entityId == nil ? nil : offline.intents.payload(summary.id),
+                refType: refType, refId: refId
+            ).map { PendingRow(entry: $0, status: summary.status) }
+        }
+    }
+
+    @ViewBuilder
+    private var pendingSection: some View {
+        let pending = pendingEntries
+        if !pending.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Noch nicht übertragen").scaledFont(.headline)
+                ForEach(pending) { item in
+                    entryRow(item.entry, pendingStatus: item.status)
+                }
+            }
+        }
+    }
+
+    private func performDiscard(_ request: OfflineDiscardRequest) async {
+        do {
+            try await store.deleteEntry(refType: refType, refId: refId, entryId: request.id)
+        } catch {
+            deleteErrorText = (error as? ProgressError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
     private func loadIfNeeded() async {
+        guard OfflineFeatureALogic.shouldLoadHistory(refId: refId) else { return }
         if store.state(refType: refType, refId: refId) == .idle {
             await store.load(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize)
         }
@@ -240,6 +293,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     /// (aktuell nicht Teil des Vertrags) den Trenner sauber ausblenden könnte,
     /// ohne die Aufrufstelle im `body` anzufassen.
     private var historyAreaHasVisibleContent: Bool {
+        if isLocalRef { return pendingEntries.isEmpty }
         switch store.state(refType: refType, refId: refId) {
         case .idle, .loading, .failed, .loaded: return true
         }
@@ -256,11 +310,29 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
 
     @ViewBuilder
     private var historySection: some View {
+        if isLocalRef {
+            // Lokales Vorhaben: es gibt noch keinen Server-Verlauf, nur ausstehende Einträge.
+            if pendingEntries.isEmpty { emptyState }
+        } else {
+            serverHistorySection
+        }
+    }
+
+    @ViewBuilder
+    private var serverHistorySection: some View {
         switch store.state(refType: refType, refId: refId) {
         case .idle, .loading:
             loadingState
         case .failed(let error):
-            errorState(error)
+            if OfflineFeatureALogic.showsOfflineUnavailable(for: error) {
+                // Nie geladener Verlauf offline (UX Screen 8).
+                OfflineUnavailableView(reason: .notLoadedYet) {
+                    Task { await store.retry(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize) }
+                }
+                .frame(minHeight: 180)
+            } else {
+                errorState(error)
+            }
         case .loaded(let detail):
             entriesSection(detail: detail)
         }
@@ -309,6 +381,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
                 Image(systemName: "pencil")
             }
             .buttonStyle(.plain)
+            .offlineGated(OfflineFeatureALogic.serverActionDisabledReason(id: refId, isOffline: offline.isOffline))
             .accessibilityLabel("Nächsten Schritt bearbeiten")
         }
     }
@@ -357,10 +430,17 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     }
 
     @ViewBuilder
-    private func entryRow(_ entry: ProgressEntry) -> some View {
+    private func entryRow(_ entry: ProgressEntry, pendingStatus: PendingItemStatus? = nil) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
+                    if let pendingStatus {
+                        // P5: Kennzeichnung pro Zwischenstand-Zeile (UX Screen 6).
+                        PendingSyncBadge(status: pendingStatus, accessibilityItem: "Zwischenstand")
+                        if let message = OfflineFeatureALogic.statusMessage(for: pendingStatus) {
+                            Text(message).scaledFont(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
                     if entry.kind == "result" {
                         Label("Abschluss aus Stack", systemImage: "checkmark.seal.fill")
                             .scaledFont(.caption2).foregroundStyle(DS.green).fontWeight(.semibold)
@@ -374,21 +454,24 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
                 }
                 Spacer()
                 if entry.editable {
+                    // Bestehende Einträge: offline gesperrt; lokale: bearbeiten/verwerfen erlaubt.
                     Button {
                         entrySheetTarget = EntrySheetTarget(id: entry.id, entry: entry)
                     } label: {
                         Image(systemName: "pencil")
                     }
                     .buttonStyle(.plain)
+                    .offlineGated(OfflineFeatureALogic.editDisabledReason(id: entry.id, isOffline: offline.isOffline))
                     .accessibilityLabel("Zwischenstand bearbeiten")
 
                     Button {
-                        deleteCandidate = entry
+                        requestDelete(entry)
                     } label: {
                         Image(systemName: "trash")
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Zwischenstand löschen")
+                    .offlineGated(deleteDisabledReason(entry))
+                    .accessibilityLabel(OfflineIds.isLocal(entry.id) ? "Zwischenstand verwerfen" : "Zwischenstand löschen")
                 }
             }
             entryContent(entry)
@@ -402,6 +485,28 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             RoundedRectangle(cornerRadius: DS.radiusM)
                 .strokeBorder(entry.kind == "result" ? DS.green.opacity(0.3) : Color.clear)
         )
+    }
+
+    private func deleteDisabledReason(_ entry: ProgressEntry) -> String? {
+        if case .disabled(let reason) = OfflineFeatureALogic.deleteMode(id: entry.id, isOffline: offline.isOffline) {
+            return reason
+        }
+        return nil
+    }
+
+    private func requestDelete(_ entry: ProgressEntry) {
+        switch OfflineFeatureALogic.deleteMode(id: entry.id, isOffline: offline.isOffline) {
+        case .server:
+            deleteCandidate = entry
+        case .discardLocal:
+            let excerpt = entry.excerpt.isEmpty ? stripHTML(entry.bodyHtml) : entry.excerpt
+            let short = excerpt.count > 40 ? String(excerpt.prefix(40)) + "…" : excerpt
+            var request = offline.discardRequest(forEntityId: entry.id, title: short)
+            request.showsDependentsHint = false
+            discardRequest = request
+        case .disabled:
+            break
+        }
     }
 
     @ViewBuilder

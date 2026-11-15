@@ -65,7 +65,9 @@ struct TodoFormView: View {
     var onSaved: (() -> Void)? = nil
     @EnvironmentObject var state: AppState
     @EnvironmentObject var progressStore: ProgressStore // Fortschrittsverlauf-Zugriff
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var title = ""
     /// Rich-Text-HTML der Beschreibung (siehe `DescriptionReadView`/
     /// `DescriptionEditorSheet`) — bewusst NICHT mehr Klartext (siehe
@@ -145,9 +147,60 @@ struct TodoFormView: View {
         return "Weitere Details"
     }
 
+    // MARK: Offline-Modus (P5)
+
+    /// Das bearbeitete Todo ist lokal (noch nicht synchronisiert) -> "Offline-Eintrag".
+    private var isLocalEntry: Bool { todo.map { OfflineFeatureALogic.isLocal($0.id) } ?? false }
+    /// Bestehendes, synchronisiertes Todo bei fehlender Verbindung: Speichern gesperrt.
+    private var editBlockedReason: String? {
+        guard let todo else { return nil }
+        return OfflineFeatureALogic.editDisabledReason(id: todo.id, isOffline: offline.isOffline)
+    }
+    /// Topic-/Ansprechpartner-Zuordnung braucht den Server (Konsistenzentscheidung 8).
+    private var relationsDisabled: Bool {
+        OfflineFeatureALogic.relationFieldsDisabled(isOffline: offline.isOffline, entryId: todo?.id)
+    }
+    private var relationsHint: String? {
+        relationsDisabled ? OfflineFeatureALogic.relationFieldsHint(isOffline: offline.isOffline) : nil
+    }
+
+    @ViewBuilder
+    private func offlineEntryHeader(_ todo: TodoItem) -> some View {
+        let summary = offline.summary(forEntityId: todo.id)
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                PendingSyncBadge(status: summary?.status ?? .pending, accessibilityItem: "Todo '\(todo.title)'")
+                Text(OfflineFeatureALogic.pendingNote)
+                    .scaledFont(.footnote).foregroundStyle(.secondary)
+                if let summary, let message = OfflineFeatureALogic.statusMessage(for: summary.status) {
+                    Text(message).scaledFont(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func discardLocalTodo(_ request: OfflineDiscardRequest) {
+        Task {
+            do {
+                try await state.deleteTodo(id: request.id)
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+                if let todo, isLocalEntry { offlineEntryHeader(todo) }
+                if let editBlockedReason {
+                    Section {
+                        Label(editBlockedReason, systemImage: "wifi.slash")
+                            .scaledFont(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Section("Titel") {
                     TextField("Todo eingeben", text: $title)
                 }
@@ -169,7 +222,8 @@ struct TodoFormView: View {
                         refType: "todo", refId: todo?.id, selection: $contactIds,
                         loaded: $assignmentsLoaded, userConfirmedSelection: $userConfirmedSelection,
                         loadError: assignmentsLoadError,
-                        onRetryLoad: { Task { await loadContactAssignments() } }
+                        onRetryLoad: { Task { await loadContactAssignments() } },
+                        disabledHint: relationsHint
                     )
                 }
                 Section {
@@ -178,6 +232,14 @@ struct TodoFormView: View {
                     } label: {
                         Text(detailsHeaderText)
                             .accessibilityLabel(detailsHeaderText)
+                    }
+                }
+                if let todo, isLocalEntry {
+                    // Lokalen, nicht synchronisierten Eintrag verwerfen (UX Screen 7).
+                    Section {
+                        Button(OfflineFeatureALogic.discardButton, role: .destructive) {
+                            discardRequest = offline.discardRequest(forEntityId: todo.id, title: title.isEmpty ? todo.title : title)
+                        }
                     }
                 }
                 if let error {
@@ -192,10 +254,15 @@ struct TodoFormView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { save() }
-                        .disabled(title.isEmpty || loading || progressComposer.isOverLimit)
+                        .disabled(title.isEmpty || loading || progressComposer.isOverLimit || editBlockedReason != nil)
                 }
             }
             .onAppear { populate() }
+            .onChange(of: relationsDisabled) { _, disabled in
+                // Verbindung zurück: bestehende Zuordnung nachladen (war offline übersprungen).
+                if !disabled, todo != nil, !assignmentsLoaded { Task { await loadContactAssignments() } }
+            }
+            .offlineDiscardDialog($discardRequest) { discardLocalTodo($0) }
             .interactiveDismissDisabled(progressComposer.isDirty)
             .confirmationDialog(
                 "Zwischenstand verwerfen? Dein eingegebener Text ist noch nicht gespeichert.",
@@ -230,6 +297,8 @@ struct TodoFormView: View {
     }
 
     private func loadContactAssignments() async {
+        // Offline/lokal: bestehende Zuordnung nicht ladbar -> kein Fehlerzustand, Feld ist deaktiviert.
+        if todo != nil && relationsDisabled { return }
         switch await loadAssignedContactIds(state: state, refType: "todo", refId: todo?.id) {
         case .success(let ids):
             // Hoch-Fund (Code-Review, Fall c): ein (ggf. verspätet
@@ -246,7 +315,15 @@ struct TodoFormView: View {
         }
     }
 
+    @ViewBuilder
     private var topicsSection: some View {
+        topicsButton
+        if let relationsHint {
+            Text(relationsHint).scaledFont(.caption2).foregroundStyle(.secondary).accessibilityHidden(true)
+        }
+    }
+
+    private var topicsButton: some View {
         Button {
             showTopicPicker = true
         } label: {
@@ -257,8 +334,9 @@ struct TodoFormView: View {
                 Image(systemName: "chevron.right").foregroundStyle(.secondary)
             }
         }
+        .disabled(relationsDisabled)
         .accessibilityLabel("Zugehörige Topics: \(topicsSummaryText)")
-        .accessibilityHint("Öffnet die Topic-Auswahl.")
+        .accessibilityHint(relationsHint ?? "Öffnet die Topic-Auswahl.")
     }
 
     private var topicsSummaryText: String {
@@ -321,7 +399,8 @@ struct TodoFormView: View {
     private var progressSection: some View {
         if let t = todo {
             ProgressTimelineView(refType: "todo", refId: t.id, store: progressStore, descriptionHTML: description) {
-                ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused) {
+                ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused,
+                                          showsOfflineQueueHint: true) {
                     Task { await commitProgressComposer(refId: t.id) }
                 }
             } reentry: {
@@ -439,8 +518,15 @@ struct TodoFormView: View {
                 // Topic-Zuordnung wird immer (Anlegen UND Bearbeiten) ueber
                 // die Auswahl im Formular gesteuert - ersetzt das fruehere
                 // Auto-Link-nur-bei-Neuanlage-aus-Topic-Kontext-Verhalten.
+                // Lokale (offline eingereihte) Einträge: Zuordnung erst nach der Übertragung
+                // möglich — kein Request (sonst pendingNotSynced), dafür ein Hinweis.
+                var relationsSkipped = false
                 if let savedId {
-                    _ = try? await state.setTodoThemes(id: savedId, themeIds: Array(themeIds))
+                    if OfflineFeatureALogic.shouldCommitRelations(savedId: savedId) {
+                        _ = try? await state.setTodoThemes(id: savedId, themeIds: Array(themeIds))
+                    } else if !themeIds.isEmpty || !contactIds.isEmpty {
+                        relationsSkipped = true
+                    }
                 }
                 // Der Snooze/das Anlegen/Aktualisieren ist an dieser Stelle
                 // bereits serverseitig erfolgt — ein Fehler beim optionalen
@@ -468,7 +554,9 @@ struct TodoFormView: View {
                 // einfach übersprungen, bestehende Zuordnungen bleiben
                 // serverseitig unangetastet.
                 var assignmentErrorText: String?
-                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId {
+                if relationsSkipped { state.showToast(OfflineFeatureALogic.relationsSkippedToast) }
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId,
+                   OfflineFeatureALogic.shouldCommitRelations(savedId: savedId) {
                     do { try await state.setAssignments(refType: "todo", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

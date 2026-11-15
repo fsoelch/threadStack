@@ -42,7 +42,7 @@ struct InlineEntryComposerView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Hinweis: Dieses Vorhaben schläft aktuell. Der Zwischenstand wird trotzdem gespeichert.")
             }
-            ProgressEntryComposerView(composer: composer, isFocused: $focused) {
+            ProgressEntryComposerView(composer: composer, isFocused: $focused, showsOfflineQueueHint: true) {
                 Task { await composer.commit(store: store, refType: refType, refId: refId, hasSnooze: hasSnooze) }
             }
         }

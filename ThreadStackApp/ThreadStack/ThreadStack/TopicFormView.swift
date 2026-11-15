@@ -44,7 +44,9 @@ struct TopicFormView: View {
     var topic: Topic? = nil
     @EnvironmentObject var state: AppState
     @EnvironmentObject var progressStore: ProgressStore // Fortschrittsverlauf-Zugriff
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var title = ""
     /// Rich-Text-HTML der Beschreibung (siehe `DescriptionReadView`/
     /// `DescriptionEditorSheet`) — bewusst NICHT mehr Klartext (siehe
@@ -104,9 +106,57 @@ struct TopicFormView: View {
         return "Weitere Details"
     }
 
+    // MARK: Offline-Modus (P5) — siehe `TodoFormView` (identisches Verhalten)
+
+    private var isLocalEntry: Bool { topic.map { OfflineFeatureALogic.isLocal($0.id) } ?? false }
+    private var editBlockedReason: String? {
+        guard let topic else { return nil }
+        return OfflineFeatureALogic.editDisabledReason(id: topic.id, isOffline: offline.isOffline)
+    }
+    private var relationsDisabled: Bool {
+        OfflineFeatureALogic.relationFieldsDisabled(isOffline: offline.isOffline, entryId: topic?.id)
+    }
+    private var relationsHint: String? {
+        relationsDisabled ? OfflineFeatureALogic.relationFieldsHint(isOffline: offline.isOffline) : nil
+    }
+
+    @ViewBuilder
+    private func offlineEntryHeader(_ topic: Topic) -> some View {
+        let summary = offline.summary(forEntityId: topic.id)
+        Section {
+            VStack(alignment: .leading, spacing: 6) {
+                PendingSyncBadge(status: summary?.status ?? .pending, accessibilityItem: "Thema '\(topic.title)'")
+                Text(OfflineFeatureALogic.pendingNote)
+                    .scaledFont(.footnote).foregroundStyle(.secondary)
+                if let summary, let message = OfflineFeatureALogic.statusMessage(for: summary.status) {
+                    Text(message).scaledFont(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func discardLocalTopic(_ request: OfflineDiscardRequest) {
+        Task {
+            do {
+                try await state.deleteTopic(meetingId: meetingId, id: request.id)
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
+                if let topic, isLocalEntry { offlineEntryHeader(topic) }
+                if let editBlockedReason {
+                    Section {
+                        Label(editBlockedReason, systemImage: "wifi.slash")
+                            .scaledFont(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Section("Titel") {
                     TextField("Thema eingeben", text: $title)
                 }
@@ -131,7 +181,8 @@ struct TopicFormView: View {
                         refType: "topic", refId: topic?.id, selection: $contactIds,
                         loaded: $assignmentsLoaded, userConfirmedSelection: $userConfirmedSelection,
                         loadError: assignmentsLoadError,
-                        onRetryLoad: { Task { await loadContactAssignments() } }
+                        onRetryLoad: { Task { await loadContactAssignments() } },
+                        disabledHint: relationsHint
                     )
                 }
                 Section {
@@ -140,6 +191,14 @@ struct TopicFormView: View {
                     } label: {
                         Text(detailsHeaderText)
                             .accessibilityLabel(detailsHeaderText)
+                    }
+                }
+                if let topic, isLocalEntry {
+                    // Lokales, nicht synchronisiertes Thema verwerfen (UX Screen 7).
+                    Section {
+                        Button(OfflineFeatureALogic.discardButton, role: .destructive) {
+                            discardRequest = offline.discardRequest(forEntityId: topic.id, title: title.isEmpty ? topic.title : title)
+                        }
                     }
                 }
                 if let error {
@@ -154,10 +213,14 @@ struct TopicFormView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { save() }
-                        .disabled(title.isEmpty || loading || progressComposer.isOverLimit)
+                        .disabled(title.isEmpty || loading || progressComposer.isOverLimit || editBlockedReason != nil)
                 }
             }
             .onAppear { populate() }
+            .onChange(of: relationsDisabled) { _, disabled in
+                if !disabled, topic != nil, !assignmentsLoaded { Task { await loadContactAssignments() } }
+            }
+            .offlineDiscardDialog($discardRequest) { discardLocalTopic($0) }
             .interactiveDismissDisabled(progressComposer.isDirty)
             .confirmationDialog(
                 "Zwischenstand verwerfen? Dein eingegebener Text ist noch nicht gespeichert.",
@@ -182,6 +245,8 @@ struct TopicFormView: View {
     }
 
     private func loadContactAssignments() async {
+        // Offline/lokal: bestehende Zuordnung nicht ladbar -> kein Fehlerzustand, Feld ist deaktiviert.
+        if topic != nil && relationsDisabled { return }
         switch await loadAssignedContactIds(state: state, refType: "topic", refId: topic?.id) {
         case .success(let ids):
             // Hoch-Fund (Code-Review, Fall c): siehe `TodoFormView`
@@ -240,7 +305,8 @@ struct TopicFormView: View {
     private var progressSection: some View {
         if let t = topic {
             ProgressTimelineView(refType: "topic", refId: t.id, store: progressStore, descriptionHTML: description) {
-                ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused) {
+                ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused,
+                                          showsOfflineQueueHint: true) {
                     Task { await commitProgressComposer(refId: t.id) }
                 }
             } reentry: {
@@ -363,7 +429,12 @@ struct TopicFormView: View {
                 // Zuordnung serverseitig unangetastet statt gelöscht zu
                 // werden.
                 var assignmentErrorText: String?
-                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId {
+                // Lokale (offline eingereihte) Themen: Zuordnung erst nach der Übertragung möglich.
+                if let savedId, !OfflineFeatureALogic.shouldCommitRelations(savedId: savedId), !contactIds.isEmpty {
+                    state.showToast(OfflineFeatureALogic.relationsSkippedToast)
+                }
+                if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId,
+                   OfflineFeatureALogic.shouldCommitRelations(savedId: savedId) {
                     do { try await state.setAssignments(refType: "topic", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

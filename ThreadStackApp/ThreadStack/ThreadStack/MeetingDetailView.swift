@@ -18,7 +18,9 @@ struct MeetingDetailView: View {
     // Zentrale, app-weite Instanz (analog `progressStore` oben), registriert
     // in `ThreadStackApp.swift` und über `.environmentObject(...)` injiziert.
     @EnvironmentObject var summaryStore: SummaryStore
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) private var dismiss
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var search = ""
     @State private var showEdit = false
     @State private var showNewTopic = false
@@ -75,6 +77,11 @@ struct MeetingDetailView: View {
                 mainBody(current)
             } else if isLoadingArchived {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if offline.isOffline {
+                // Archivierte Meetings werden nie lokal vorgehalten -> "nie geladen" (UX Screen 8).
+                OfflineUnavailableView(reason: .notLoadedYet) {
+                    Task { await loadArchivedIfNeeded(force: true) }
+                }
             } else {
                 VStack(spacing: 12) {
                     Text(archiveLoadError ?? "Archiv konnte nicht geladen werden.")
@@ -180,6 +187,8 @@ struct MeetingDetailView: View {
                         ForEach(openTopics) { t in
                             TopicRowView(topic: t, meetingId: current.id,
                                          progressStore: progressStore, summaryStore: summaryStore)
+                                .deleteDisabled(isDeleteDisabled(t))
+                                .moveDisabled(isReorderDisabled(t))
                         }
                             .onDelete { deleteTopic(from: openTopics, at: $0, meetingId: current.id) }
                             .onMove   { moveTopics(in: openTopics, from: $0, to: $1, meetingId: current.id) }
@@ -210,6 +219,7 @@ struct MeetingDetailView: View {
                         ForEach(doneTopics) { t in
                             TopicRowView(topic: t, meetingId: current.id,
                                          progressStore: progressStore, summaryStore: summaryStore)
+                                .deleteDisabled(isDeleteDisabled(t))
                         }
                             .onDelete { deleteTopic(from: doneTopics, at: $0, meetingId: current.id) }
                     }
@@ -247,6 +257,10 @@ struct MeetingDetailView: View {
         .sheet(isPresented: $showBrief)    { AIBriefSheet(meetingId: current.id) }
         .sheet(isPresented: $showCapture)  { AICaptureSheet(meetingId: current.id) }
         .errorAlert($error)
+        .offlineDiscardDialog($discardRequest) { r in
+            Task { do { try await state.deleteTopic(meetingId: current.id, id: r.id) }
+                  catch { self.error = error.localizedDescription } }
+        }
         .alert("Erfolg", isPresented: Binding(
             get: { infoMessage != nil },
             set: { if !$0 { infoMessage = nil; dismiss() } }
@@ -318,18 +332,23 @@ struct MeetingDetailView: View {
                 #if os(iOS)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
+                        // Offline nicht verfügbar (UX S11): Meeting bearbeiten, Termin, KI.
                         actionChip("Bearbeiten", icon: "pencil", accent: false) { showEdit = true }
+                            .offlineGated(onlineOnlyReason)
                         if current.isRecurring && !current.nextDate.isEmpty {
                             actionChip("Nächster Termin", icon: "arrow.clockwise", accent: false) {
                                 Task { do { try await state.advanceDate(current.id) }
                                       catch { self.error = error.localizedDescription } }
                             }
+                            .offlineGated(onlineOnlyReason)
                         }
                         if state.aiFeatureEnabled(\.brief) {
                             actionChip("Briefing", icon: "sparkles", accent: true) { showBrief = true }
+                                .offlineGated(onlineOnlyReason)
                         }
                         if state.aiFeatureEnabled(\.capture) {
                             actionChip("Notizen", icon: "square.and.pencil", accent: true) { showCapture = true }
+                                .offlineGated(onlineOnlyReason)
                         }
                     }
                     .padding(.horizontal, 1)
@@ -339,6 +358,7 @@ struct MeetingDetailView: View {
                     Button { showEdit = true } label: {
                         Label("Bearbeiten", systemImage: "pencil")
                     }.buttonStyle(.bordered).controlSize(.small)
+                    .offlineGated(onlineOnlyReason)
                     Button { showNewTopic = true } label: {
                         Label("Neues Thema", systemImage: "plus")
                     }.buttonStyle(.bordered).controlSize(.small)
@@ -349,16 +369,19 @@ struct MeetingDetailView: View {
                         } label: {
                             Label("Nächster Termin", systemImage: "arrow.clockwise")
                         }.buttonStyle(.bordered).controlSize(.small)
+                        .offlineGated(onlineOnlyReason)
                     }
                     if state.aiFeatureEnabled(\.brief) {
                         Button { showBrief = true } label: {
                             Label("Briefing", systemImage: "sparkles")
                         }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
+                        .offlineGated(onlineOnlyReason)
                     }
                     if state.aiFeatureEnabled(\.capture) {
                         Button { showCapture = true } label: {
                             Label("Notizen", systemImage: "square.and.pencil")
                         }.buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
+                        .offlineGated(onlineOnlyReason)
                     }
                 }
                 #endif
@@ -388,6 +411,7 @@ struct MeetingDetailView: View {
                 }
                 .buttonStyle(.bordered).controlSize(.small)
                 .disabled(isRestoring)
+                .offlineGated(onlineOnlyReason)
 
                 Button(role: .destructive) {
                     Task { await loadPreflightAndConfirm(current) }
@@ -396,6 +420,7 @@ struct MeetingDetailView: View {
                 }
                 .buttonStyle(.bordered).controlSize(.small)
                 .disabled(isLoadingPreflight || isDeletingPermanently)
+                .offlineGated(onlineOnlyReason)
             }
         }
         .padding(10)
@@ -475,6 +500,7 @@ struct MeetingDetailView: View {
                         catch { self.error = error.localizedDescription }
                     }
                 } label: { Text("Neu").font(.caption) }.buttonStyle(.borderless)
+                .offlineGated(onlineOnlyReason)
             }
             if cmiExpanded {
                 ForEach(cmi.matches) { m in
@@ -514,10 +540,33 @@ struct MeetingDetailView: View {
         }.scaledFont(.footnote).fontWeight(.semibold)
     }
 
+    /// Meeting-Ebene (nicht lokal erzeugbar): Online-only-Aktionen offline gesperrt.
+    private var onlineOnlyReason: String? { offline.isOffline ? OfflineTexts.unavailableTitle : nil }
+
+    private func isDeleteDisabled(_ topic: Topic) -> Bool {
+        if case .disabled = OfflineFeatureALogic.deleteMode(id: topic.id, isOffline: offline.isOffline) { return true }
+        return false
+    }
+
+    /// Reorder braucht den Server und kennt nur Server-IDs: offline und für lokale Themen gesperrt.
+    private func isReorderDisabled(_ topic: Topic) -> Bool {
+        OfflineFeatureALogic.serverActionDisabledReason(id: topic.id, isOffline: offline.isOffline) != nil
+    }
+
     private func deleteTopic(from list: [Topic], at offsets: IndexSet, meetingId: String) {
-        let ids = offsets.map { list[$0].id }
+        // Lokale Themen: Verwerfen mit Bestätigung; bestehende offline: gesperrt.
+        var serverIds: [String] = []
+        for index in offsets {
+            let t = list[index]
+            switch OfflineFeatureALogic.deleteMode(id: t.id, isOffline: offline.isOffline) {
+            case .server: serverIds.append(t.id)
+            case .discardLocal: discardRequest = offline.discardRequest(forEntityId: t.id, title: t.title)
+            case .disabled(let reason): error = reason
+            }
+        }
+        guard !serverIds.isEmpty else { return }
         Task {
-            for id in ids {
+            for id in serverIds {
                 do { try await state.deleteTopic(meetingId: meetingId, id: id) }
                 catch { self.error = error.localizedDescription }
             }
@@ -556,6 +605,8 @@ struct TopicRowView: View {
     @ObservedObject var progressStore: ProgressStore
     @ObservedObject var summaryStore: SummaryStore
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var showEdit = false
     @State private var showComplete = false
     @State private var showShare = false
@@ -567,6 +618,39 @@ struct TopicRowView: View {
 
     private var themeLinks: [(theme: Theme, link: ThemeLink)] { state.themeLinks(for: topic.id) }
 
+    // Offline-Gating (P5): lokale/ausstehende Themen und Offline-Modus.
+    private var pendingSummary: PendingItemSummary? { offline.summary(forEntityId: topic.id) }
+    private var serverActionReason: String? {
+        OfflineFeatureALogic.serverActionDisabledReason(id: topic.id, isOffline: offline.isOffline)
+    }
+    private var editReason: String? {
+        OfflineFeatureALogic.editDisabledReason(id: topic.id, isOffline: offline.isOffline)
+    }
+    private var deleteMode: OfflineFeatureALogic.DeleteMode {
+        OfflineFeatureALogic.deleteMode(id: topic.id, isOffline: offline.isOffline)
+    }
+    private var deleteGateReason: String? {
+        if case .disabled(let reason) = deleteMode { return reason }
+        return nil
+    }
+    private var deleteLabelText: String { deleteMode == .discardLocal ? "Verwerfen" : "Löschen" }
+
+    private func requestEdit() {
+        if let editReason { state.showToast(editReason) } else { showEdit = true }
+    }
+
+    private func performDelete() {
+        switch deleteMode {
+        case .server:
+            Task { do { try await state.deleteTopic(meetingId: meetingId, id: topic.id) }
+                  catch { self.error = error.localizedDescription } }
+        case .discardLocal:
+            discardRequest = offline.discardRequest(forEntityId: topic.id, title: topic.title)
+        case .disabled(let reason):
+            state.showToast(reason)
+        }
+    }
+
     var body: some View {
         if isReadOnly {
             rowContent
@@ -576,28 +660,36 @@ struct TopicRowView: View {
                 .opacity(topic.isSnoozed ? 0.7 : 1)
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {
-                        Task { do { try await state.deleteTopic(meetingId: meetingId, id: topic.id) }
-                              catch { self.error = error.localizedDescription } }
-                    } label: { Label("Löschen", systemImage: "trash") }
+                        performDelete()
+                    } label: { Label(deleteLabelText, systemImage: "trash") }
+                    .offlineGated(deleteGateReason)
 
                     if !topic.done {
                         Button { showComplete = true } label: {
                             Label("Erledigt", systemImage: "checkmark.circle")
                         }.tint(.green)
+                        .offlineGated(serverActionReason)
                     } else {
                         Button {
                             Task { do { try await state.reopenTopic(meetingId: meetingId, id: topic.id) }
                                   catch { self.error = error.localizedDescription } }
                         } label: { Label("Öffnen", systemImage: "arrow.uturn.left") }
+                        .offlineGated(serverActionReason)
                     }
                 }
                 .swipeActions(edge: .leading) {
                     Button { showSnooze = true } label: {
                         Label(topic.isSnoozed ? "Wecken" : "Schlafen", systemImage: "moon.zzz.fill")
                     }.tint(DS.accent)
+                    .offlineGated(serverActionReason)
                 }
                 .contentShape(Rectangle())
-                .onTapGesture { showEdit = true }
+                .onTapGesture { requestEdit() }
+                .accessibilityAction(named: "Bearbeiten") { requestEdit() }
+                .offlineDiscardDialog($discardRequest) { r in
+                    Task { do { try await state.deleteTopic(meetingId: meetingId, id: r.id) }
+                          catch { self.error = error.localizedDescription } }
+                }
                 .contextMenu { contextMenuItems }
                 .sheet(isPresented: $showEdit)     { TopicFormView(meetingId: meetingId, topic: topic) }
                 .sheet(isPresented: $showComplete) { CompleteSheet(meetingId: meetingId, topicId: topic.id) }
@@ -640,6 +732,11 @@ struct TopicRowView: View {
                         Label("Wacht auf am \(wake)", systemImage: "moon.zzz.fill")
                             .scaledFont(.caption2).foregroundStyle(.secondary)
                     }
+                    // P5: Offline-Kennzeichnung (ausstehend/fehlgeschlagen) pro Zeile.
+                    if let pendingSummary {
+                        PendingSyncBadge(status: pendingSummary.status,
+                                         accessibilityItem: "Thema '\(topic.title)'")
+                    }
                     // Erledigte Themen: keine Fortschrittszeile (Vertrag) —
                     // schlafende Themen behalten sie weiterhin sichtbar.
                     if TodoOverviewLogic.showsProgressBadge(done: topic.done) {
@@ -669,11 +766,14 @@ struct TopicRowView: View {
                     // Archivierte Meetings (isReadOnly): kein Composer, keine
                     // KI-Zusammenfassung (bestehender Schreibschutz, Vertrag).
                     if TodoOverviewLogic.showsAISummary(done: topic.done, isReadOnly: isReadOnly) {
+                        // KI ist offline nicht verfügbar (UX S11) und für lokale Themen nicht möglich.
                         AISummaryCardView(kind: .progress, summary: aiSummary?.progress,
                                           refType: "topic", refId: topic.id, store: summaryStore,
-                                          onShowAllEntries: { showEdit = true })
+                                          onShowAllEntries: { requestEdit() })
+                            .offlineGated(serverActionReason)
                         AISummaryCardView(kind: .description, summary: aiSummary?.description,
                                           refType: "topic", refId: topic.id, store: summaryStore)
+                            .offlineGated(serverActionReason)
                     }
                 }
                 Spacer()
@@ -727,35 +827,44 @@ struct TopicRowView: View {
     }
 
     @ViewBuilder private var contextMenuItems: some View {
-        Button { showEdit = true } label: { Label("Bearbeiten", systemImage: "pencil") }
+        Button { requestEdit() } label: { Label("Bearbeiten", systemImage: "pencil") }
+            .offlineGated(editReason)
         Button { showThemes = true } label: { Label("Topic zuweisen", systemImage: "tag") }
+            .offlineGated(serverActionReason)
         Button { showShare = true } label: { Label("Teilen", systemImage: "link") }
+            .offlineGated(serverActionReason)
         Button { showMove = true } label: { Label("Verschieben", systemImage: "arrow.right") }
+            .offlineGated(serverActionReason)
         if !topic.done {
             Button { showPush = true } label: { Label("Auf Stack legen", systemImage: "square.stack.3d.up") }
+                .offlineGated(serverActionReason)
         }
         Divider()
         Button { showSnooze = true } label: { Label(topic.isSnoozed ? "Wecken" : "Schlafen legen", systemImage: "moon.zzz.fill") }
+            .offlineGated(serverActionReason)
         Button {
             Task { do { try await state.toggleTopicTodo(meetingId: meetingId, id: topic.id) }
                   catch { self.error = error.localizedDescription } }
         } label: {
             Label(topic.isTodo ? "Aus Todos entfernen" : "Als Todo markieren", systemImage: topic.isTodo ? "pin.slash" : "pin")
         }
+        .offlineGated(serverActionReason)
         Divider()
         if !topic.done {
             Button { showComplete = true } label: { Label("Als erledigt markieren", systemImage: "checkmark.circle") }
+                .offlineGated(serverActionReason)
         } else {
             Button {
                 Task { do { try await state.reopenTopic(meetingId: meetingId, id: topic.id) }
                       catch { self.error = error.localizedDescription } }
             } label: { Label("Wieder öffnen", systemImage: "arrow.uturn.left") }
+            .offlineGated(serverActionReason)
         }
         Divider()
         Button(role: .destructive) {
-            Task { do { try await state.deleteTopic(meetingId: meetingId, id: topic.id) }
-                  catch { self.error = error.localizedDescription } }
-        } label: { Label("Löschen", systemImage: "trash") }
+            performDelete()
+        } label: { Label(deleteLabelText, systemImage: "trash") }
+        .offlineGated(deleteGateReason)
     }
 
     private func themeChip(_ title: String) -> some View {

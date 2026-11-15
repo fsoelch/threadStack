@@ -186,11 +186,18 @@ final class ProgressEntryComposer: ObservableObject {
 struct ProgressEntryComposerView: View {
     @ObservedObject var composer: ProgressEntryComposer
     var isFocused: FocusState<Bool>.Binding
+    /// P5: `true` nur für Vorhaben (Todo/Thema), deren Zwischenstände offline
+    /// eingereiht werden — dann erscheint offline der Hinweis "wird eingereiht".
+    /// Default `false`: andere Aufrufer (z.B. Kontakte) bleiben unverändert.
+    var showsOfflineQueueHint: Bool = false
     let onSave: () -> Void
+    @EnvironmentObject private var offline: OfflineStatusStore
 
-    init(composer: ProgressEntryComposer, isFocused: FocusState<Bool>.Binding, onSave: @escaping () -> Void) {
+    init(composer: ProgressEntryComposer, isFocused: FocusState<Bool>.Binding,
+         showsOfflineQueueHint: Bool = false, onSave: @escaping () -> Void) {
         self.composer = composer
         self.isFocused = isFocused
+        self.showsOfflineQueueHint = showsOfflineQueueHint
         self.onSave = onSave
     }
 
@@ -209,6 +216,11 @@ struct ProgressEntryComposerView: View {
                     .scaledFont(.caption)
                     .foregroundStyle(composer.isOverLimit ? .red : .secondary)
                     .accessibilityLabel("\(composer.text.count) von \(ProgressEntryCharLimit.maxLength) Zeichen")
+            }
+
+            if showsOfflineQueueHint && offline.isOffline {
+                Label(OfflineFeatureALogic.composerOfflineHint, systemImage: "wifi.slash")
+                    .scaledFont(.caption2).foregroundStyle(.secondary)
             }
 
             if let errorText = composer.errorText {
