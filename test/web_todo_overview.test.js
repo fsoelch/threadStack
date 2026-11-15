@@ -328,6 +328,30 @@ test('renderPersonalTodoCard: offene Karten zeigen "Zwischenstand erfassen" als 
   assert.ok(overflowIdx > -1 && stackIdxInOverflow > overflowIdx, 'Ueberlaufmenue-Eintrag bleibt zusaetzlich erhalten');
 });
 
+test('renderTopicCard: offene Themen-Karte zeigt den "Zwischenstand erfassen"-Schnellzugriff analog zur Todo-Karte', async () => {
+  const { window } = loadApp();
+  await tick();
+  const openTopic = { id: 'top1', title: 'Offenes Thema', description: '', done: false };
+  const html = window.renderTopicCard('m1', openTopic, {}, {}, false);
+  assert.match(html, /toggleTodoCardComposer\('topic','top1'\)/);
+  assert.match(html, /aria-label="Zwischenstand erfassen"/);
+  assert.match(html, /todo-card-composer-topic-top1/);
+});
+
+test('renderTopicCard: erledigte/archivierte (readOnly) Themen-Karten zeigen keinen Zwischenstand-Schnellzugriff', async () => {
+  const { window } = loadApp();
+  await tick();
+  const doneTopic = { id: 'top2', title: 'Erledigt', description: '', done: true, result: '' };
+  const doneHtml = window.renderTopicCard('m1', doneTopic, {}, {}, false);
+  assert.doesNotMatch(doneHtml, /toggleTodoCardComposer/);
+  assert.doesNotMatch(doneHtml, /todo-card-composer-topic-top2/);
+
+  const openTopic = { id: 'top3', title: 'Offen aber readOnly', description: '', done: false };
+  const readOnlyHtml = window.renderTopicCard('m1', openTopic, {}, {}, true);
+  assert.doesNotMatch(readOnlyHtml, /toggleTodoCardComposer/);
+  assert.doesNotMatch(readOnlyHtml, /todo-card-composer-topic-top3/);
+});
+
 test('AI-Einstellungen: neue Feature-Labels sind registriert und werden ueber das bestehende, datengetriebene Rendering dargestellt', async () => {
   const { window, document } = loadApp();
   await tick();

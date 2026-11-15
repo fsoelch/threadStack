@@ -15,6 +15,10 @@ struct SidebarView: View {
     @State private var showArchiveConfirm = false
     @State private var conflictFrames: [ArchiveStackConflict] = []
     @State private var showArchiveConflictConfirm = false
+    // Einklappbare "Mehr"-Gruppe (Wochen-Digest/Fortschritt/Archiv), damit die
+    // Navigation nicht immer laenger wird. Persistenz analog zu
+    // `SettingsView`/`ThreadStackApp` (`@AppStorage("fontSizeIndex")`).
+    @AppStorage("navMoreExpanded") private var moreExpandedStorage: Bool = false
 
     private var filteredMeetings: [Meeting] {
         guard !search.isEmpty else { return state.meetings }
@@ -31,6 +35,19 @@ struct SidebarView: View {
     // Sichtbarer Fortschritt (Arbeitspaket M5): Serie-Badge fürs Nav-Item.
     private var momentumStreakBadge: String? {
         state.momentumStreakCount.map { "🔥\($0)" }
+    }
+
+    // Bleibt aufgeklappt, solange einer der gruppierten Punkte gerade aktiv
+    // ist (z.B. nach App-Neustart mit zuletzt gewaehlter Ansicht), unabhaengig
+    // von der gespeicherten Nutzerpraeferenz — analog zum Web-Verhalten.
+    private var moreGroupExpanded: Binding<Bool> {
+        Binding(
+            get: { moreExpandedStorage || isMoreGroupActive(selectedView) },
+            set: { moreExpandedStorage = $0 }
+        )
+    }
+    private var moreGroupLabelText: String {
+        ThreadStack.moreGroupHeaderText(expanded: moreGroupExpanded.wrappedValue, momentumStreakBadge: momentumStreakBadge)
     }
 
     var body: some View {
@@ -76,23 +93,27 @@ struct SidebarView: View {
                        badge: nil,
                        item: .graph)
                     .tag(SidebarItem.graph.sentinel)
-                if state.aiFeatureEnabled(\.digest) {
-                    navRow(icon: "chart.bar.doc.horizontal", iconColor: .blue,
-                           label: "Wochen-Digest",
+                DisclosureGroup(isExpanded: moreGroupExpanded) {
+                    if state.aiFeatureEnabled(\.digest) {
+                        navRow(icon: "chart.bar.doc.horizontal", iconColor: .blue,
+                               label: "Wochen-Digest",
+                               badge: nil,
+                               item: .digest)
+                            .tag(SidebarItem.digest.sentinel)
+                    }
+                    navRow(icon: "flame.fill", iconColor: .orange,
+                           label: "Fortschritt",
+                           badge: momentumStreakBadge,
+                           item: .momentum)
+                        .tag(SidebarItem.momentum.sentinel)
+                    navRow(icon: "archivebox.fill", iconColor: .secondary,
+                           label: "Archiv",
                            badge: nil,
-                           item: .digest)
-                        .tag(SidebarItem.digest.sentinel)
+                           item: .archive)
+                        .tag(SidebarItem.archive.sentinel)
+                } label: {
+                    Text(moreGroupLabelText).accessibilityLabel(moreGroupLabelText)
                 }
-                navRow(icon: "flame.fill", iconColor: .orange,
-                       label: "Fortschritt",
-                       badge: momentumStreakBadge,
-                       item: .momentum)
-                    .tag(SidebarItem.momentum.sentinel)
-                navRow(icon: "archivebox.fill", iconColor: .secondary,
-                       label: "Archiv",
-                       badge: nil,
-                       item: .archive)
-                    .tag(SidebarItem.archive.sentinel)
             }
             Section("Meetings") {
                 ForEach(filteredMeetings) { m in
@@ -166,11 +187,48 @@ struct SidebarView: View {
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
 
-                if state.aiFeatureEnabled(\.digest) {
+                DisclosureGroup(isExpanded: moreGroupExpanded) {
+                    if state.aiFeatureEnabled(\.digest) {
+                        Button {
+                            selectedMeetingId = SidebarItem.digest.sentinel
+                        } label: {
+                            Label("Wochen-Digest", systemImage: "chart.bar.doc.horizontal")
+                                .foregroundStyle(.secondary)
+                                .font(.subheadline)
+                        }
+                        .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+                    }
+
                     Button {
-                        selectedMeetingId = SidebarItem.digest.sentinel
+                        selectedMeetingId = SidebarItem.momentum.sentinel
                     } label: {
-                        Label("Wochen-Digest", systemImage: "chart.bar.doc.horizontal")
+                        HStack {
+                            Label("Fortschritt", systemImage: "flame.fill")
+                                .foregroundStyle(.secondary)
+                                .font(.subheadline)
+                            if let badge = momentumStreakBadge {
+                                Spacer()
+                                Text(badge)
+                                    .font(.caption2).fontWeight(.semibold)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.orange.opacity(0.15))
+                                    .foregroundStyle(.orange)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
+
+                    Button {
+                        selectedMeetingId = SidebarItem.archive.sentinel
+                    } label: {
+                        Label("Archiv", systemImage: "archivebox.fill")
                             .foregroundStyle(.secondary)
                             .font(.subheadline)
                     }
@@ -178,39 +236,12 @@ struct SidebarView: View {
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
-                }
-
-                Button {
-                    selectedMeetingId = SidebarItem.momentum.sentinel
                 } label: {
-                    HStack {
-                        Label("Fortschritt", systemImage: "flame.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.subheadline)
-                        if let badge = momentumStreakBadge {
-                            Spacer()
-                            Text(badge)
-                                .font(.caption2).fontWeight(.semibold)
-                                .padding(.horizontal, 6).padding(.vertical, 2)
-                                .background(Color.orange.opacity(0.15))
-                                .foregroundStyle(.orange)
-                                .clipShape(Capsule())
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .listRowBackground(Color.clear)
-                .listRowSeparator(.hidden)
-                .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
-
-                Button {
-                    selectedMeetingId = SidebarItem.archive.sentinel
-                } label: {
-                    Label("Archiv", systemImage: "archivebox.fill")
+                    Text(moreGroupLabelText)
                         .foregroundStyle(.secondary)
                         .font(.subheadline)
+                        .accessibilityLabel(moreGroupLabelText)
                 }
-                .buttonStyle(.plain)
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
                 .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 8, trailing: 16))
@@ -356,6 +387,20 @@ struct SidebarView: View {
 func archiveConflictTopicsText(_ frames: [ArchiveStackConflict]) -> String {
     guard !frames.isEmpty else { return "" }
     return frames.map(\.topicTitle).joined(separator: ", ")
+}
+
+/// Reine Entscheidungslogik der einklappbaren "Mehr"-Gruppe (Wochen-Digest/
+/// Fortschritt/Archiv) in `SidebarView`. Top-level statt private, damit
+/// Unit-Tests sie direkt aufrufen können — analog zu `archiveConflictTopicsText`.
+func isMoreGroupActive(_ selectedView: SidebarItem) -> Bool {
+    [SidebarItem.digest, .momentum, .archive].contains(selectedView)
+}
+
+func moreGroupHeaderText(expanded: Bool, momentumStreakBadge: String?) -> String {
+    if !expanded, let badge = momentumStreakBadge {
+        return "Mehr – \(badge)"
+    }
+    return "Mehr"
 }
 
 /// Gemeinsame Dialoge für den Archivieren-Flow (macOS + iOS Sidebar teilen sich

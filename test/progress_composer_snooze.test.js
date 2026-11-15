@@ -86,7 +86,7 @@ test('Klick auf den Trigger klappt das Datumsfeld auf, erneuter Klick auf "schli
   assert.notEqual(root.querySelector('.progress-composer-snooze-toggle'), null);
 });
 
-test('Datum im aufgeklappten Feld setzen speichert SOFORT ueber onSnoozeSave, unabhaengig vom Zwischenstand-Text', async () => {
+test('Bug-Fix: Datum im aufgeklappten Feld setzen speichert NICHT sofort - erst der Klick auf "Speichern" ruft onSnoozeSave, auch ohne Zwischenstand-Text', async () => {
   const { window, document } = makeDom();
   const root = document.getElementById('root');
   const calls = [];
@@ -101,9 +101,45 @@ test('Datum im aufgeklappten Feld setzen speichert SOFORT ueber onSnoozeSave, un
   dateInput.dispatchEvent(new window.Event('change', { bubbles: true }));
   await tick();
 
-  assert.deepEqual(calls, ['2026-09-25']);
+  // Noch nicht persistiert - nur lokal im Composer vorgemerkt.
+  assert.deepEqual(calls, []);
   // Der Zwischenstand-Text (composer-text) wurde dabei nicht angefasst.
   assert.equal(root.querySelector('[data-role="composer-text"]').value, '');
+
+  root.querySelector('[data-action="save-composer"]').click();
+  await tick();
+
+  assert.deepEqual(calls, ['2026-09-25']);
+});
+
+test('Bug-Fix: Zwischenstand-Text UND "Schlafen bis" gleichzeitig gesetzt werden erst beim Klick auf "Speichern" gebuendelt committet', async () => {
+  const { window, document } = makeDom();
+  window.TSHost.api = () => Promise.resolve({ id: 'e-combo' });
+  const root = document.getElementById('root');
+  const snoozeCalls = [];
+  mountComposer(window, root, {
+    refType: 'todo', refId: 't5b', openOnMount: true,
+    onSnoozeSave: (val) => { snoozeCalls.push(val); return Promise.resolve(); },
+  });
+
+  const ta = root.querySelector('[data-role="composer-text"]');
+  ta.value = 'Laeuft gut';
+  ta.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+  root.querySelector('[data-action="toggle-snooze"]').click();
+  const dateInput = root.querySelector('[data-role="composer-snooze-date"]');
+  dateInput.value = '2026-09-25';
+  dateInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick();
+
+  // Beide Eingaben bleiben bis zum Speichern unangetastet nebeneinander bestehen.
+  assert.equal(root.querySelector('[data-role="composer-text"]').value, 'Laeuft gut');
+  assert.deepEqual(snoozeCalls, []);
+
+  root.querySelector('[data-action="save-composer"]').click();
+  await tick();
+
+  assert.deepEqual(snoozeCalls, ['2026-09-25']);
 });
 
 test('Waehrend des Speicherns ist das Datumsfeld deaktiviert und ein Status "Speichert ..." sichtbar', async () => {
@@ -118,6 +154,8 @@ test('Waehrend des Speicherns ist das Datumsfeld deaktiviert und ein Status "Spe
   const dateInput = root.querySelector('[data-role="composer-snooze-date"]');
   dateInput.value = '2026-09-26';
   dateInput.dispatchEvent(new window.Event('change', { bubbles: true }));
+  await tick();
+  root.querySelector('[data-action="save-composer"]').click();
   await tick();
 
   assert.equal(root.querySelector('[data-role="composer-snooze-date"]').disabled, true);
@@ -140,6 +178,8 @@ test('Fehler beim Speichern von "Schlafen bis" wird angezeigt, das Datumsfeld bl
   dateInput.value = '2026-09-27';
   dateInput.dispatchEvent(new window.Event('change', { bubbles: true }));
   await tick();
+  root.querySelector('[data-action="save-composer"]').click();
+  await tick();
 
   const errEl = root.querySelector('.progress-composer-snooze .progress-error-text');
   assert.notEqual(errEl, null);
@@ -159,12 +199,14 @@ test('Fehler beim Speichern von "Schlafen bis" fuer ein Thema meldet die themens
   dateInput.value = '2026-09-27';
   dateInput.dispatchEvent(new window.Event('change', { bubbles: true }));
   await tick();
+  root.querySelector('[data-action="save-composer"]').click();
+  await tick();
 
   const errEl = root.querySelector('.progress-composer-snooze .progress-error-text');
   assert.match(errEl.textContent, /Thema wurde inzwischen gelöscht/);
 });
 
-test('"Schlafen bis" entfernen (X) ruft onSnoozeSave(null) auf und blendet den Entfernen-Knopf danach aus', async () => {
+test('"Schlafen bis" entfernen (X) merkt die Entfernung nur lokal vor - onSnoozeSave(null) wird erst mit "Speichern" aufgerufen', async () => {
   const { window, document } = makeDom();
   const root = document.getElementById('root');
   const calls = [];
@@ -176,10 +218,13 @@ test('"Schlafen bis" entfernen (X) ruft onSnoozeSave(null) auf und blendet den E
   assert.notEqual(root.querySelector('[data-action="clear-snooze"]'), null);
 
   root.querySelector('[data-action="clear-snooze"]').click();
+  assert.deepEqual(calls, []);
+  assert.equal(root.querySelector('[data-action="clear-snooze"]'), null);
+
+  root.querySelector('[data-action="save-composer"]').click();
   await tick();
 
   assert.deepEqual(calls, [null]);
-  assert.equal(root.querySelector('[data-action="clear-snooze"]'), null);
 });
 
 test('Erledigtes Todo (done=true) zeigt weder Zwischenstand-Composer noch "Schlafen bis"-Option', async () => {
@@ -190,6 +235,49 @@ test('Erledigtes Todo (done=true) zeigt weder Zwischenstand-Composer noch "Schla
     onSnoozeSave: () => Promise.resolve(),
   });
   assert.equal(root.querySelector('.progress-inline-composer').innerHTML, '');
+});
+
+test('Bug-Fix: ein noch nicht gespeicherter Zwischenstand-Entwurf ueberlebt einen Remount durch "Schlafen bis" (saveComposerSnooze -> globaler render())', async () => {
+  const { window, document } = makeDom();
+  const root = document.getElementById('root');
+  mountComposer(window, root, {
+    refType: 'todo', refId: 't11', openOnMount: true,
+    onSnoozeSave: () => Promise.resolve(),
+  });
+
+  const ta = root.querySelector('[data-role="composer-text"]');
+  ta.value = 'Noch nicht gespeicherter Zwischenstand';
+  ta.dispatchEvent(new window.Event('input', { bubbles: true }));
+
+  // Simuliert exakt das, was public/app.js#saveComposerSnooze nach dem
+  // Persistieren von snoozedUntil tut: der volle globale `render()` mountet
+  // JEDE Karte inkl. dieses Composers per `mountInlineComposer()` neu, OHNE
+  // dass der Nutzer zwischendurch "Speichern" fuer den Zwischenstand
+  // gedrueckt hat.
+  mountComposer(window, root, {
+    refType: 'todo', refId: 't11', openOnMount: false,
+    onSnoozeSave: () => Promise.resolve(),
+  });
+
+  const restoredTa = root.querySelector('[data-role="composer-text"]');
+  assert.notEqual(restoredTa, null, 'Composer bleibt trotz openOnMount:false offen, weil ein Entwurf existiert');
+  assert.equal(restoredTa.value, 'Noch nicht gespeicherter Zwischenstand');
+});
+
+test('Bug-Fix: der Entwurf wird nach erfolgreichem Speichern des Zwischenstands verworfen (kein Wiederauftauchen bei erneutem Mount)', async () => {
+  const { window, document } = makeDom();
+  window.TSHost.api = () => Promise.resolve({ id: 'e1' });
+  const root = document.getElementById('root');
+  mountComposer(window, root, { refType: 'todo', refId: 't12', openOnMount: true });
+
+  const ta = root.querySelector('[data-role="composer-text"]');
+  ta.value = 'Wird gespeichert';
+  ta.dispatchEvent(new window.Event('input', { bubbles: true }));
+  root.querySelector('[data-action="save-composer"]').click();
+  await tick();
+
+  mountComposer(window, root, { refType: 'todo', refId: 't12', openOnMount: false });
+  assert.equal(root.querySelector('[data-role="composer-text"]'), null);
 });
 
 test('destroy() entfernt den change-Listener (kein Speichern nach destroy)', async () => {

@@ -1078,6 +1078,26 @@
     return '/api/progress/' + encodeURIComponent(refType) + '/' + encodeURIComponent(refId) + '/entries';
   }
 
+  // Urspruenglicher Bug-Fix "Zwischenstand geht beim gleichzeitigen Setzen
+  // von 'Schlafen bis' verloren": `saveComposerSnooze()` (public/app.js)
+  // persistierte snoozedUntil frueher sofort bei jeder Datumsauswahl und
+  // rief danach den globalen `render()` auf, der JEDE Karte inkl. dieses
+  // Composers per `mountInlineComposer()` NEU instanziierte - ein noch
+  // nicht gespeicherter Entwurfstext ging dabei kommentarlos verloren.
+  // Die eigentliche Ursache (sofortiges, vom Speichern-Button entkoppeltes
+  // Persistieren von "Schlafen bis") ist seit setPendingSnooze()/save()
+  // unten behoben; dieser modulweite, nach Ref ("refType:refId") gehaltene
+  // Entwurfs-Cache bleibt als Absicherung gegen andere Remount-Ursachen
+  // (analog zum bestehenden Muster ephemeren, ref-gebundenen UI-Zustands
+  // ausserhalb des eigentlichen Datenmodells, siehe `_todoCardExpanded` in
+  // public/app.js) - kein zweiter Idempotenz-/Zustandsmechanismus, nur
+  // Erhalt des bereits vorhandenen `text`-Felds ueber einen Remount hinweg.
+  var _draftEntryText = {};
+
+  function draftKey(refType, refId) {
+    return refType + ':' + refId;
+  }
+
   function ComposerInstance(container, opts) {
     this.container = container;
     this.refType = opts.refType;
@@ -1090,6 +1110,12 @@
     // snoozedUntil-Feld haben, siehe app.js#saveComposerSnooze) - ohne ihn
     // wird die "Schlafen bis"-Kurzoption gar nicht erst gerendert.
     this.onSnoozeSave = typeof opts.onSnoozeSave === 'function' ? opts.onSnoozeSave : null;
+    // `pendingSnoozeUntil`: lokal gewaehlter, noch NICHT persistierter Wert
+    // des Datumsfelds (siehe setPendingSnooze/save unten - Bug-Fix "Schlafen
+    // bis wird erst mit dem Speichern-Button gesetzt"). `snoozedUntil`
+    // bleibt der zuletzt tatsaechlich gespeicherte/vom Server bestaetigte
+    // Wert, bis `save()` ihn uebernimmt.
+    this.pendingSnoozeUntil = this.snoozedUntil;
     this.snoozeOpen = false;
     this.snoozeSaving = false;
     this.snoozeError = null;
@@ -1102,8 +1128,13 @@
     // Zwischen-Trigger waere redundant). Default `false` erhaelt das
     // bisherige Verhalten fuer verbleibende Einhaenge-Stellen (z.B.
     // Themen-/Topic-Bearbeiten-Ansicht) unveraendert.
-    this.open = !!opts.openOnMount;
-    this.text = '';
+    // Ein noch nicht gespeicherter Entwurf dieser Ref (siehe `_draftEntryText`
+    // oben) ueberlebt einen Remount (z.B. durch `saveComposerSnooze()`s
+    // globalen `render()`-Aufruf) - der Composer bleibt dafuer offen, sonst
+    // waere der wiederhergestellte Text unsichtbar.
+    var restoredDraft = _draftEntryText[draftKey(this.refType, this.refId)] || '';
+    this.open = !!opts.openOnMount || !!restoredDraft;
+    this.text = restoredDraft;
     this.saving = false;
     this.errorMsg = null;
     this.clientToken = genClientToken();
@@ -1126,6 +1157,8 @@
       this.text = ev.target.value;
       this.errorMsg = null;
       this.updateCounter();
+      var k = draftKey(this.refType, this.refId);
+      if (this.text) { _draftEntryText[k] = this.text; } else { delete _draftEntryText[k]; }
     }
   };
 
@@ -1161,38 +1194,27 @@
         if (dateInput) dateInput.focus();
       }
     } else if (action === 'clear-snooze') {
-      this.saveSnooze(null);
+      this.setPendingSnooze(null);
     }
   };
 
   ComposerInstance.prototype.handleChange = function (ev) {
     if (ev.target && ev.target.matches && ev.target.matches('[data-role="composer-snooze-date"]')) {
-      this.saveSnooze(ev.target.value || null);
+      this.setPendingSnooze(ev.target.value || null);
     }
   };
 
-  // Speichert "Schlafen bis" sofort bei Auswahl/Loeschen des Datums, ganz
-  // unabhaengig vom eigentlichen Zwischenstand-Text/-"Speichern"-Knopf -
-  // genau das macht die Option unaufdringlich nutzbar, ohne den sonst noch
-  // noetigen Umweg ueber den vollen Bearbeiten-Dialog (siehe Requirements
-  // Story 2: "passiert im Arbeitsablauf sehr oft").
-  ComposerInstance.prototype.saveSnooze = function (dateOrNull) {
-    if (this.snoozeSaving || !this.onSnoozeSave) return;
-    this.snoozeSaving = true;
+  // Bug-Fix "Zwischenstand wird nicht saubet gespeichert, wenn gleichzeitig
+  // 'Schlafen bis' gesetzt wird": Auswahl/Loeschen des Datums haelt den Wert
+  // nur noch LOKAL (`pendingSnoozeUntil`) und loest weder einen Netzwerk-
+  // Request noch (ueber `onSnoozeSave` -> `saveComposerSnooze` -> globales
+  // `render()` in app.js) einen Remount dieses Composers aus. Persistiert
+  // wird "Schlafen bis" erst gebuendelt mit dem eigentlichen Zwischenstand,
+  // wenn der Nutzer auf "Speichern" klickt (siehe save() unten).
+  ComposerInstance.prototype.setPendingSnooze = function (dateOrNull) {
+    this.pendingSnoozeUntil = dateOrNull;
     this.snoozeError = null;
     this.render();
-    var self = this;
-    Promise.resolve(this.onSnoozeSave(dateOrNull)).then(function () {
-      if (self.destroyed) return;
-      self.snoozedUntil = dateOrNull;
-      self.snoozeSaving = false;
-      self.render();
-    }).catch(function (err) {
-      if (self.destroyed) return;
-      self.snoozeSaving = false;
-      self.snoozeError = self.mapSnoozeError(err);
-      self.render();
-    });
   };
 
   ComposerInstance.prototype.mapSnoozeError = function (err) {
@@ -1208,48 +1230,75 @@
     return genericErrorMessage();
   };
 
+  // Committet beim Klick auf "Speichern" gebuendelt BEIDES, was der Nutzer
+  // seit dem Oeffnen des Composers geaendert hat: den Zwischenstand-Text
+  // (falls vorhanden) und ein noch nicht persistiertes "Schlafen bis"
+  // (falls geaendert, siehe setPendingSnooze) - unabhaengig voneinander,
+  // damit weiterhin eine reine "Schlafen bis"-Aenderung ohne Text moeglich
+  // bleibt (Requirements Story 2: unaufdringliche Kurzoption ohne Umweg
+  // ueber den vollen Bearbeiten-Dialog).
   ComposerInstance.prototype.save = function () {
     if (this.saving) return;
     var host = getHost();
     var plain = this.text.replace(/\s+/g, ' ').trim();
-    if (!plain) {
+    var snoozeChanged = !!this.onSnoozeSave && this.pendingSnoozeUntil !== this.snoozedUntil;
+    if (!plain && !snoozeChanged) {
       this.errorMsg = 'Bitte gib einen Text ein.';
       this.render();
       return;
     }
-    if (this.text.length > MAX_ENTRY_TEXT) {
+    if (plain && this.text.length > MAX_ENTRY_TEXT) {
       this.errorMsg = 'Dein Zwischenstand ist zu lang (mehr als ' + MAX_ENTRY_TEXT + ' Zeichen). Bitte kürze ihn.';
       this.render();
       return;
     }
-    if (!host || typeof host.api !== 'function') {
+    if (plain && (!host || typeof host.api !== 'function')) {
       this.errorMsg = 'Keine Verbindung zum Server. Deine Eingabe bleibt erhalten.';
       this.render();
       return;
     }
     this.saving = true;
+    this.snoozeSaving = snoozeChanged;
     this.errorMsg = null;
+    this.snoozeError = null;
     this.render();
     var self = this;
-    var source = deriveEntrySource({ snoozedUntil: this.snoozedUntil });
-    var bodyHtml = '<p>' + escHtml(this.text).replace(/\n/g, '<br>') + '</p>';
-    host.api('POST', entriesPostUrl(this.refType, this.refId), {
-      body: bodyHtml, source: source, clientToken: this.clientToken
-    }).then(function (result) {
+    var pendingSnoozeValue = this.pendingSnoozeUntil;
+
+    var snoozePromise = !snoozeChanged ? Promise.resolve() : Promise.resolve(this.onSnoozeSave(pendingSnoozeValue)).then(function () {
       if (self.destroyed) return;
-      self.saving = false;
-      self.open = false;
-      self.text = '';
-      self.clientToken = genClientToken();
-      invalidate(self.refType, self.refId);
-      self.render();
-      self.onSaved(result);
+      self.snoozedUntil = pendingSnoozeValue;
+      self.snoozeSaving = false;
     }).catch(function (err) {
       if (self.destroyed) return;
+      self.snoozeSaving = false;
+      self.snoozeError = self.mapSnoozeError(err);
+    });
+
+    var textPromise = !plain ? Promise.resolve() : (function () {
+      var source = deriveEntrySource({ snoozedUntil: pendingSnoozeValue });
+      var bodyHtml = '<p>' + escHtml(self.text).replace(/\n/g, '<br>') + '</p>';
+      return host.api('POST', entriesPostUrl(self.refType, self.refId), {
+        body: bodyHtml, source: source, clientToken: self.clientToken
+      }).then(function (result) {
+        if (self.destroyed) return;
+        self.open = false;
+        self.text = '';
+        delete _draftEntryText[draftKey(self.refType, self.refId)];
+        self.clientToken = genClientToken();
+        invalidate(self.refType, self.refId);
+        self.onSaved(result);
+      }).catch(function (err) {
+        if (self.destroyed) return;
+        self.errorMsg = self.mapError(err);
+        self.onError(err);
+      });
+    })();
+
+    Promise.all([snoozePromise, textPromise]).then(function () {
+      if (self.destroyed) return;
       self.saving = false;
-      self.errorMsg = self.mapError(err);
       self.render();
-      self.onError(err);
     });
   };
 
@@ -1288,7 +1337,7 @@
 
     var box = el('div', { class: 'progress-composer-box' });
 
-    var snoozedFuture = typeof this.snoozedUntil === 'string' && this.snoozedUntil && new Date(this.snoozedUntil).getTime() > Date.now();
+    var snoozedFuture = typeof this.pendingSnoozeUntil === 'string' && this.pendingSnoozeUntil && new Date(this.pendingSnoozeUntil).getTime() > Date.now();
     if (snoozedFuture) {
       box.appendChild(el('p', { class: 'progress-composer-snooze-hint' }, 'Wird beim Speichern als Zwischenstand zu deiner Ruhephase geführt, weil du „Schlafen bis" gesetzt hast.'));
     }
@@ -1316,15 +1365,17 @@
 
     // ── "Schlafen bis"-Kurzoption (Story 2) — bewusst klein/unauffaellig
     // unterhalb der eigentlichen Speichern-Aktion, standardmaessig
-    // eingeklappt, und unabhaengig vom Zwischenstand-Text sofort
-    // persistiert (siehe saveSnooze). Nur bei Vorhaben-Typen sichtbar, fuer
-    // die der Aufrufer einen onSnoozeSave-Callback uebergeben hat (z.B.
-    // nicht bei Kontakten, die kein snoozedUntil-Feld haben).
+    // eingeklappt. Auswahl/Loeschen des Datums aendert nur den lokalen
+    // `pendingSnoozeUntil`-State (siehe setPendingSnooze); persistiert wird
+    // erst gebuendelt mit dem Zwischenstand-Text beim Klick auf
+    // "Speichern" (siehe save()). Nur bei Vorhaben-Typen sichtbar, fuer die
+    // der Aufrufer einen onSnoozeSave-Callback uebergeben hat (z.B. nicht
+    // bei Kontakten, die kein snoozedUntil-Feld haben).
     if (this.onSnoozeSave) {
       var snoozeBox = el('div', { class: 'progress-composer-snooze' });
       if (!this.snoozeOpen) {
-        var toggleLabel = (typeof this.snoozedUntil === 'string' && this.snoozedUntil)
-          ? ('Schläft bis ' + escHtml(formatAbsolute(this.snoozedUntil)))
+        var toggleLabel = (typeof this.pendingSnoozeUntil === 'string' && this.pendingSnoozeUntil)
+          ? ('Schläft bis ' + escHtml(formatAbsolute(this.pendingSnoozeUntil)))
           : 'Schlafen bis';
         snoozeBox.appendChild(el('button', {
           type: 'button', class: 'progress-composer-snooze-toggle', 'data-action': 'toggle-snooze', 'aria-expanded': 'false'
@@ -1338,10 +1389,10 @@
         dateInput.id = snoozeInputId;
         dateInput.className = 'progress-composer-snooze-input';
         dateInput.setAttribute('data-role', 'composer-snooze-date');
-        dateInput.value = (typeof this.snoozedUntil === 'string' && this.snoozedUntil) ? this.snoozedUntil.slice(0, 10) : '';
+        dateInput.value = (typeof this.pendingSnoozeUntil === 'string' && this.pendingSnoozeUntil) ? this.pendingSnoozeUntil.slice(0, 10) : '';
         dateInput.disabled = this.snoozeSaving;
         row.appendChild(dateInput);
-        if (this.snoozedUntil) {
+        if (this.pendingSnoozeUntil) {
           var clearSnoozeBtn = el('button', {
             type: 'button', class: 'progress-icon-btn', 'data-action': 'clear-snooze',
             'aria-label': 'Schlafen bis entfernen', title: 'Schlafen bis entfernen'

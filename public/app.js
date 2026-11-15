@@ -1993,6 +1993,41 @@ function renderSidebarTop() {
   }
 }
 
+// ---- NAV_MORE_GROUP_PURE_HELPERS_START ------------------------------------
+// Reine Helper fuer die einklappbare "Mehr"-Gruppe der ToDos-Navigation
+// (Tagesabschluss/Stack-Historie/Wochen-Digest/Fortschritt/Archiv). Bewusst
+// ohne DOM/localStorage-Zugriff, damit sie per vm-Sandbox testbar sind
+// (Vorbild: ARCHIVE_PURE_HELPERS in diesem File).
+var TODOS_NAV_MORE_GROUP_IDS = ['__eod__', '__stack_history__', '__digest__', '__momentum__', '__archive__', '__archive_detail__'];
+function isTodosNavMoreGroupActive(selectedViewId) {
+  return TODOS_NAV_MORE_GROUP_IDS.indexOf(selectedViewId) !== -1;
+}
+function todosNavMoreGroupHasNotice(stackDepth, momentumStreakValue) {
+  return Number(stackDepth) > 0 || !!momentumStreakValue;
+}
+// ---- NAV_MORE_GROUP_PURE_HELPERS_END --------------------------------------
+
+function getNavLocalStorage() {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+  } catch (e) { /* z.B. Private-Mode / Zugriff verweigert — dann einfach nicht persistieren */ }
+  return null;
+}
+function navMoreExpandedStored() {
+  const ls = getNavLocalStorage();
+  if (!ls) return false;
+  try { return ls.getItem('ts.nav.moreExpanded') === '1'; } catch (e) { return false; }
+}
+function setNavMoreExpandedStored(expanded) {
+  const ls = getNavLocalStorage();
+  if (!ls) return;
+  try { ls.setItem('ts.nav.moreExpanded', expanded ? '1' : '0'); } catch (e) { /* ignore */ }
+}
+function toggleTodosNavMore() {
+  setNavMoreExpandedStored(!navMoreExpandedStored());
+  renderTodosNav();
+}
+
 function renderTodosNav() {
   const openPersonal = todos.filter(t => !t.done && !isSnoozed(t)).length;
   const openMeeting  = meetings.flatMap(m => m.topics||[]).filter(t => t.isTodo && !t.done && !isSnoozed(t)).length;
@@ -2014,36 +2049,45 @@ function renderTodosNav() {
     return;
   }
 
+  const moreExpanded = isTodosNavMoreGroupActive(selectedId) || navMoreExpandedStored();
+  const moreHasNotice = todosNavMoreGroupHasNotice(stackState.depth, momentumStreak);
   el.innerHTML = `
     <div class="todo-nav-item ${selectedId === '__todos__' ? 'active' : ''}" onclick="selectView('__todos__')">
       <div class="todo-nav-icon">${ic('<path d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>')}</div>
       <span class="todo-nav-label">Meine Todos</span>
       ${total > 0 ? `<span class="pill pill-open">${total}</span>` : ''}
     </div>
-    <div class="todo-nav-item ${selectedId === '__eod__' ? 'active' : ''}" onclick="selectView('__eod__')">
-      <div class="todo-nav-icon eod-icon">${ic('<path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/>')}</div>
-      <span class="todo-nav-label">Tagesabschluss</span>
-      ${stackState.depth > 0 ? `<span class="pill pill-open">${stackState.depth}</span>` : ''}
-    </div>
-    <div class="todo-nav-item ${selectedId === '__stack_history__' ? 'active' : ''}" onclick="selectView('__stack_history__')">
-      <div class="todo-nav-icon history-icon">${ic('<path d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>')}</div>
-      <span class="todo-nav-label">Stack-Historie</span>
-    </div>
-    <div class="todo-nav-item ai-action ${selectedId === '__digest__' ? 'active' : ''}" onclick="selectView('__digest__')">
-      <div class="todo-nav-icon digest-icon">${ic('<path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>')}</div>
-      <span class="todo-nav-label">Wochen-Digest</span>
-    </div>
-    <div class="todo-nav-item ${selectedId === '__momentum__' ? 'active' : ''}" onclick="selectView('__momentum__')">
-      <div class="todo-nav-icon momentum-icon">${ic('<path d="M2.25 18L9 11.25l4.306 4.306a11.95 11.95 0 015.814-5.518l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"/>')}</div>
-      <span class="todo-nav-label">Fortschritt</span>
-      ${momentumStreak ? `<span class="momentum-nav-badge" aria-label="Serie: ${momentumStreak} Tage aktiv">🔥${momentumStreak}</span>` : ''}
-    </div>
-    <div class="todo-nav-item archive-nav-item ${selectedId === '__archive__' || selectedId === '__archive_detail__' ? 'active' : ''}"
-         role="button" tabindex="0"
-         onclick="selectView('__archive__')"
-         onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectView('__archive__');}">
-      <div class="todo-nav-icon archive-icon">${ic('<path d="M3 7.5V6a1.5 1.5 0 011.5-1.5h15A1.5 1.5 0 0121 6v1.5M3 7.5v10.5A1.5 1.5 0 004.5 19.5h15a1.5 1.5 0 001.5-1.5V7.5M3 7.5h18M10 12h4"/>')}</div>
-      <span class="todo-nav-label">Archiv</span>
+    <button type="button" class="todo-nav-group-header" aria-expanded="${moreExpanded}" aria-controls="todos-nav-more" onclick="toggleTodosNavMore()">
+      <span class="todo-nav-group-chevron">▸</span>
+      <span class="todo-nav-group-label">Mehr</span>
+      ${!moreExpanded && moreHasNotice ? `<span class="todo-nav-group-dot" aria-label="Es gibt Neues in „Mehr“"></span>` : ''}
+    </button>
+    <div class="todo-nav-group-items${moreExpanded ? '' : ' collapsed'}" id="todos-nav-more">
+      <div class="todo-nav-item ${selectedId === '__eod__' ? 'active' : ''}" onclick="selectView('__eod__')">
+        <div class="todo-nav-icon eod-icon">${ic('<path d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z"/>')}</div>
+        <span class="todo-nav-label">Tagesabschluss</span>
+        ${stackState.depth > 0 ? `<span class="pill pill-open">${stackState.depth}</span>` : ''}
+      </div>
+      <div class="todo-nav-item ${selectedId === '__stack_history__' ? 'active' : ''}" onclick="selectView('__stack_history__')">
+        <div class="todo-nav-icon history-icon">${ic('<path d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/>')}</div>
+        <span class="todo-nav-label">Stack-Historie</span>
+      </div>
+      <div class="todo-nav-item ai-action ${selectedId === '__digest__' ? 'active' : ''}" onclick="selectView('__digest__')">
+        <div class="todo-nav-icon digest-icon">${ic('<path d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"/>')}</div>
+        <span class="todo-nav-label">Wochen-Digest</span>
+      </div>
+      <div class="todo-nav-item ${selectedId === '__momentum__' ? 'active' : ''}" onclick="selectView('__momentum__')">
+        <div class="todo-nav-icon momentum-icon">${ic('<path d="M2.25 18L9 11.25l4.306 4.306a11.95 11.95 0 015.814-5.518l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"/>')}</div>
+        <span class="todo-nav-label">Fortschritt</span>
+        ${momentumStreak ? `<span class="momentum-nav-badge" aria-label="Serie: ${momentumStreak} Tage aktiv">🔥${momentumStreak}</span>` : ''}
+      </div>
+      <div class="todo-nav-item archive-nav-item ${selectedId === '__archive__' || selectedId === '__archive_detail__' ? 'active' : ''}"
+           role="button" tabindex="0"
+           onclick="selectView('__archive__')"
+           onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();selectView('__archive__');}">
+        <div class="todo-nav-icon archive-icon">${ic('<path d="M3 7.5V6a1.5 1.5 0 011.5-1.5h15A1.5 1.5 0 0121 6v1.5M3 7.5v10.5A1.5 1.5 0 004.5 19.5h15a1.5 1.5 0 001.5-1.5V7.5M3 7.5h18M10 12h4"/>')}</div>
+        <span class="todo-nav-label">Archiv</span>
+      </div>
     </div>`;
 }
 
@@ -2616,6 +2660,7 @@ function renderTopicCard(mid, t, groupMap, themeMap, readOnly) {
           ${!t.done
             ? `<button class="btn btn-success btn-sm" onclick="openCompleteModal('${mid}','${t.id}')">${SVG.check} Erledigt</button>`
             : `<button class="btn btn-secondary btn-sm" onclick="reopenTopic('${mid}','${t.id}')">↺ Öffnen</button>`}
+          ${!t.done ? `<button class="btn btn-secondary btn-sm btn-icon" onclick="toggleTodoCardComposer('topic','${t.id}')" aria-label="Zwischenstand erfassen" title="Zwischenstand erfassen">${SVG.notes}</button>` : ''}
           ${!t.done ? `<button class="btn btn-ghost btn-sm btn-icon"
             onclick="openStackPushModal('topic','${t.id}')"
             title="Auf Stack legen (⌘⇧P)">📚</button>` : ''}
@@ -2654,6 +2699,7 @@ function renderTopicCard(mid, t, groupMap, themeMap, readOnly) {
           ${SVG.moon} Wacht auf am ${fmtSnoozeLabel(t.snoozedUntil)}
           ${readOnly ? '' : `<button class="snooze-wake-btn" onclick="wakeUpTopic('${mid}','${t.id}')">🔔 Jetzt wecken</button>`}
         </div>` : ''}
+      ${!readOnly && !t.done ? `<div id="todo-card-composer-topic-${t.id}" class="ts-progress-line-host" style="display:none"></div>` : ''}
       ${groupMembers.length > 0 ? `
         <div class="topic-group-chips">
           ${groupMembers.map(x => `

@@ -772,6 +772,27 @@ textarea.form-control { resize:vertical; min-height:80px; line-height:1.55; }
 .todo-nav-label { font-size:13px; font-weight:500; color:#6E7882; flex:1; min-width:0; }
 .todo-nav-item.active .todo-nav-label { color:var(--sb-title); font-weight:600; }
 
+/* ─── Todos Sidebar: einklappbare "Mehr"-Gruppe ─────────────────
+   Tagesabschluss/Stack-Historie/Wochen-Digest/Fortschritt/Archiv sind
+   standardmaessig eingeklappt, um die Navigation kurz zu halten (siehe
+   Feature "Einklappbare Zusatzfunktionen"). Chevron-Rotation folgt exakt
+   dem bestehenden Muster aus .tsg-legend-toggle/.tsg-legend-chevron. */
+.todo-nav-group-header {
+  display:flex; align-items:center; gap:8px;
+  padding:7px 10px; border-radius:7px; cursor:pointer;
+  transition:background .12s; width:100%; border:none; background:transparent;
+  font:inherit; text-align:left;
+}
+.todo-nav-group-header:hover { background:var(--sb-hover); }
+.todo-nav-group-label { font-size:13px; font-weight:500; color:#6E7882; flex:1; min-width:0; }
+.todo-nav-group-dot {
+  width:7px; height:7px; border-radius:50%; background:#d97706; flex-shrink:0;
+}
+.todo-nav-group-chevron { font-size:11px; color:#6E7882; transition:transform .15s; flex-shrink:0; }
+.todo-nav-group-header[aria-expanded="true"] .todo-nav-group-chevron { transform:rotate(90deg); }
+.todo-nav-group-items { display:flex; flex-direction:column; }
+.todo-nav-group-items.collapsed { display:none; }
+
 /* ─── Todo view ──────────────────────────────────────────────── */
 .todo-meeting-chip {
   display:inline-flex; align-items:center; gap:.3rem;

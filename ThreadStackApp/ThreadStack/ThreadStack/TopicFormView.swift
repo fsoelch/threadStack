@@ -113,8 +113,13 @@ struct TopicFormView: View {
                 Section {
                     descriptionSection
                 }
-                Section("Fortschritt") {
-                    progressSection
+                // Nur im Bearbeiten-Modus sichtbar, analog zu `TodoFormView`
+                // (Feature-Parität): beim Neuanlegen gibt es noch keinen
+                // Fortschritt zu zeigen, das Thema existiert ja gerade erst.
+                if topic != nil {
+                    Section("Fortschritt") {
+                        progressSection
+                    }
                 }
                 Section {
                     Toggle("Als Todo markieren", isOn: $isTodo)
@@ -227,6 +232,10 @@ struct TopicFormView: View {
         }
     }
 
+    // Wird nur im Bearbeiten-Modus gerendert (siehe Section-Bedingung in
+    // `body`, analog zu `TodoFormView.progressSection`): beim Neuanlegen
+    // gibt es noch keinen Fortschritt zu zeigen, das Thema existiert ja
+    // gerade erst.
     @ViewBuilder
     private var progressSection: some View {
         if let t = topic {
@@ -239,12 +248,6 @@ struct TopicFormView: View {
                     progressComposerFocused = true
                 }
             }
-        } else {
-            // Noch keine refId — nur der Composer, ohne Nächster-Schritt/
-            // Verlauf/Wiedereinstiegskarte (ergeben für ein noch nicht
-            // existierendes Thema keinen Sinn). Der eigentliche Commit
-            // erfolgt erst in save(), sobald die id feststeht.
-            ProgressEntryComposerView(composer: progressComposer, isFocused: $progressComposerFocused, onSave: {})
         }
     }
 
