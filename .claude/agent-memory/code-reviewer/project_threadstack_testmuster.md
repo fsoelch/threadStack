@@ -76,7 +76,7 @@ reines Code-Lesen. Worktrees unter `.claude/worktrees/` haben KEIN eigenes
 gegenteilige Annahme war falsch); `npm test` funktioniert dort nur, weil Node beim
 Aufloesen nach oben laeuft. Ein Probe-Skript im Scratchpad braucht daher:
 devDependencies (`supertest`) per absolutem Pfad aus
-`/Users/florian.soelch/personly/node_modules`, Pruefling/`test/helpers` per absolutem
+`/Users/Florian.Soelch/ownCloud/Projekte/personly/node_modules`, Pruefling/`test/helpers` per absolutem
 Pfad aus dem Worktree. Das ist sauberer, als eine Datei im Worktree anzulegen und
 wieder loeschen zu muessen.
 

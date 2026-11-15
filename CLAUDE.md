@@ -38,8 +38,17 @@ und hat bei Konflikten Vorrang, da sie projektweite Konsistenz sicherstellt.
   interne Pfade, Datenbankfehler im Klartext).
 - Logs enthalten keine sensiblen Daten (Passwoerter, Tokens, personenbezogene Daten
   im Klartext).
-- Neue Abhaengigkeiten nur mit kurzer Begruendung, keine Bibliotheken aus unklarer
-  Quelle.
+- Neue externe Abhaengigkeiten (Bibliotheken/Pakete, die noch nicht im Projekt
+  verwendet werden) werden NIEMALS ohne vorherige, ausdrueckliche Zustimmung des
+  Menschen eingefuehrt - unabhaengig davon, wie klein, ueblich oder alternativlos
+  sie erscheinen. Der betroffene Agent (architect bei der Technologieentscheidung,
+  developer bei der Umsetzung) haelt an der Stelle an, an der die Abhaengigkeit
+  noetig wuerde, holt aktiv eine Freigabe ein (interaktive Rueckfrage an den
+  Menschen bzw., wenn technisch nicht moeglich, Meldung als blockierender Punkt im
+  Abschlussbericht) und installiert/verwendet sie erst nach einer eindeutigen
+  Zustimmung. Ohne Freigabe wird stattdessen mit bereits vorhandenen Abhaengigkeiten
+  gearbeitet. Zusaetzlich: keine Bibliotheken aus unklarer Quelle, auch nicht mit
+  Freigabe.
 
 ## Definition of Done (fuer developer-Arbeitspakete)
 
@@ -66,7 +75,10 @@ Ein Agent unterbricht den Workflow und fragt den Menschen aktiv, wenn:
 - eine Anforderung an einer Stelle mehrdeutig ist, die grundlegende Architektur-
   oder Sicherheitsentscheidungen beeinflusst,
 - ein kritischer Sicherheitsfund nach einer Nachbesserung weiterhin besteht,
-- der Tester nach einer Korrekturschleife weiterhin No-Go meldet.
+- der Tester nach einer Korrekturschleife weiterhin No-Go meldet,
+- eine neue externe Bibliothek/Abhaengigkeit eingefuehrt werden soll, die noch
+  nicht im Projekt verwendet wird (siehe Sicherheits-Baseline) - hier wird IMMER
+  gefragt, auch wenn sonst keine der obigen Bedingungen zutrifft.
 
 In allen anderen Faellen arbeitet das Team den Workflow selbststaendig bis zur
 Ergebnispraesentation durch.

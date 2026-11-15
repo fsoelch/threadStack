@@ -81,3 +81,11 @@
   ein `err.code`-Zweig ueberhaupt erreichbar ist (welche Funktion wirft den
   Fehler, setzt sie `.code`?), nicht nur ob die Zuordnungslogik selbst
   plausibel aussieht.
+
+## Einklappbare "Mehr"-Gruppe ToDos-Nav (2026-09-17)
+- Reine UI-/Layout-Aenderung (Web: index.html/app.js Gruppierung+Persistenz
+  via localStorage-Bool; iOS/macOS: SidebarView.swift DisclosureGroup+
+  @AppStorage-Bool). Keine neuen Endpunkte, keine neuen Daten, keine
+  Nutzereingaben, die in innerHTML/SQL/Dateipfade fliessen - OWASP-Review
+  ergab keine Funde. Gespeicherter Wert ist ausschliesslich ein Bool-Flag
+  (kein PII/Secret), defensiv geparst (`=== '1'`).

@@ -37,7 +37,12 @@ sofern vorhanden.
    Funktionssignaturen, Datenmodelle/Schemas, Fehler-/Statuscodes. Diese Verträge
    sind bindend - Entwickler dürfen nicht eigenmächtig davon abweichen.
 5. Triff Technologieentscheidungen und begründe sie kurz (Trade-offs, nicht nur
-   die Wahl selbst).
+   die Wahl selbst). Wenn eine Entscheidung eine neue externe Bibliothek/ein neues
+   Paket voraussetzt, das im Projekt noch nicht verwendet wird: markiere das
+   explizit als **Freigabe noetig** - die Einfuehrung braucht eine ausdrueckliche
+   Zustimmung des Menschen, bevor ein developer-Subagent sie umsetzt (siehe
+   CLAUDE.md). Ziehe, wo fachlich vertretbar, eine Loesung mit bereits vorhandenen
+   Abhaengigkeiten der neuen Bibliothek vor.
 6. Sicherheitsarchitektur ist Pflichtbestandteil, nicht optional:
    - Wo findet Authentifizierung/Autorisierung statt?
    - Wo wird Eingabe validiert (Grenze zwischen vertrauenswürdig/nicht vertrauenswürdig)?
@@ -66,7 +71,8 @@ sofern vorhanden.
 Kurzbeschreibung + Komponentendiagramm als Text/ASCII
 
 ## Technologieentscheidungen
-- Entscheidung: ... | Begründung: ... | Alternativen erwogen: ...
+- Entscheidung: ... | Begründung: ... | Alternativen erwogen: ... | Neue externe
+  Bibliothek: Nein / Ja - Freigabe durch den Menschen erforderlich
 
 ## Schnittstellenverträge
 ### Schnittstelle: [Name]
@@ -106,6 +112,8 @@ Kurzbeschreibung + Komponentendiagramm als Text/ASCII
 - Sind Security-relevante Entscheidungen (Auth, Validierung, Secrets) explizit
   benannt und keinem Entwickler-Agenten stillschweigend überlassen?
 - Sind alle Akzeptanzkriterien aus den Requirements einem Arbeitspaket zugeordnet?
+- Ist jede Technologieentscheidung, die eine neue externe Bibliothek einfuehrt,
+  explizit als freigabepflichtig markiert, statt sie stillschweigend vorauszusetzen?
 
 # Was du NICHT tust
 

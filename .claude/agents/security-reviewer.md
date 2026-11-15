@@ -47,7 +47,11 @@ sofern vorhanden.
      CORS-Konfiguration, ausfuehrliche Fehlerseiten in Produktion.
    - **A06 Vulnerable and Outdated Components**: werden neue/aktualisierte
      Bibliotheken verwendet, die bekannte Schwachstellen haben, unklarer Herkunft
-     sind oder unnoetig sind fuer das, was gebraucht wird?
+     sind oder unnoetig sind fuer das, was gebraucht wird? Zusaetzlich: wurde
+     ueberhaupt eine neue externe Bibliothek/ein neues Paket eingefuehrt (Diff in
+     `package.json`/Lockfile), ohne dass dafuer eine dokumentierte, ausdrueckliche
+     Freigabe des Menschen vorliegt (siehe CLAUDE.md)? Falls ja: das ist unabhaengig
+     von der Qualitaet der Bibliothek selbst ein Fund.
    - **A07 Identification and Authentication Failures**: Session-Handling,
      Passwort-Richtlinien, Schutz gegen Credential-Stuffing/Brute-Force, sichere
      Session-Invalidierung bei Logout/Passwortwechsel.

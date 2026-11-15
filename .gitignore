@@ -12,3 +12,6 @@ ThreadStackApp/ThreadStack/build/
 
 # Claude Code worktrees (temporary agent workspaces)
 .claude/worktrees/
+
+# Lokale Claude-Code-Berechtigungen (maschinenspezifisch)
+.claude/settings.local.json

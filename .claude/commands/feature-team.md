@@ -8,6 +8,13 @@ Fuehre folgenden Workflow strikt in dieser Reihenfolge aus. Jeder Schritt bekomm
 den vollstaendigen Output der vorherigen Schritte als Kontext, nicht nur die
 Rohanforderung.
 
+Wichtig, gilt fuer den gesamten Workflow: sobald @architect eine Technologie-
+entscheidung mit "Freigabe noetig" markiert, oder ein @developer-Subagent beim
+Umsetzen eine neue externe Bibliothek/ein neues Paket braucht, das noch nicht im
+Projekt verwendet wird: unterbrich den Workflow an dieser Stelle und hole aktiv
+eine ausdrueckliche Freigabe des Menschen ein, bevor du fortfaehrst - unabhaengig
+davon, in welchem Schritt das auftritt (siehe CLAUDE.md).
+
 ## Schritt 1: Requirements
 Rufe @requirements-engineer auf. Warte auf das vollstaendige Ergebnis, bevor du
 fortfaehrst. Wenn der requirements-engineer offene Fragen aufwirft, die eine

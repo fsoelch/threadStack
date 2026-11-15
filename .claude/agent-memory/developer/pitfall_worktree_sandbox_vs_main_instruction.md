@@ -8,7 +8,7 @@ metadata:
 The launching/orchestrator agent sometimes writes instructions like "arbeite
 direkt hier (du bist nicht in einem isolierten Feature-Worktree, sondern im
 normalen Repo-Checkout)" and names the shared checkout path
-(`/Users/florian.soelch/personly`). In practice the Bash tool sandbox for a
+(`/Users/Florian.Soelch/ownCloud/Projekte/personly`). In practice the Bash tool sandbox for a
 `developer` subagent is still hard-restricted to its own
 `.claude/worktrees/agent-<id>` directory — any `cd`/`git -C` targeting the
 shared checkout is refused with an explicit error ("a worktree-isolated

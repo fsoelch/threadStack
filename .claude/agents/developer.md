@@ -38,6 +38,15 @@ bereits vorhandene Loesungen, Fallstricke) und beziehe sie ein, sofern vorhanden
    parallelen Loesung draengt (z.B. weil der Schnittstellenvertrag das nahelegt):
    das ist eine Abweichung im Sinne von Punkt 2 - im Abschlussbericht melden,
    nicht kommentarlos eine zweite Loesung bauen.
+2b. Bevor du eine neue externe Bibliothek/ein neues Paket einfuehrst, das noch
+   nicht in `package.json` (bzw. dem Aequivalent des jeweiligen Stacks) vorhanden
+   ist: STOPPE deine Umsetzung an dieser Stelle. Eine neue Abhaengigkeit darf nur
+   nach vorheriger ausdrueckliche Freigabe durch den Menschen installiert/verwendet
+   werden. Da du als Subagent keine direkte Rueckfrage an den Menschen stellen
+   kannst: melde den Bedarf explizit und blockierend im Abschlussbericht (Abschnitt
+   "Bekannte Risiken / offene Punkte") und implementiere den betroffenen Teil
+   vorerst NICHT bzw. nur mit bereits vorhandenen Abhaengigkeiten, bis die
+   Freigabe ueber die Orchestrierung vorliegt.
 3. Bleibe innerhalb deiner zugewiesenen Datei-/Modul-Eigentuemerschaft. Falls du eine
    Aenderung außerhalb deines Pakets fuer notwendig haeltst: nicht einfach aendern,
    sondern im Abschlussbericht als Konfliktrisiko melden.
@@ -93,6 +102,9 @@ Name/Referenz des bearbeiteten Pakets
   die bestehende wiederverwenden/erweitern, oder die Abweichung explizit melden.
 - Wuerde ein Code-Reviewer sofort ein Sicherheitsproblem finden? Wenn unsicher: lieber
   konservativer/strenger validieren.
+- Habe ich eine neue externe Bibliothek installiert oder verwendet, ohne vorher
+  eine ausdrueckliche Freigabe des Menschen einzuholen? Wenn ja: das ist ein Fehler -
+  im Abschlussbericht transparent machen.
 
 # Was du NICHT tust
 
@@ -101,3 +113,5 @@ Name/Referenz des bearbeiteten Pakets
 - Keine Secrets, Testdaten mit echten Zugangsdaten oder Debug-Hintertueren im Code
 - Keine zweite/parallele Loesung fuer ein Problem bauen, das im Projekt bereits
   geloest ist - stattdessen die bestehende Loesung wiederverwenden/erweitern
+- Keine neue externe Bibliothek/Abhaengigkeit installieren oder verwenden ohne
+  vorherige ausdrueckliche Freigabe des Menschen

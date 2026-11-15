@@ -93,3 +93,14 @@
   wirklichen Router), nicht nur einen Unit-Test des zugrundeliegenden Locks
   - Race-Bedingungen beim Zusammenspiel von Middleware-Reihenfolge (Rate-
   Limit-Check vs. Lock-Erwerb) fallen sonst nicht auf.
+
+## Einklappbare "Mehr"-Gruppe ToDos-Nav (2026-09-17)
+- Alle AC der beiden Stories (Web + iOS/macOS) gepruft: automatisiert
+  (8 Node-Tests test/todos_nav_group.test.js, 6 Swift-Tests
+  SidebarMoreGroupTests.swift) + manuell ergaenzt (Doppel-Toggle kehrt zu
+  eingeklappt zurueck, Streak-Hinweis-Punkt bei momentumStreak). Go.
+- Persistenz ueber echten Seiten-Reload ist mit jsdom nicht 1:1 testbar
+  (jede neue JSDOM-Instanz hat eigenen localStorage) - nur Lesen/Schreiben
+  desselben Storage-Keys innerhalb einer Session wird automatisiert
+  geprueft. Kein Bug, inhärente Grenze des Testansatzes bei aehnlichen
+  ts.*-localStorage-Flags im Projekt.

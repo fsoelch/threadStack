@@ -33,11 +33,22 @@
 - [Kontakte / Ansprechpartner](domain_contacts.md) — minimales Datenmodell, kein Zwischenstand/Anhang/Stack, bekannte Web-vs-iOS-Divergenz
 - [Zwischenstand-Mechanik](domain_progress_mechanik.md) — konkrete Limits/Paging/Ownership-Regeln fuer "gleiche Bedienung wie bei ToDos"; `topics` hat kein user_id
 - [Momentum (Streak/Erledigt-Moment/Wochen-Rueckblick)](domain_momentum.md) — "Thema" bei Meilensteinen ist ein atomares `topics`-Objekt ohne Kind-Todos; Modulname bewusst `momentum` statt `progress` wegen Namenskollision
+- [iOS-Offline/Sync-Fakten](domain_ios_offline.md) — keine "Idee"-Entitaet, kein lokaler Cache, fehlende Idempotenz/Konflikterkennung am Server, Lastenheft Kap. 6
 - [DB-Backup/Restore (Admin)](domain_backup.md) — Abgrenzung zum bestehenden Pro-Nutzer-Export-Feature; Referenz-Scheduler-Muster aus ai/jobs.js fuer "zu Uhrzeit X automatisch"
 
 ## Lastenheft-Pflege
 
 - [Lastenheft-Eintraege aktualisieren](workflow_lastenheft.md) — Eintrag ersetzen statt duplizieren, sichere Ersetzungsgrenzen
+
+## Navigation ToDos (2026-09-17)
+- Web-ToDos-Nav (`renderTodosNav()`, app.js) ist EINE flache Liste (Meine Todos,
+  Tagesabschluss, Stack-Historie, Wochen-Digest, Fortschritt, Archiv). iOS/macOS
+  hat dieselben fachlichen Punkte aber anders verteilt: Tagesabschluss/
+  Stack-Historie stecken in einem eigenen, bereits selbst-einklappbaren
+  `StackPanelView` (separat von der Sidebar), NICHT in `SidebarView.swift`. Bei
+  "Navigation ist zu lang"-Anfragen immer zuerst pruefen, ob iOS/macOS die
+  Web-Struktur wirklich 1:1 spiegelt, bevor man Web-Scope unveraendert auf iOS
+  uebertraegt.
 
 ## Session-/Logout-Handling (2026-09-11)
 - iOS: `tryServerReLogin()` (AppState.swift) existierte bereits vor diesem Feature,

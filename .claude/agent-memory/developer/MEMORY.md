@@ -92,3 +92,37 @@
   `Claude_Agent_team/` (alte Agenten-Framework-Kopie vor Migration auf
   `.axet-code/skills/`), `data.db-shm`/`data.db-wal` (Artefakte eines
   manuellen `npm start`-Laufs).
+
+## Einklappbare "Mehr"-Gruppe in ToDos-Nav (2026-09-17)
+- Neue Marker-Konvention `NAV_MORE_GROUP_PURE_HELPERS_START/_END` in
+  `public/app.js` (analog zu `ARCHIVE_PURE_HELPERS_*`) fuer die reine
+  Entscheidungslogik der einklappbaren "Mehr"-Gruppe. WICHTIG: Werte, die per
+  VM-Sandbox-Destrukturierung aus so einem Marker-Block gelesen werden
+  muessen, brauchen `var` statt `const`/`let` fuer Arrays/Konstanten -
+  `vm.createContext`+`runInContext` haengt nur `var`-Deklarationen als
+  Property an das Sandbox-Objekt, `const`/`let` bleiben rein lexikalisch und
+  sind beim Destrukturieren des Sandbox-Objekts `undefined`/nicht iterierbar.
+  Funktionsdeklarationen (`function foo(){}`) sind davon nicht betroffen
+  (werden immer als Property gehaengt).
+- Vorbestehende, unabhaengige Testfehler beim vollen `npm test`-Lauf
+  (nicht durch dieses Arbeitspaket verursacht, keine Datei dieses Pakets
+  angefasst): `test/progress_web_helpers.test.js` ("badgeHtml" – bekannter
+  Kalenderzeit-Flaky, siehe flaky_test_date_drift.md) und
+  `test/archive_readonly_guard.test.js` ("Attachment-Lesen/Download ... bleibt
+  erlaubt" – 500 statt 200, ausserhalb der hier geaenderten Dateien).
+
+## Naming-Kollision Property vs. globale Funktion gleichen Namens (2026-09-17)
+- Ein `private var foo: String { foo(x: ...) }` in einem Typ referenziert
+  IMMER die eigene Instanz-Property selbst (rekursiv), auch wenn eine
+  gleichnamige freie Modul-Funktion mit anderer Signatur existiert -
+  Compiler-Fehler "refers to instance method rather than global function".
+  Swift bevorzugt beim unqualifizierten Aufruf innerhalb des Typs immer das
+  Member vor dem globalen Symbol, Parameterlabels helfen nicht. Fix: Property
+  umbenennen (z.B. `moreGroupLabelText`) ODER die freie Funktion explizit
+  modul-qualifiziert aufrufen (`ThreadStack.foo(...)`), wenn der Name bewusst
+  identisch bleiben soll (z.B. um Testkonvention/Terminologie zu spiegeln).
+- Schreibgeschuetztes `~/Library/Developer/Xcode/DerivedData` in dieser
+  Sandbox (auch fuer den Simulator-Fall, nicht nur den macOS-Runner - siehe
+  bereits bekanntes Problem in MEMORY.md): `xcodebuild test ... -derivedDataPath
+  /tmp/<beliebig>` als Workaround, damit Build+xcresult in einen
+  garantiert schreibbaren Pfad geschrieben werden.

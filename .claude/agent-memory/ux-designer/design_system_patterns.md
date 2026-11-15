@@ -75,3 +75,10 @@ und "Thema" (= `topics`, Tagesordnungspunkt eines Meetings) verschiedene Dinge u
 werden von Nutzern leicht verwechselt. Jede neue UI-Formulierung/jeder neue Dialogtitel
 muss explizit machen, welches der beiden gemeint ist (z.B. nie nur "zuordnen" ohne
 Objekt zu benennen).
+
+## Offline-/Status-Bausteine iOS (entdeckt 2026-11-15, Offline-Entwurf)
+
+- Einziger bestehender Offline-Hinweis: `GraphView.offlineBanner` (HStack wifi.slash + Text caption + "Erneut versuchen", `.thinMaterial`, `DS.radiusM`). Neue Offline-Statusleiste soll diesen vereinheitlichen, nicht daneben eine zweite Optik bauen.
+- Kontakt-Sheets nutzen je `@State isOffline` + `isTransportFailure(error)` (Extensions.swift) + "Erneut versuchen" - lokales Muster pro Sheet; `friendlyAssignmentErrorMessage` ist geteilt.
+- `ToastOverlayView`/`state.showToast` = transienter Hinweis; `.errorAlert` = Alert. Badges: `dueBadge` (TodosView) und `ProgressBadgeView` (Icon+Text-Capsule, Farbe nie allein) sind Vorbild fuer Status-Badges.
+- Abmelden existiert doppelt (ContentView macOS-Menue ~79 und iOS menuButton ~228), beide `Task { try? await state.logout() }` - jede Logout-Aenderung (Warnung) muss beide Stellen treffen. iOS: NavigationSplitView + `.refreshable`; macOS: Sidebar-Kopf mit Refresh-Button.

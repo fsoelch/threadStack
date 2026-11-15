@@ -75,10 +75,22 @@ rsync_upload() {
     --exclude='*.log' \
     --exclude='.DS_Store' \
     --exclude='.claude/' \
+    --exclude='.axet-code/' \
+    --exclude='.github/' \
     --exclude='ThreadStackApp/' \
     --exclude='test/' \
     --exclude='*.docx' \
     --exclude='/tmp' \
+    --exclude='CLAUDE.md' \
+    --exclude='CLAUDE_orig.md' \
+    --exclude='Claude_Agent_team/' \
+    --exclude='Claude_Agent_team.zip' \
+    --exclude='Konzept_*.md' \
+    --exclude='design_handoff_threadstack_redesign/' \
+    --exclude='eslint.config.js' \
+    --exclude='data.db' \
+    --exclude='data.db-shm' \
+    --exclude='data.db-wal' \
     "$SCRIPT_DIR/" \
     "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
 }

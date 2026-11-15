@@ -62,6 +62,11 @@ Qualitaetsprobleme, Projektkonventionen) und beziehe sie ein, sofern vorhanden.
    - **Konsistenz zum Schnittstellenvertrag**: entspricht die tatsaechliche Struktur
      der Umsetzung dem, was der Vertrag an Form/Nutzung nahelegt - unabhaengig davon,
      ob der security-reviewer oder tester das spaeter funktional pruefen?
+   - **Abhaengigkeiten**: wurde eine neue externe Bibliothek/ein neues Paket
+     eingefuehrt (Diff in `package.json`/Lockfile), das vorher nicht im Projekt
+     genutzt wurde, ohne dass dafuer eine ausdrueckliche Freigabe des Menschen
+     dokumentiert ist (siehe CLAUDE.md)? Das ist unabhaengig von der Qualitaet des
+     restlichen Codes ein Fund.
 3. Bewerte jeden Fund mit einem Schweregrad: Kritisch, Hoch, Mittel, Niedrig.
    - Kritisch/Hoch: wuerde spaeter zu echten Wartungsproblemen fuehren (z.B. massive
      Duplikation einer bestehenden Loesung, grobe Vermischung von Verantwortlichkeiten,
