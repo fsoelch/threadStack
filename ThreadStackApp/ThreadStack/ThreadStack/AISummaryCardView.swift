@@ -90,6 +90,7 @@ struct AISummaryCardView: View {
     /// Neuentwicklung).
     var onShowAllEntries: (() -> Void)? = nil
 
+    @EnvironmentObject private var offline: OfflineStatusStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isRegenerating = false
     @State private var regenerateError: String?
@@ -192,7 +193,8 @@ struct AISummaryCardView: View {
             .buttonStyle(.plain)
             .scaledFont(.caption)
             .foregroundStyle(DS.accentDark)
-            .disabled(isRegenerating)
+            .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: isRegenerating))
+            .disabledWhenOfflineCompact(offline.isOffline)
             .accessibilityLabel(requiresConfirmation
                 ? "\(kind.badgeLabel) trotz Kosten-Limit jetzt erstellen"
                 : "\(kind.badgeLabel) erneut versuchen")
@@ -207,12 +209,14 @@ struct AISummaryCardView: View {
     }
 
     private func regenerate(confirmed: Bool = false) async {
+        guard !offline.isOffline else { regenerateError = OfflineFeatureBLogic.blockedDialogMessage; return }
         isRegenerating = true
         regenerateError = nil
         do {
             try await store.regenerate(kind: kind.apiValue, refType: refType, refId: refId, confirmed: confirmed)
         } catch {
-            regenerateError = (error as? ProgressError)?.errorDescription
+            regenerateError = isTransportFailure(error) ? OfflineFeatureBLogic.blockedDialogMessage
+                : (error as? ProgressError)?.errorDescription
                 ?? "Erneut versuchen fehlgeschlagen. Bitte später erneut versuchen."
         }
         isRegenerating = false

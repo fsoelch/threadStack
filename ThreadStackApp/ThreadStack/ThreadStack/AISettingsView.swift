@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AISettingsView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
 
     @State private var provider:  String = ""
@@ -38,7 +39,19 @@ struct AISettingsView: View {
 
     var body: some View {
         NavigationStack {
+            Group {
+            if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                     hasContent: state.aiSettings != nil,
+                                                     loadFailedWithTransport: false) {
+                OfflineUnavailableView(reason: OfflineFeatureBLogic.aiUnavailableReason)
+            } else {
             Form {
+                if offline.isOffline {
+                    Section {
+                        Label(OfflineFeatureBLogic.blockedToast, systemImage: "wifi.slash")
+                            .scaledFont(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Section("Provider & Modell") {
                     Picker("Provider", selection: $provider) {
                         ForEach(providers, id: \.value) { p in Text(p.label).tag(p.value) }
@@ -142,11 +155,22 @@ struct AISettingsView: View {
 
                 if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
             }
+            .disabledWhenOfflineCompact(offline.isOffline)
+            }
+            }
             .navigationTitle("AI-Einstellungen")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Speichern") { Task { await save() } }.disabled(loading)
+                    Button("Speichern") { Task { await save() } }
+                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: true, isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
+                }
+            }
+            .onChange(of: offline.isOffline) { was, now in
+                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                    wasOffline: was, isOffline: now, hasContent: state.aiSettings != nil) {
+                    Task { await loadInitial() }
                 }
             }
             .task { await loadInitial() }
@@ -154,6 +178,7 @@ struct AISettingsView: View {
     }
 
     private func loadInitial() async {
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
         await state.loadAiSettings()
         guard let s = state.aiSettings else { return }
         provider = s.provider; model = s.model
@@ -171,6 +196,7 @@ struct AISettingsView: View {
     }
 
     private func save() async {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         loading = true; error = nil
         var body: [String: Any] = [
             "provider": provider, "model": model,
@@ -199,11 +225,12 @@ struct AISettingsView: View {
         ]
         if !apiKey.isEmpty { body["api_key"] = apiKey }
         do { _ = try await state.saveAiSettings(body); apiKey = "" }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription) }
         loading = false
     }
 
     private func testConnection() async {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         testResult = "teste …"
         await save()
         do {
@@ -213,6 +240,7 @@ struct AISettingsView: View {
     }
 
     private func removeKey() async {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         do { try await state.removeAiKey(); apiKey = "" }
         catch { self.error = error.localizedDescription }
     }

@@ -7,6 +7,8 @@ import SwiftUI
 // "Wochen-Zusammenfassung"-Screen in dieser App).
 struct MomentumView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
+    @State private var loadFailedOffline = false
     @State private var settings: MomentumSettings?
     @State private var streak: MomentumStreak?
     @State private var week: MomentumWeek?
@@ -20,7 +22,12 @@ struct MomentumView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                if loading && settings == nil {
+                if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                         hasContent: settings != nil,
+                                                         loadFailedWithTransport: loadFailedOffline) {
+                    OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
+                        .frame(minHeight: 300)
+                } else if loading && settings == nil {
                     ProgressView("Lade …").frame(maxWidth: .infinity).padding(.top, 24)
                 } else if let error {
                     VStack(spacing: 8) {
@@ -39,6 +46,12 @@ struct MomentumView: View {
             .padding()
         }
         .navigationTitle("Fortschritt")
+        .onChange(of: offline.isOffline) { was, now in
+            if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                wasOffline: was, isOffline: now, hasContent: settings != nil) {
+                Task { await reload() }
+            }
+        }
         .task { await reload() }
     }
 
@@ -112,8 +125,12 @@ struct MomentumView: View {
             if let settingsError {
                 Text(settingsError).font(.caption).foregroundStyle(.red)
             }
+            if offline.isOffline {
+                Text(OfflineTexts.unavailableTitle).scaledFont(.caption2).foregroundStyle(.secondary)
+            }
             pauseDaysSection
         }
+        .disabledWhenOfflineCompact(offline.isOffline)
         .padding(12)
         .background(DS.cardBg).clipShape(RoundedRectangle(cornerRadius: DS.radiusS))
     }
@@ -175,12 +192,14 @@ struct MomentumView: View {
     }
 
     private func reload() async {
-        loading = true; error = nil
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        loading = true; error = nil; loadFailedOffline = false
         do {
             let overview = try await state.momentumOverview()
             settings = overview.settings; streak = overview.streak; week = overview.week
             pauseDays = try await state.momentumPauseDays()
         } catch {
+            loadFailedOffline = isTransportFailure(error)
             self.error = "Fortschrittsdaten konnten nicht geladen werden."
         }
         loading = false

@@ -11,6 +11,7 @@ import SwiftUI
 struct GraphView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var graphStore: GraphStore
+    @EnvironmentObject var offline: OfflineStatusStore
 
     @State private var positions: [String: CGPoint] = [:]
     @State private var visibleTypes: Set<GraphNodeType> = GraphView.loadVisibleTypes()
@@ -142,7 +143,12 @@ struct GraphView: View {
     }
 
     @ViewBuilder private var canvasArea: some View {
-        if graphStore.isLoading && graphStore.nodes.isEmpty {
+        if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline || graphStore.isOffline,
+                                                 hasContent: !graphStore.nodes.isEmpty,
+                                                 loadFailedWithTransport: false) {
+            // Nie geladen und offline: Platzhalter statt Leerzustand/Fehler (UX S1).
+            OfflineUnavailableView(reason: .notLoadedYet) { Task { await graphStore.load() } }
+        } else if graphStore.isLoading && graphStore.nodes.isEmpty {
             ProgressView("Graph wird geladen…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let err = graphStore.error, graphStore.nodes.isEmpty {
@@ -158,34 +164,19 @@ struct GraphView: View {
                     visibleTypes: visibleTypes,
                     searchMatchKeys: searchMatchKeys,
                     focusKey: focusKey,
-                    editingEnabled: !graphStore.isOffline,
+                    editingEnabled: !(graphStore.isOffline || offline.isOffline),
                     onTapNode: { selectedNode = $0 },
                     onTapEdge: { selectedEdge = $0 },
                     onNodeDragEnded: handleNodeDragEnded
                 )
-                if graphStore.isOffline {
-                    offlineBanner
-                }
+                // Eigener Offline-Banner entfernt (UX Konsistenzentscheidung 3):
+                // der globale OfflineStatusBanner in ContentView deckt Offline-Hinweis
+                // und Stand ab; Bearbeiten bleibt ueber `editingEnabled` gesperrt.
                 if graphStore.positionSaveError != nil {
                     positionSaveHint
                 }
             }
         }
-    }
-
-    private var offlineBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "wifi.slash")
-            Text("Offline — letzter geladener Stand. Bearbeiten ist deaktiviert.")
-                .font(.caption)
-            Spacer()
-            Button("Erneut versuchen") { Task { await graphStore.load() } }
-                .font(.caption)
-        }
-        .padding(8)
-        .background(.thinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: DS.radiusM))
-        .padding(8)
     }
 
     private var positionSaveHint: some View {
@@ -287,7 +278,7 @@ struct GraphView: View {
     // MARK: - Drag handling (move / reparent)
 
     private func handleNodeDragEnded(_ node: GraphNode, previous: CGPoint, new: CGPoint, droppedOnKey: String?) {
-        guard !graphStore.isOffline else {
+        guard !(graphStore.isOffline || offline.isOffline) else {
             // Editing is disabled while offline — revert visually.
             positions[node.key] = previous
             return

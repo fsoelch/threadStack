@@ -35,6 +35,7 @@ struct KnowledgeEditorView: View {
     var onSaved: ((KnowledgePage) -> Void)? = nil
 
     @EnvironmentObject private var appState: AppState
+    @EnvironmentObject private var offline: OfflineStatusStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -122,7 +123,11 @@ struct KnowledgeEditorView: View {
 
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    private var saveDisabled: Bool { trimmedTitle.isEmpty || isSaving }
+    /// Offline nie speichern (Wissensseiten werden nicht in die Outbox gestellt);
+    /// der Entwurfsmechanismus (KnowledgeDraftStore) bleibt unveraendert aktiv.
+    private var saveDisabled: Bool {
+        !OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: !trimmedTitle.isEmpty, isBusy: isSaving)
+    }
 
     private var draftLookupPageId: String? {
         switch mode {
@@ -136,6 +141,12 @@ struct KnowledgeEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if offline.isOffline {
+                    Section {
+                        Label(OfflineFeatureBLogic.blockedDialogMessage, systemImage: "wifi.slash")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 if showDraftBanner {
                     draftBannerSection
                 }
@@ -204,6 +215,7 @@ struct KnowledgeEditorView: View {
                         }
                     }
                     .disabled(saveDisabled)
+                    .disabledWhenOfflineCompact(offline.isOffline)
                     .accessibilityLabel("Speichern")
                 }
             }
@@ -326,6 +338,7 @@ struct KnowledgeEditorView: View {
                     Label("Wissen verknüpfen", systemImage: "link.badge.plus")
                 }
                 .accessibilityLabel("Wissen verknüpfen")
+                .disabledWhenOffline(offline.isOffline)
             }
         }
     }
@@ -372,7 +385,7 @@ struct KnowledgeEditorView: View {
                 .foregroundStyle(.orange)
                 .accessibilityLabel(banner.message)
             Button("Erneut versuchen") { performSave() }
-                .disabled(isSaving)
+                .disabled(isSaving || offline.isOffline)
         }
     }
 
@@ -471,6 +484,7 @@ struct KnowledgeEditorView: View {
 
     private func performSave() {
         guard !isSaving else { return }
+        guard !offline.isOffline else { return }
         guard !trimmedTitle.isEmpty else {
             titleErrorText = "Überschrift erforderlich"
             return

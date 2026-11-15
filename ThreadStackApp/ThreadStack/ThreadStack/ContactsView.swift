@@ -4,6 +4,7 @@ import SwiftUI
 
 struct ContactsView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @State private var search = ""
     @State private var showNew = false
     @State private var editContact: Contact? = nil
@@ -34,10 +35,16 @@ struct ContactsView: View {
                 Button { showNew = true } label: {
                     Label("Neuer Ansprechpartner", systemImage: "plus.circle").foregroundStyle(.secondary)
                 }.buttonStyle(.plain)
+                .disabledWhenOffline(offline.isOffline)
             }
             #endif
 
-            if state.contacts.isEmpty {
+            if OfflineFeatureBLogic.showsUnavailableForList(isOffline: offline.isOffline,
+                                                            isEmpty: state.contacts.isEmpty,
+                                                            dataAsOf: offline.dataAsOf) {
+                OfflineUnavailableView(reason: .notLoadedYet)
+                    .listRowBackground(Color.clear)
+            } else if state.contacts.isEmpty {
                 Section {
                     Text("Noch keine Ansprechpartner — tippe auf + um den ersten anzulegen.")
                         .foregroundStyle(.secondary).font(.subheadline)
@@ -49,7 +56,7 @@ struct ContactsView: View {
                 ForEach(filtered) { c in
                     ContactCardView(contact: c, onEdit: { editContact = c })
                 }
-                .onDelete { idx in
+                .onDelete(perform: offline.isOffline ? nil : { idx in
                     let ids = idx.map { filtered[$0].id }
                     Task {
                         for id in ids {
@@ -57,7 +64,7 @@ struct ContactsView: View {
                             catch { self.error = error.localizedDescription }
                         }
                     }
-                }
+                })
             }
         }
         .navigationTitle("Ansprechpartner")
@@ -66,8 +73,12 @@ struct ContactsView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button { showNew = true } label: { Image(systemName: "plus") }
+                    .disabledWhenOfflineCompact(offline.isOffline)
+                    .accessibilityLabel("Neuer Ansprechpartner")
             }
-            ToolbarItem(placement: .navigationBarTrailing) { EditButton() }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                EditButton().disabledWhenOfflineCompact(offline.isOffline)
+            }
         }
         #endif
         .sheet(isPresented: $showNew) { ContactFormView() }
@@ -86,6 +97,7 @@ struct ContactCardView: View {
     let contact: Contact
     let onEdit: () -> Void
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @State private var error: String?
 
     var body: some View {
@@ -130,6 +142,7 @@ struct ContactCardView: View {
                     catch { self.error = error.localizedDescription }
                 }
             } label: { Label("Löschen", systemImage: "trash") }
+            .disabledWhenOfflineCompact(offline.isOffline)
         }
         .errorAlert($error)
     }
@@ -156,6 +169,7 @@ struct ContactCardView: View {
 // siehe `DescriptionEditorSheet.swift`), NIE als Klartext.
 struct ContactFormView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var name  = ""
     @State private var role  = ""
@@ -164,11 +178,16 @@ struct ContactFormView: View {
     @State private var descriptionContentLoaded = false
     @State private var loading = false
     @State private var error: String?
-    @State private var isOffline = false
 
     var body: some View {
         NavigationStack {
             Form {
+                if offline.isOffline {
+                    Section {
+                        Text(OfflineFeatureBLogic.blockedDialogMessage)
+                            .foregroundStyle(.secondary).font(.footnote)
+                    }
+                }
                 Section("Name") {
                     TextField("z. B. Anna Müller", text: $name)
                         .autocorrectionDisabled()
@@ -191,8 +210,9 @@ struct ContactFormView: View {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(error).foregroundStyle(.red).font(.footnote)
-                            if isOffline {
+                            if offline.isOffline {
                                 Button("Erneut versuchen") { save() }.buttonStyle(.bordered)
+                                    .disabledWhenOffline(true)
                             }
                         }
                     }
@@ -204,7 +224,11 @@ struct ContactFormView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { save() }
-                        .disabled(loading || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(!OfflineFeatureBLogic.canSave(
+                            isOffline: offline.isOffline,
+                            inputValid: !name.trimmingCharacters(in: .whitespaces).isEmpty,
+                            isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .onChange(of: descriptionController.isReady) { _, ready in
@@ -218,7 +242,8 @@ struct ContactFormView: View {
     }
 
     private func save() {
-        loading = true; error = nil; isOffline = false
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        loading = true; error = nil
         let cleanName  = name.trimmingCharacters(in: .whitespaces)
         let cleanRole  = role.trimmingCharacters(in: .whitespaces)
         let cleanEmail = email.trimmingCharacters(in: .whitespaces)
@@ -235,8 +260,7 @@ struct ContactFormView: View {
                 // Meldung mit erneutem Versuch statt eines stillen Verwurfs
                 // (Story 14, explizit gefordertes Offline-/Fehlerverhalten).
                 if isTransportFailure(error) {
-                    isOffline = true
-                    self.error = "Keine Verbindung — deine Eingabe bleibt erhalten. Bitte erneut versuchen, sobald du wieder online bist."
+                    self.error = OfflineFeatureBLogic.blockedDialogMessage
                 } else {
                     self.error = error.localizedDescription
                 }

@@ -19,6 +19,7 @@ struct PushTarget: Identifiable {
 
 struct StackPanelView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @State private var collapsed = true
     @State private var popFrame:    StackFrame? = nil
     @State private var noteFrame:   StackFrame? = nil
@@ -84,14 +85,20 @@ struct StackPanelView: View {
                     Image(systemName: "plus").font(.caption)
                 }
                 .buttonStyle(.plain).help("Schnell auf Stack legen")
+                .disabledWhenOfflineCompact(offline.isOffline)
+                .accessibilityLabel("Schnell auf Stack legen")
                 Button { showEod = true } label: {
                     Image(systemName: "moon.fill").font(.caption)
                 }
                 .buttonStyle(.plain).help("Tagesabschluss")
+                .disabledWhenOfflineCompact(offline.isOffline)
+                .accessibilityLabel("Tagesabschluss")
                 Button { showHistory = true } label: {
                     Image(systemName: "clock.arrow.circlepath").font(.caption)
                 }
                 .buttonStyle(.plain).help("Historie")
+                .disabledWhenOfflineCompact(offline.isOffline)
+                .accessibilityLabel("Historie")
             }
             Image(systemName: collapsed ? "chevron.up" : "chevron.down")
                 .font(.caption).foregroundStyle(.secondary)
@@ -153,16 +160,22 @@ struct StackPanelView: View {
                         Label("Pop", systemImage: "eject").font(.caption)
                     }
                     .buttonStyle(.borderedProminent).controlSize(.small)
+                    .disabledWhenOfflineCompact(offline.isOffline)
                     Button { noteFrame = f } label: {
                         Label("Notiz", systemImage: "square.and.pencil").font(.caption)
                     }
                     .buttonStyle(.bordered).controlSize(.small)
+                    .disabledWhenOfflineCompact(offline.isOffline)
                     if state.aiFeatureEnabled(\.reentry) {
                         Button { Task { await runReentry(f) } } label: {
                             Label("Re-Entry", systemImage: "sparkles").font(.caption)
                         }
                         .buttonStyle(.bordered).controlSize(.small).tint(DS.accent)
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     }
+                }
+                if offline.isOffline {
+                    Text(OfflineTexts.unavailableTitle).font(.caption2).foregroundStyle(.secondary)
                 }
                 if let r = reentry[f.id] {
                     Text(r).font(.caption2).padding(6)
@@ -189,6 +202,7 @@ struct StackPanelView: View {
     }
 
     private func runReentry(_ f: StackFrame) async {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         do {
             let r = try await state.aiReentry(frameId: f.id)
             reentry[f.id] = r.content.summary
@@ -232,6 +246,7 @@ struct StackPushSheet: View {
     let target: PushTarget
     @EnvironmentObject var state: AppState
     @EnvironmentObject var progressStore: ProgressStore // A3
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var note: String = ""
     @State private var loading = false
@@ -265,7 +280,11 @@ struct StackPushSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Push") { submit() }
-                        .disabled(loading || note.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(!OfflineFeatureBLogic.canSave(
+                            isOffline: offline.isOffline,
+                            inputValid: !note.trimmingCharacters(in: .whitespaces).isEmpty,
+                            isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .task { await prefillNextStepIfNeeded() } // A3: Story 5
@@ -290,13 +309,17 @@ struct StackPushSheet: View {
     }
 
     private func submit() {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         loading = true; error = nil
         Task {
             do {
                 _ = try await state.stackPush(refType: target.refType, refId: target.refId,
                                               nextStepNote: note.trimmingCharacters(in: .whitespaces))
                 dismiss()
-            } catch { self.error = error.localizedDescription; loading = false }
+            } catch {
+                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                loading = false
+            }
         }
     }
 }
@@ -328,6 +351,7 @@ struct StackPopSheet: View {
     let frame: StackFrame
     @EnvironmentObject var state: AppState
     @EnvironmentObject var progressStore: ProgressStore // A3
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var resolution: String = "done"
     @State private var resultText: String = ""
@@ -392,8 +416,10 @@ struct StackPopSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Pop") { submit() }
-                        .disabled(loading || (StackPopCheckpointLogic.progressSource(forResolution: resolution) != nil
-                                               && ProgressEntryCharLimit.isOverLimit(length: whereAmI.count)))
+                        .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: loading)
+                                  || (StackPopCheckpointLogic.progressSource(forResolution: resolution) != nil
+                                      && ProgressEntryCharLimit.isOverLimit(length: whereAmI.count)))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .alert("In Backlog verschieben?", isPresented: $showDriftAlert) {
@@ -408,6 +434,7 @@ struct StackPopSheet: View {
     }
 
     private func submit() {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         loading = true; error = nil
         Task {
             do {
@@ -479,6 +506,7 @@ struct StackPopSheet: View {
 struct StackNoteSheet: View {
     let frame: StackFrame
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var note: String = ""
     @State private var loading = false
@@ -499,17 +527,25 @@ struct StackNoteSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { submit() }
-                        .disabled(loading || note.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(!OfflineFeatureBLogic.canSave(
+                            isOffline: offline.isOffline,
+                            inputValid: !note.trimmingCharacters(in: .whitespaces).isEmpty,
+                            isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .onAppear { note = frame.next_step_note }
         }
     }
     private func submit() {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         loading = true; error = nil
         Task {
             do { try await state.stackUpdateNote(frameId: frame.id, note: note); dismiss() }
-            catch { self.error = error.localizedDescription; loading = false }
+            catch {
+                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                loading = false
+            }
         }
     }
 }
@@ -518,12 +554,21 @@ struct StackNoteSheet: View {
 
 struct StackHistoryView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
+    @State private var hasLoaded = false
+    @State private var loadFailedOffline = false
     @State private var frames: [StackFrame] = []
     @State private var resolutionFilter: String = ""
 
     var body: some View {
         NavigationStack {
+            Group {
+            if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                     hasContent: hasLoaded,
+                                                     loadFailedWithTransport: loadFailedOffline) {
+                OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
+            } else {
             List {
                 Picker("Filter", selection: $resolutionFilter) {
                     Text("Alle").tag("")
@@ -558,10 +603,18 @@ struct StackHistoryView: View {
                     }
                 }
             }
+            }
+            }
             .navigationTitle("Stack-Historie")
             .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Schließen") { dismiss() } } }
             .task { await reload() }
+            .onChange(of: offline.isOffline) { was, now in
+                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                    wasOffline: was, isOffline: now, hasContent: hasLoaded) {
+                    Task { await reload() }
+                }
+            }
             .onChange(of: resolutionFilter) { _, _ in Task { await reload() } }
         }
     }
@@ -575,8 +628,14 @@ struct StackHistoryView: View {
         }
     }
     private func reload() async {
-        do { frames = try await state.stackHistory(resolution: resolutionFilter.isEmpty ? nil : resolutionFilter) }
-        catch { frames = [] }
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        loadFailedOffline = false
+        do {
+            frames = try await state.stackHistory(resolution: resolutionFilter.isEmpty ? nil : resolutionFilter)
+            hasLoaded = true
+        } catch {
+            if isTransportFailure(error) && !hasLoaded { loadFailedOffline = true } else { frames = [] }
+        }
     }
 }
 
@@ -584,6 +643,7 @@ struct StackHistoryView: View {
 
 struct EndOfDayView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
@@ -605,9 +665,14 @@ struct EndOfDayView: View {
                         HStack(spacing: 6) {
                             Button("Morgen weiter") { Task { await actTomorrow(f) } }
                                 .buttonStyle(.borderedProminent).controlSize(.small)
+                                .disabledWhenOfflineCompact(offline.isOffline)
                             Button("Droppen", role: .destructive) {
                                 Task { try? await state.stackPop(frameId: f.id, resolution: "dropped") }
                             }.controlSize(.small)
+                            .disabledWhenOfflineCompact(offline.isOffline)
+                        }
+                        if offline.isOffline {
+                            Text(OfflineTexts.unavailableTitle).font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -618,6 +683,7 @@ struct EndOfDayView: View {
         }
     }
     private func actTomorrow(_ f: StackFrame) async {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         guard let tomorrow9 = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0,
                                                     of: Calendar.current.date(byAdding: .day, value: 1, to: Date())!)
         else { return }
@@ -640,6 +706,7 @@ struct FrameDetailSheet: View {
     let frame: StackFrame
     let isActive: Bool
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var loading = false
     @State private var error: String?
@@ -680,7 +747,9 @@ struct FrameDetailSheet: View {
                             Task { await activate() }
                         } label: {
                             Label("Auf dieses Frame zurück", systemImage: "arrow.uturn.backward")
-                        }.disabled(loading)
+                        }
+                        .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     }
                 }
             }
@@ -688,9 +757,13 @@ struct FrameDetailSheet: View {
     }
 
     private func activate() async {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         loading = true; error = nil
         do { try await state.stackResume(frameId: frame.id); dismiss() }
-        catch { self.error = error.localizedDescription; loading = false }
+        catch {
+            self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+            loading = false
+        }
     }
 }
 
@@ -698,6 +771,7 @@ struct FrameDetailSheet: View {
 
 struct QuickPushSheet: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var title: String = ""
     @State private var note:  String = ""
@@ -726,15 +800,19 @@ struct QuickPushSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Anlegen & pushen") { submit() }
-                        .disabled(loading
-                                  || title.trimmingCharacters(in: .whitespaces).isEmpty
-                                  || note.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(!OfflineFeatureBLogic.canSave(
+                            isOffline: offline.isOffline,
+                            inputValid: !title.trimmingCharacters(in: .whitespaces).isEmpty
+                                && !note.trimmingCharacters(in: .whitespaces).isEmpty,
+                            isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
         }
     }
 
     private func submit() {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         loading = true; error = nil
         Task {
             do {
@@ -744,9 +822,64 @@ struct QuickPushSheet: View {
                 _ = try await state.stackPush(refType: "todo", refId: t.id, nextStepNote: cleanNote)
                 dismiss()
             } catch {
-                self.error = error.localizedDescription
+                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
                 loading = false
             }
         }
     }
+}
+
+// MARK: - Offline-Gating (Paket P6, reine Entscheidungslogik, unit-testbar)
+
+/// Gemeinsame Entscheidungslogik der Offline-Bereiche "B" (Archiv, Digest,
+/// Momentum, Admin, KI, Wissen, Kontakte, Themen, Stack). Die Views reichen
+/// nur `OfflineStatusStore.isOffline` und ihren Ladezustand durch.
+enum OfflineFeatureBLogic {
+    /// Toast beim Tippen auf eine nicht verfuegbare Aktion (UX Fehlermeldungen).
+    static let blockedToast = "Offline nicht verfügbar"
+    /// Online-only-Aktion im Moment des Tippens abgebrochen (UX S11).
+    static let blockedDialogMessage = "Keine Verbindung – dein Inhalt bleibt im Dialog erhalten. Bitte versuche es erneut, sobald du wieder online bist."
+
+    /// Nie geladener Bereich -> `OfflineUnavailableView` statt Leerzustand/Fehler.
+    /// Echte leere Online-Daten (`hasContent == false`, online, kein
+    /// Transportfehler) ergeben `false` und damit den normalen Leerzustand.
+    static func showsUnavailable(isOffline: Bool, hasContent: Bool, loadFailedWithTransport: Bool) -> Bool {
+        guard !hasContent else { return false }
+        return isOffline || loadFailedWithTransport
+    }
+
+    /// Online-only-Aktion ist offline gesperrt; waehrend einer laufenden
+    /// Aktion ebenfalls (Doppeltipp-Schutz).
+    static func isActionDisabled(isOffline: Bool, isBusy: Bool = false) -> Bool {
+        isOffline || isBusy
+    }
+
+    /// Speichern-Gating: offline nie, sonst nur bei gueltiger Eingabe und ohne laufende Aktion.
+    static func canSave(isOffline: Bool, inputValid: Bool, isBusy: Bool) -> Bool {
+        !isOffline && inputValid && !isBusy
+    }
+
+    /// Nach Wiederverbindung ohne Neustart nachladen, aber nur wenn noch nichts da ist.
+    static func shouldReloadAfterConnectivityChange(wasOffline: Bool, isOffline: Bool, hasContent: Bool) -> Bool {
+        wasOffline && !isOffline && !hasContent
+    }
+
+    /// Fehlertext fuer Online-only-Aktionen: Transportfehler -> UX-Wortlaut, sonst Fallback.
+    static func message(for error: Error, fallback: String) -> String {
+        isTransportFailure(error) ? blockedDialogMessage : fallback
+    }
+
+    /// Erklaerung im Platzhalter fuer KI-Funktionen (nie zwischengespeichert).
+    static let aiUnavailableReason = OfflineUnavailableReason.custom(
+        "KI-Funktionen brauchen eine Verbindung zum Server. Sie sind verfügbar, sobald du wieder online bist.")
+
+    /// Listen, die aus dem Snapshot/Online-Stand gespeist werden: Platzhalter nur,
+    /// wenn offline, die Liste leer ist UND nie ein Stand geladen wurde
+    /// (`dataAsOf == nil`). Eine leere, aber geladene Liste bleibt normaler Leerzustand.
+    static func showsUnavailableForList(isOffline: Bool, isEmpty: Bool, dataAsOf: Date?) -> Bool {
+        isOffline && isEmpty && dataAsOf == nil
+    }
+
+    /// Server-Calls fuer Online-only-Bereiche sind offline nutzlos.
+    static func shouldPerformRequest(isOffline: Bool) -> Bool { !isOffline }
 }

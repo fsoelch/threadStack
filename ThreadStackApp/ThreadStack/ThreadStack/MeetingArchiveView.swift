@@ -8,6 +8,8 @@ import SwiftUI
 /// `restoreMeeting`, `archivePreflight`, `permanentlyDeleteMeeting`).
 struct MeetingArchiveView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
+    @State private var loadFailedOffline = false
     @State private var search = ""
     @State private var isLoading = false
     @State private var loadError: String?
@@ -24,7 +26,12 @@ struct MeetingArchiveView: View {
 
     var body: some View {
         Group {
-            if isLoading && state.archivedMeetings.isEmpty && loadError == nil {
+            if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                     hasContent: !state.archivedMeetings.isEmpty,
+                                                     loadFailedWithTransport: loadFailedOffline) {
+                // Archiv wird nicht zwischengespeichert (UX S1/S11, Screen 8).
+                OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
+            } else if isLoading && state.archivedMeetings.isEmpty && loadError == nil {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let loadError, state.archivedMeetings.isEmpty {
@@ -46,6 +53,13 @@ struct MeetingArchiveView: View {
         .navigationTitle("Archiv")
         .searchable(text: $search, prompt: "Archiv durchsuchen")
         .onChange(of: search) { _, newValue in triggerSearch(newValue) }
+        .onChange(of: offline.isOffline) { was, now in
+            // Verbindung zurueck: ohne Neustart nachladen.
+            if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                wasOffline: was, isOffline: now, hasContent: !state.archivedMeetings.isEmpty) {
+                Task { await reload() }
+            }
+        }
         .task { await reload() }
         .errorAlert($error)
         .alert("Erfolg", isPresented: Binding(get: { infoMessage != nil }, set: { if !$0 { infoMessage = nil } })) {
@@ -80,6 +94,7 @@ struct MeetingArchiveView: View {
                 } label: {
                     Label("Wiederherstellen", systemImage: "tray.and.arrow.up")
                 }
+                .disabledWhenOfflineCompact(offline.isOffline)
             }
             .swipeActions(edge: .trailing) {
                 Button(role: .destructive) {
@@ -87,6 +102,7 @@ struct MeetingArchiveView: View {
                 } label: {
                     Label("Endgültig löschen", systemImage: "trash")
                 }
+                .disabledWhenOfflineCompact(offline.isOffline)
             }
         }
         .listStyle(.plain)
@@ -118,11 +134,15 @@ struct MeetingArchiveView: View {
     }
 
     private func reload() async {
+        // Offline gar nicht erst anfragen (kein Fehlerflackern, UX S1).
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
         isLoading = true
         loadError = nil
+        loadFailedOffline = false
         do {
             try await state.loadArchivedMeetings(q: search)
         } catch {
+            loadFailedOffline = isTransportFailure(error)
             loadError = "Archiv konnte nicht geladen werden."
         }
         isLoading = false
@@ -147,6 +167,7 @@ struct MeetingArchiveView: View {
     /// `archivedMeetings` optimistisch bereinigt, ein serverseitiger Offset/Total-
     /// Abgleich aber der Suchsituation treu bleiben soll.
     private func restore(_ item: ArchivedMeetingListItem) {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             do {
                 try await state.restoreMeeting(item.id)
@@ -158,6 +179,7 @@ struct MeetingArchiveView: View {
     }
 
     private func requestPermanentDelete(_ item: ArchivedMeetingListItem) async {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         deleteCandidate = item
         isLoadingPreflight = true
         do {

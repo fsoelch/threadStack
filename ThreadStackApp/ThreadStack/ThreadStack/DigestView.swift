@@ -2,6 +2,8 @@ import SwiftUI
 
 struct DigestView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
+    @State private var loadFailedOffline = false
     @State private var current: DigestResponse?
     @State private var archive: [DigestArchiveEntry] = []
     @State private var loading = false
@@ -12,7 +14,12 @@ struct DigestView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                if loading && current == nil {
+                if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                         hasContent: current != nil,
+                                                         loadFailedWithTransport: loadFailedOffline) {
+                    OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
+                        .frame(minHeight: 300)
+                } else if loading && current == nil {
                     ProgressView("Lade …").frame(maxWidth: .infinity).padding(.top, 24)
                 } else if let c = current?.content {
                     sections(c)
@@ -28,6 +35,12 @@ struct DigestView: View {
             .padding()
         }
         .navigationTitle("Wochen-Digest")
+        .onChange(of: offline.isOffline) { was, now in
+            if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                wasOffline: was, isOffline: now, hasContent: current != nil) {
+                Task { await reload() }
+            }
+        }
         .task { await reload() }
     }
 
@@ -42,7 +55,8 @@ struct DigestView: View {
                     Label("Neu erzeugen", systemImage: "sparkles")
                 }
                 .buttonStyle(.borderedProminent).controlSize(.small)
-                .disabled(loading)
+                .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: loading))
+                .disabledWhenOfflineCompact(offline.isOffline)
                 if archive.count > 1 {
                     Picker("Woche", selection: $selected) {
                         ForEach(archive) { a in
@@ -67,6 +81,7 @@ struct DigestView: View {
             Text("Noch kein Digest für diese Woche.").foregroundStyle(.secondary)
             Button { Task { await regenerate() } } label: { Label("Jetzt erzeugen", systemImage: "sparkles") }
                 .buttonStyle(.borderedProminent)
+                .disabledWhenOffline(offline.isOffline)
         }
         .frame(maxWidth: .infinity).padding(.top, 24)
     }
@@ -111,7 +126,8 @@ struct DigestView: View {
     }
 
     private func reload() async {
-        loading = true; error = nil
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        loading = true; error = nil; loadFailedOffline = false
         do {
             current = try await state.aiDigestCurrent()
             archive = try await state.aiDigestArchive()
@@ -119,12 +135,16 @@ struct DigestView: View {
         } catch let e as APIAIError where e.budgetExceeded {
             error = "Monatsbudget erschöpft."
         } catch {
+            loadFailedOffline = isTransportFailure(error)
             self.error = error.localizedDescription
         }
         loading = false
     }
 
     private func regenerate() async {
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else {
+            state.showToast(OfflineFeatureBLogic.blockedToast); return
+        }
         loading = true; error = nil
         do {
             current = try await state.aiDigestRegenerate()

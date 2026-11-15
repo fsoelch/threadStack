@@ -2,16 +2,27 @@ import SwiftUI
 
 struct AdminView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var users: [AdminUser] = []
+    @State private var hasLoaded = false
+    @State private var loadFailedOffline = false
     @State private var showNew = false
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
-            List {
-                ForEach(users) { user in
-                    UserRowView(user: user, onDelete: { deleteUser(user) })
+            Group {
+                if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                         hasContent: hasLoaded,
+                                                         loadFailedWithTransport: loadFailedOffline) {
+                    OfflineUnavailableView(reason: .notLoadedYet) { Task { await load() } }
+                } else {
+                    List {
+                        ForEach(users) { user in
+                            UserRowView(user: user, isOffline: offline.isOffline, onDelete: { deleteUser(user) })
+                        }
+                    }
                 }
             }
             .navigationTitle("Benutzerverwaltung")
@@ -19,6 +30,14 @@ struct AdminView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button { showNew = true } label: { Image(systemName: "plus") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
+                        .accessibilityLabel("Neuer Benutzer")
+                }
+            }
+            .onChange(of: offline.isOffline) { was, now in
+                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                    wasOffline: was, isOffline: now, hasContent: hasLoaded) {
+                    Task { await load() }
                 }
             }
             .task { await load() }
@@ -30,11 +49,17 @@ struct AdminView: View {
     }
 
     private func load() async {
-        do { users = try await state.fetchUsers() }
-        catch { self.error = error.localizedDescription }
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        loadFailedOffline = false
+        do { users = try await state.fetchUsers(); hasLoaded = true }
+        catch {
+            if isTransportFailure(error) { loadFailedOffline = true }
+            else { self.error = error.localizedDescription }
+        }
     }
 
     private func deleteUser(_ user: AdminUser) {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             do { try await state.deleteUser(id: user.id); await load() }
             catch { self.error = error.localizedDescription }
@@ -44,6 +69,7 @@ struct AdminView: View {
 
 struct UserRowView: View {
     let user: AdminUser
+    var isOffline: Bool = false
     let onDelete: () -> Void
 
     var body: some View {
@@ -57,12 +83,15 @@ struct UserRowView: View {
             Button(role: .destructive) { onDelete() } label: {
                 Image(systemName: "trash").foregroundStyle(.red)
             }.buttonStyle(.plain)
+                .disabledWhenOfflineCompact(isOffline)
+                .accessibilityLabel("Benutzer \(user.username) löschen")
         }
     }
 }
 
 struct NewUserSheet: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var username = ""
     @State private var password = ""
@@ -80,6 +109,12 @@ struct NewUserSheet: View {
                     SecureField("Passwort", text: $password)
                 }
                 Section { Toggle("Admin-Rechte", isOn: $isAdmin) }
+                if offline.isOffline {
+                    Section {
+                        Text(OfflineFeatureBLogic.blockedDialogMessage)
+                            .foregroundStyle(.secondary).font(.footnote)
+                    }
+                }
                 if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
             }
             .navigationTitle("Neuer Benutzer")
@@ -88,7 +123,10 @@ struct NewUserSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Erstellen") { create() }
-                        .disabled(username.isEmpty || password.isEmpty || loading)
+                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline,
+                                                                inputValid: !username.isEmpty && !password.isEmpty,
+                                                                isBusy: loading))
+                        .accessibilityHint(offline.isOffline ? OfflineTexts.unavailableTitle : "")
                 }
             }
         }
@@ -100,7 +138,11 @@ struct NewUserSheet: View {
             do {
                 try await state.createUser(username: username, password: password, isAdmin: isAdmin)
                 dismiss()
-            } catch { self.error = error.localizedDescription; loading = false }
+            } catch {
+                self.error = isTransportFailure(error)
+                    ? OfflineFeatureBLogic.blockedDialogMessage : error.localizedDescription
+                loading = false
+            }
         }
     }
 }

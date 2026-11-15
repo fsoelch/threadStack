@@ -104,6 +104,7 @@ struct ContactDetailView: View {
 
     @EnvironmentObject var state: AppState
     @EnvironmentObject var progressStore: ProgressStore
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) private var dismiss
 
     /// Immer der aktuelle Stand aus `state.contacts`, mit dem ursprünglich
@@ -121,7 +122,11 @@ struct ContactDetailView: View {
     @State private var showDescriptionEditor = false
     @State private var savingBasics = false
     @State private var basicsError: String?
-    @State private var basicsOffline = false
+    // Offline-Zustand der Zusatzinformationen/Zuständigkeiten: nie geladen -> OfflineUnavailableView
+    @State private var infoBlocksLoaded = false
+    @State private var infoBlocksFailedOffline = false
+    @State private var assignmentsLoaded = false
+    @State private var assignmentsFailedOffline = false
 
     // Zusatzinformationen (Infoblöcke)
     @State private var infoBlocks: [ContactInfoBlock] = []
@@ -173,8 +178,9 @@ struct ContactDetailView: View {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(basicsError).scaledFont(.footnote).foregroundStyle(.red)
-                            if basicsOffline {
+                            if offline.isOffline {
                                 Button("Erneut versuchen") { saveBasics() }.buttonStyle(.bordered)
+                                    .disabledWhenOffline(true)
                             }
                         }
                     }
@@ -198,12 +204,27 @@ struct ContactDetailView: View {
                     } label: {
                         if savingBasics { ProgressView() } else { Text("Speichern") }
                     }
-                    .disabled(savingBasics || name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(!OfflineFeatureBLogic.canSave(
+                        isOffline: offline.isOffline,
+                        inputValid: !name.trimmingCharacters(in: .whitespaces).isEmpty,
+                        isBusy: savingBasics))
+                    .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .onAppear { populateBasics() }
             .task { await loadInfoBlocks() }
             .task { await loadAssignments() }
+            .onChange(of: offline.isOffline) { was, now in
+                // Verbindung zurueck: nie geladene Bereiche ohne Neustart nachladen.
+                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                    wasOffline: was, isOffline: now, hasContent: infoBlocksLoaded) {
+                    Task { await loadInfoBlocks() }
+                }
+                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                    wasOffline: was, isOffline: now, hasContent: assignmentsLoaded) {
+                    Task { await loadAssignments() }
+                }
+            }
             .sheet(isPresented: $showDescriptionEditor) {
                 DescriptionEditorSheet(initialHTML: description, title: "Beschreibung bearbeiten") { newHTML in
                     description = newHTML
@@ -236,15 +257,21 @@ struct ContactDetailView: View {
 
     private var stammdatenSection: some View {
         Group {
-            TextField("Name", text: $name).autocorrectionDisabled()
-            TextField("Rolle / Funktion", text: $role)
-            TextField("E-Mail", text: $email)
-                .autocorrectionDisabled()
-                .noAutocapitalize()
-                #if os(iOS)
-                .keyboardType(.emailAddress)
-                #endif
-            DescriptionReadView(html: description) { showDescriptionEditor = true }
+            if offline.isOffline {
+                Text(OfflineTexts.unavailableTitle).scaledFont(.caption2).foregroundStyle(.secondary)
+            }
+            Group {
+                TextField("Name", text: $name).autocorrectionDisabled()
+                TextField("Rolle / Funktion", text: $role)
+                TextField("E-Mail", text: $email)
+                    .autocorrectionDisabled()
+                    .noAutocapitalize()
+                    #if os(iOS)
+                    .keyboardType(.emailAddress)
+                    #endif
+                DescriptionReadView(html: description) { showDescriptionEditor = true }
+            }
+            .disabledWhenOfflineCompact(offline.isOffline)
         }
     }
 
@@ -261,9 +288,9 @@ struct ContactDetailView: View {
     }
 
     private func saveBasics() {
+        guard !offline.isOffline else { basicsError = OfflineFeatureBLogic.blockedDialogMessage; return }
         savingBasics = true
         basicsError = nil
-        basicsOffline = false
         let cleanName  = name.trimmingCharacters(in: .whitespaces)
         let cleanRole  = role.trimmingCharacters(in: .whitespaces)
         let cleanEmail = email.trimmingCharacters(in: .whitespaces)
@@ -274,8 +301,7 @@ struct ContactDetailView: View {
                 dismiss()
             } catch {
                 if isTransportFailure(error) {
-                    basicsOffline = true
-                    basicsError = "Keine Verbindung — deine Eingabe bleibt erhalten. Bitte erneut versuchen, sobald du wieder online bist."
+                    basicsError = OfflineFeatureBLogic.blockedDialogMessage
                 } else {
                     basicsError = error.localizedDescription
                 }
@@ -294,11 +320,13 @@ struct ContactDetailView: View {
                 Image(systemName: "plus.circle")
             }
             .buttonStyle(.plain)
+            .disabledWhenOfflineCompact(offline.isOffline)
             .accessibilityLabel("Infoblock hinzufügen")
             Button { showCategorySheet = true } label: {
                 Image(systemName: "tag")
             }
             .buttonStyle(.plain)
+            .disabledWhenOfflineCompact(offline.isOffline)
             .accessibilityLabel("Rubriken verwalten")
         }
     }
@@ -318,7 +346,13 @@ struct ContactDetailView: View {
     /// verschachtelt in einem `VStack` innerhalb dieser Section).
     @ViewBuilder
     private var infoBlocksStatusSection: some View {
-        if infoBlocksLoading {
+        if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                 hasContent: infoBlocksLoaded,
+                                                 loadFailedWithTransport: infoBlocksFailedOffline) {
+            // Infoblöcke werden nicht zwischengespeichert (UX S1, Screen 8).
+            OfflineUnavailableView(reason: .notLoadedYet) { Task { await loadInfoBlocks() } }
+                .frame(minHeight: 200)
+        } else if infoBlocksLoading {
             ProgressView("Lädt Zusatzinformationen…").frame(maxWidth: .infinity).padding()
         } else if let infoBlocksError {
             VStack(spacing: 8) {
@@ -342,7 +376,7 @@ struct ContactDetailView: View {
     /// wirkungslos (Code-Review Fund 1, "tote Feature-Behauptung").
     @ViewBuilder
     private var infoBlockCategorySections: some View {
-        if !infoBlocksLoading && infoBlocksError == nil && !infoBlocks.isEmpty {
+        if !infoBlocksLoading && infoBlocksError == nil && !infoBlocks.isEmpty && infoBlocksLoaded {
             ForEach(groupedInfoBlocks, id: \.category.id) { group in
                 categorySection(group.category, group.blocks)
             }
@@ -403,18 +437,21 @@ struct ContactDetailView: View {
             infoBlockRow(block)
                 .contextMenu {
                     Button { editingBlock = block } label: { Label("Bearbeiten", systemImage: "pencil") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     if let categoryId {
                         Button {
                             moveBlock(block, in: blocks, direction: -1, categoryId: categoryId)
                         } label: { Label("Nach oben", systemImage: "arrow.up") }
-                        .disabled(blocks.first?.id == block.id)
+                        .disabled(blocks.first?.id == block.id || offline.isOffline)
                         Button {
                             moveBlock(block, in: blocks, direction: 1, categoryId: categoryId)
                         } label: { Label("Nach unten", systemImage: "arrow.down") }
-                        .disabled(blocks.last?.id == block.id)
+                        .disabled(blocks.last?.id == block.id || offline.isOffline)
                     }
                     Button(role: .destructive) { deleteBlock(block) } label: { Label("Löschen", systemImage: "trash") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
+                .moveDisabled(offline.isOffline)
         }
         if attachOnMove, let categoryId {
             rows.onMove { indices, newOffset in
@@ -433,6 +470,7 @@ struct ContactDetailView: View {
                 Spacer()
                 Button { editingBlock = block } label: { Image(systemName: "pencil") }
                     .buttonStyle(.plain).foregroundStyle(.secondary)
+                    .disabledWhenOfflineCompact(offline.isOffline)
                     .accessibilityLabel("Infoblock bearbeiten")
             }
             HTMLContentView(html: block.bodyHtml)
@@ -442,13 +480,17 @@ struct ContactDetailView: View {
     }
 
     private func loadInfoBlocks() async {
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
         infoBlocksLoading = true
         infoBlocksError = nil
-        do { infoBlocks = try await state.loadContactInfoBlocks(contactId: contactId) }
+        infoBlocksFailedOffline = false
+        do { infoBlocks = try await state.loadContactInfoBlocks(contactId: contactId); infoBlocksLoaded = true }
         catch {
-            infoBlocksError = isTransportFailure(error)
-                ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                : "Zusatzinformationen konnten nicht geladen werden."
+            if isTransportFailure(error) {
+                infoBlocksFailedOffline = true   // Platzhalter statt Fehlertext
+            } else {
+                infoBlocksError = "Zusatzinformationen konnten nicht geladen werden."
+            }
         }
         infoBlocksLoading = false
     }
@@ -459,6 +501,7 @@ struct ContactDetailView: View {
     }
 
     private func deleteBlock(_ block: ContactInfoBlock) {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             do {
                 try await state.deleteContactInfoBlock(contactId: contactId, blockId: block.id)
@@ -486,6 +529,7 @@ struct ContactDetailView: View {
     /// Fehler wird der vorherige Stand wiederhergestellt (kein stiller
     /// Datenverlust der Sortierung).
     private func persistReorder(categoryId: String, orderedIds: [String]) async {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         let previous = infoBlocks
         infoBlocks = ContactDetailLogic.applyReorder(infoBlocks: infoBlocks, categoryId: categoryId, orderedIds: orderedIds)
         do {
@@ -530,13 +574,19 @@ struct ContactDetailView: View {
         Button { showTopicLinkSheet = true } label: {
             Label("Topics zuordnen", systemImage: "tag")
         }
+        .disabledWhenOffline(offline.isOffline)
     }
 
     // MARK: - Ist zuständig für
 
     @ViewBuilder
     private var assignmentsSection: some View {
-        if assignmentsLoading {
+        if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                                 hasContent: assignmentsLoaded,
+                                                 loadFailedWithTransport: assignmentsFailedOffline) {
+            OfflineUnavailableView(reason: .notLoadedYet) { Task { await loadAssignments() } }
+                .frame(minHeight: 200)
+        } else if assignmentsLoading {
             ProgressView("Lädt Zuständigkeiten…").frame(maxWidth: .infinity).padding()
         } else if let assignmentsError {
             VStack(spacing: 8) {
@@ -576,24 +626,30 @@ struct ContactDetailView: View {
             Button(role: .destructive) { removeAssignment(target) } label: {
                 Label("Entfernen", systemImage: "minus.circle")
             }
+            .disabledWhenOfflineCompact(offline.isOffline)
         }
         .accessibilityElement(children: .combine)
         .accessibilityHint("Öffnet \(target.refType == "todo" ? "das Todo" : "das Thema").")
     }
 
     private func loadAssignments() async {
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
         assignmentsLoading = true
         assignmentsError = nil
-        do { assignmentTargets = try await state.loadContactAssignments(contactId: contactId) }
+        assignmentsFailedOffline = false
+        do { assignmentTargets = try await state.loadContactAssignments(contactId: contactId); assignmentsLoaded = true }
         catch {
-            assignmentsError = isTransportFailure(error)
-                ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                : "Zuständigkeiten konnten nicht geladen werden."
+            if isTransportFailure(error) {
+                assignmentsFailedOffline = true   // Platzhalter statt Fehlertext
+            } else {
+                assignmentsError = "Zuständigkeiten konnten nicht geladen werden."
+            }
         }
         assignmentsLoading = false
     }
 
     private func removeAssignment(_ target: AssignmentTarget) {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             do {
                 try await state.removeContactAssignment(contactId: contactId, refType: target.refType, refId: target.refId)

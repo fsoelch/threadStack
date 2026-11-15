@@ -76,6 +76,7 @@ struct KnowledgeRowView: View {
 
 struct ThemesView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @State private var showNew = false
     @State private var newParentId: String? = nil
     @State private var selectedThemeId: String? = nil
@@ -102,11 +103,19 @@ struct ThemesView: View {
             .listRowBackground(Color.clear)
     }
 
+    private var showsUnavailable: Bool {
+        OfflineFeatureBLogic.showsUnavailableForList(isOffline: offline.isOffline,
+                                                     isEmpty: state.themes.isEmpty,
+                                                     dataAsOf: offline.dataAsOf)
+    }
+
     var body: some View {
         #if os(iOS)
         NavigationStack(path: $navPath) {
             List {
-                if state.themes.isEmpty {
+                if showsUnavailable {
+                    OfflineUnavailableView(reason: .notLoadedYet).listRowBackground(Color.clear)
+                } else if state.themes.isEmpty {
                     emptyState
                 } else {
                     OutlineGroup(themeNodes(state, parentId: nil), children: \.children) { node in
@@ -121,6 +130,8 @@ struct ThemesView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button { newParentId = nil; showNew = true } label: { Image(systemName: "plus") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
+                        .accessibilityLabel("Neues Topic")
                 }
             }
             .sheet(isPresented: $showNew) { ThemeFormView(parentId: newParentId) }
@@ -132,8 +143,11 @@ struct ThemesView: View {
                     Button { newParentId = nil; showNew = true } label: {
                         Label("Neues Topic", systemImage: "plus.circle").foregroundStyle(.secondary)
                     }.buttonStyle(.plain)
+                    .disabledWhenOffline(offline.isOffline)
                 }
-                if state.themes.isEmpty {
+                if showsUnavailable {
+                    OfflineUnavailableView(reason: .notLoadedYet)
+                } else if state.themes.isEmpty {
                     emptyState
                 } else {
                     OutlineGroup(themeNodes(state, parentId: nil), children: \.children) { node in
@@ -174,8 +188,11 @@ struct ThemeDetailScreen: View {
     // `TodoRowView` die KI-Zusammenfassung genauso anzeigen und aktualisieren
     // kann wie in der Haupt-Todo-Übersicht.
     @EnvironmentObject var summaryStore: SummaryStore
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) private var dismiss
 
+    @State private var hasLoaded = false
+    @State private var loadFailedOffline = false
     @State private var showEdit = false
     @State private var showNewSub = false
     @State private var showMove = false
@@ -192,6 +209,12 @@ struct ThemeDetailScreen: View {
     private var theme: Theme? { state.themes.first(where: { $0.id == themeId }) }
     private var path: [Theme] { state.themeAncestorsPath(themeId) }
     private var children: [Theme] { state.themeChildren(of: themeId) }
+    /// Wissen/Todos des Topics kommen aus Server-Calls und werden nicht zwischengespeichert.
+    private var listsUnavailable: Bool {
+        OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                                              hasContent: hasLoaded,
+                                              loadFailedWithTransport: loadFailedOffline)
+    }
     private var linkedMeetingTopics: [(type: String, title: String, meetingId: String?)] {
         state.themeLinksForTheme(themeId: themeId).filter { $0.type == "topic" }
     }
@@ -205,6 +228,13 @@ struct ThemeDetailScreen: View {
             }
         }
         .task(id: "\(themeId)-\(includeDescendants)") { await load() }
+        .onChange(of: offline.isOffline) { was, now in
+            // Verbindung zurueck: Detail-Listen ohne Neustart nachladen.
+            if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
+                wasOffline: was, isOffline: now, hasContent: hasLoaded) {
+                Task { await load() }
+            }
+        }
         // `todosScoped` ist eine lokale Momentaufnahme (Server liefert
         // zusaetzlich originThemeTitle/Vererbung, siehe `state.themeTodos`);
         // Aktionen aus der wiederverwendeten `TodoRowView` (Erledigt/Loeschen/
@@ -270,7 +300,9 @@ struct ThemeDetailScreen: View {
             }
 
             Section {
-                if loading {
+                if listsUnavailable {
+                    OfflineUnavailableView(reason: .notLoadedYet).frame(minHeight: 200)
+                } else if loading {
                     ProgressView()
                 } else if knowledge.isEmpty {
                     Text("Noch kein Wissen hinterlegt.").foregroundStyle(.secondary).font(.footnote)
@@ -285,7 +317,9 @@ struct ThemeDetailScreen: View {
             } header: { Text("📚 Wissen").scaledFont(.caption).fontWeight(.semibold) }
 
             Section {
-                if loading {
+                if listsUnavailable {
+                    Text(OfflineTexts.unavailableTitle).foregroundStyle(.secondary).font(.footnote)
+                } else if loading {
                     ProgressView()
                 } else if todosScoped.isEmpty {
                     Text("Noch keine Todos verknüpft.").foregroundStyle(.secondary).font(.footnote)
@@ -307,10 +341,14 @@ struct ThemeDetailScreen: View {
             ToolbarItem {
                 Menu {
                     Button { showNewSub = true } label: { Label("Unter-Topic anlegen", systemImage: "plus") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     Button { showEdit = true } label: { Label("Bearbeiten", systemImage: "pencil") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     Button { showMove = true } label: { Label("Verschieben", systemImage: "arrow.up.arrow.down") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     Divider()
                     Button(role: .destructive) { confirmDelete(theme) } label: { Label("Löschen", systemImage: "trash") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 } label: { Image(systemName: "ellipsis.circle") }
             }
         }
@@ -344,13 +382,23 @@ struct ThemeDetailScreen: View {
     }
 
     private func load() async {
+        // Offline gar nicht erst anfragen (UX S1: kein Fehler-Alert pro Ansicht).
+        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
         loading = true
+        loadFailedOffline = false
         do {
             async let k = state.themeKnowledge(id: themeId, includeDescendants: includeDescendants)
             async let t = state.themeTodos(id: themeId, includeDescendants: includeDescendants)
             knowledge = try await k
             todosScoped = try await t
+            hasLoaded = true
         } catch {
+            if isTransportFailure(error) {
+                // Verbindungsverlust waehrend des Ladens: Platzhalter statt Alert.
+                loadFailedOffline = true
+                loading = false
+                return
+            }
             // Sichtbar machen statt als "kein Wissen/keine Todos" zu
             // erscheinen (siehe AppState.themeKnowledge/-Todos): ein 401/
             // Netzwerkfehler darf nicht mit einem tatsächlich leeren Topic
@@ -378,6 +426,7 @@ struct ThemeDetailScreen: View {
     }
 
     private func confirmDelete(_ theme: Theme) {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             let preview = await state.themeDeletePreview(id: theme.id)
             if preview.subTopicCount == 0 {
@@ -403,6 +452,7 @@ struct ThemeDetailScreen: View {
 struct ThemeMoveView: View {
     let themeId: String
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var selectedParent: String? = nil
     @State private var loading = false
@@ -437,7 +487,9 @@ struct ThemeMoveView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Verschieben") { save() }.disabled(loading)
+                    Button("Verschieben") { save() }
+                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: true, isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .onAppear { selectedParent = theme?.parentId }
@@ -448,7 +500,10 @@ struct ThemeMoveView: View {
         loading = true
         Task {
             do { try await state.moveTheme(id: themeId, parentId: selectedParent); dismiss() }
-            catch { self.error = error.localizedDescription; loading = false }
+            catch {
+                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                loading = false
+            }
         }
     }
 }
@@ -458,6 +513,7 @@ struct ThemeMoveView: View {
 struct KnowledgeDetailView: View {
     @State var page: KnowledgePage
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var showEdit = false
@@ -505,7 +561,9 @@ struct KnowledgeDetailView: View {
             ToolbarItem {
                 Menu {
                     Button { showEdit = true } label: { Label("Bearbeiten", systemImage: "pencil") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     Button(role: .destructive) { showDeleteConfirm = true } label: { Label("Löschen", systemImage: "trash") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 } label: { Image(systemName: "ellipsis.circle") }
             }
         }
@@ -528,6 +586,7 @@ struct KnowledgeDetailView: View {
     }
 
     private func performDelete() {
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             do {
                 try await state.deleteKnowledgePage(id: page.id)
@@ -550,6 +609,7 @@ struct ThemeFormView: View {
     /// auszuwaehlen, ohne es erst wieder suchen zu muessen.
     var onCreated: ((Theme) -> Void)? = nil
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @State private var title = ""
     @State private var description = ""
@@ -570,7 +630,9 @@ struct ThemeFormView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Speichern") { save() }.disabled(title.isEmpty || loading)
+                    Button("Speichern") { save() }
+                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: !title.isEmpty, isBusy: loading))
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .onAppear {
@@ -590,7 +652,10 @@ struct ThemeFormView: View {
                     onCreated?(created)
                 }
                 dismiss()
-            } catch { self.error = error.localizedDescription; loading = false }
+            } catch {
+                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                loading = false
+            }
         }
     }
 }

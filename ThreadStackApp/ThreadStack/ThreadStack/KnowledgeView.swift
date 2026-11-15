@@ -57,6 +57,7 @@ struct KnowledgeView: View {
 
 struct KnowledgeTopicTreeView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     #if os(macOS)
     @State private var selectedDestination: KnowledgeTopicDestination?
     #endif
@@ -95,6 +96,13 @@ struct KnowledgeTopicTreeView: View {
         }
     }
 
+    private var showsUnavailable: Bool {
+        OfflineFeatureBLogic.showsUnavailableForList(
+            isOffline: offline.isOffline,
+            isEmpty: state.themes.isEmpty && state.knowledgePages.isEmpty,
+            dataAsOf: offline.dataAsOf)
+    }
+
     private var emptyState: some View {
         Text("Noch keine Topics angelegt.")
             .foregroundStyle(.secondary).font(.subheadline)
@@ -106,7 +114,10 @@ struct KnowledgeTopicTreeView: View {
     #if os(iOS)
     var body: some View {
         List {
-            if state.themes.isEmpty && unassignedCount == 0 {
+            if showsUnavailable {
+                OfflineUnavailableView(reason: .notLoadedYet)
+                    .listRowBackground(Color.clear)
+            } else if state.themes.isEmpty && unassignedCount == 0 {
                 emptyState
             } else {
                 if unassignedCount > 0 {
@@ -128,7 +139,9 @@ struct KnowledgeTopicTreeView: View {
                 if unassignedCount > 0 {
                     unassignedRow.tag(KnowledgeTopicDestination.unassigned)
                 }
-                if state.themes.isEmpty {
+                if showsUnavailable {
+                    OfflineUnavailableView(reason: .notLoadedYet)
+                } else if state.themes.isEmpty {
                     emptyState
                 } else {
                     OutlineGroup(themeNodes(state, parentId: nil), children: \.children) { node in
@@ -160,6 +173,7 @@ struct KnowledgeTopicTreeView: View {
 struct KnowledgeTopicScopedListView: View {
     let destination: KnowledgeTopicDestination
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @State private var search = ""
     @State private var showNew = false
     @State private var deleteCandidate: KnowledgePage?
@@ -230,9 +244,9 @@ struct KnowledgeTopicScopedListView: View {
                     NavigationLink { KnowledgeDetailView(page: k) } label: { KnowledgeRowView(page: k) }
                 }
                 #if os(iOS)
-                .onDelete { offsets in
+                .onDelete(perform: offline.isOffline ? nil : { offsets in
                     if let first = offsets.first { deleteCandidate = filtered[first] }
-                }
+                })
                 #endif
             }
 
@@ -277,6 +291,7 @@ struct KnowledgeTopicScopedListView: View {
     private func performDelete() {
         guard let candidate = deleteCandidate else { return }
         deleteCandidate = nil
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             do {
                 try await state.deleteKnowledgePage(id: candidate.id)
@@ -291,6 +306,7 @@ struct KnowledgeTopicScopedListView: View {
 
 struct KnowledgeAllListView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @State private var search = ""
     @State private var themeFilter: String? = nil
     @State private var deleteCandidate: KnowledgePage?
@@ -330,7 +346,12 @@ struct KnowledgeAllListView: View {
             }
             #endif
 
-            if state.knowledgePages.isEmpty {
+            if OfflineFeatureBLogic.showsUnavailableForList(isOffline: offline.isOffline,
+                                                            isEmpty: state.knowledgePages.isEmpty,
+                                                            dataAsOf: offline.dataAsOf) {
+                OfflineUnavailableView(reason: .notLoadedYet)
+                    .listRowBackground(Color.clear)
+            } else if state.knowledgePages.isEmpty {
                 Section {
                     Text("Noch kein Wissen hinterlegt.")
                         .foregroundStyle(.secondary).font(.subheadline)
@@ -350,9 +371,9 @@ struct KnowledgeAllListView: View {
                     NavigationLink { KnowledgeDetailView(page: k) } label: { KnowledgeRowView(page: k) }
                 }
                 #if os(iOS)
-                .onDelete { offsets in
+                .onDelete(perform: offline.isOffline ? nil : { offsets in
                     if let first = offsets.first { deleteCandidate = filtered[first] }
-                }
+                })
                 #endif
             }
         }
@@ -389,6 +410,7 @@ struct KnowledgeAllListView: View {
     private func performDelete() {
         guard let candidate = deleteCandidate else { return }
         deleteCandidate = nil
+        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
         Task {
             do {
                 try await state.deleteKnowledgePage(id: candidate.id)

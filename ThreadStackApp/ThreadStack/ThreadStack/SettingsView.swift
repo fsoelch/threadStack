@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
     @AppStorage("fontSizeIndex") private var fontSizeIndex = 3
     @State private var oldPassword = ""
@@ -44,7 +45,11 @@ struct SettingsView: View {
                     SecureField("Neues Passwort",     text: $newPassword)
                     SecureField("Bestätigen",         text: $confirm)
                     Button("Passwort ändern") { changePassword() }
-                        .disabled(loading || oldPassword.isEmpty || newPassword.isEmpty || confirm.isEmpty)
+                        .disabled(!OfflineFeatureBLogic.canSave(
+                            isOffline: offline.isOffline,
+                            inputValid: !oldPassword.isEmpty && !newPassword.isEmpty && !confirm.isEmpty,
+                            isBusy: loading))
+                        .disabledWhenOffline(offline.isOffline)
                 }
 
                 if state.hasStoredCredentials {
@@ -73,13 +78,17 @@ struct SettingsView: View {
     }
 
     private func changePassword() {
+        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
         guard newPassword == confirm else { error = "Passwörter stimmen nicht überein."; return }
         loading = true; error = nil; success = false
         Task {
             do {
                 try await state.changePassword(old: oldPassword, new: newPassword)
                 success = true; oldPassword = ""; newPassword = ""; confirm = ""
-            } catch { self.error = error.localizedDescription }
+            } catch {
+                self.error = isTransportFailure(error)
+                    ? OfflineFeatureBLogic.blockedDialogMessage : error.localizedDescription
+            }
             loading = false
         }
     }
