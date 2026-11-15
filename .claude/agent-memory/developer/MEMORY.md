@@ -126,3 +126,4 @@
   bereits bekanntes Problem in MEMORY.md): `xcodebuild test ... -derivedDataPath
   /tmp/<beliebig>` als Workaround, damit Build+xcresult in einen
   garantiert schreibbaren Pfad geschrieben werden.
+- [Offline P2 Basis](project_offline_p2_base.md) — nonisolated-Store, Allowlist ohne Regex, Test-Setup, flakey Suiten
