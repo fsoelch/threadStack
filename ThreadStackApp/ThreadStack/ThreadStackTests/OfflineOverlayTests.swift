@@ -4,7 +4,7 @@ import Foundation
 
 //  Paket P2, S-8: OfflineOverlay.merge (reine Funktion).
 
-@Suite(.serialized)
+@MainActor @Suite(.serialized)
 struct OfflineOverlayTests {
     typealias T = OfflineTestSupport
 

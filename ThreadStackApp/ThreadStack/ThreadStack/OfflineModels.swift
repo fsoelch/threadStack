@@ -110,6 +110,17 @@ enum PendingFailureReason: Codable, Equatable {
     }
 }
 
+extension PendingChangeKind {
+    /// Server-refType der angelegten Entitaet: "todo" / "topic" / "progress".
+    var refType: String {
+        switch self {
+        case .createTodo: return "todo"
+        case .createTopic: return "topic"
+        case .createProgressEntry: return "progress"
+        }
+    }
+}
+
 enum PendingSyncState: Codable, Equatable {
     case pending
     case inFlight(sentRevision: Int)
@@ -189,10 +200,15 @@ struct PendingChange: Codable, Equatable, Identifiable {
 enum OfflineDateText {
     /// ISO-8601 mit Millisekunden (UTC), wie die vom Server gelieferten Zeitstempel.
     static func iso(_ d: Date) -> String {
+        formatter.string(from: d)
+    }
+
+    /// Einmal angelegt: das Erzeugen eines ISO8601DateFormatters ist teuer (Overlay-Merge ruft das pro Eintrag auf).
+    private static let formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f.string(from: d)
-    }
+        return f
+    }()
 }
 
 // MARK: - Snapshot

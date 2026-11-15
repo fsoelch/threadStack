@@ -80,7 +80,7 @@ struct OfflineSnapshotStore {
 
     private struct ProgressCacheEntry: Codable {
         let key: String
-        var usedAt: Date
+        var savedAt: Date
         let detail: ProgressDetail
     }
 
@@ -108,9 +108,8 @@ struct OfflineSnapshotStore {
         guard let key = Self.cacheKey(refType: refType, refId: refId) else { return }
         var file = loadCacheFile(scope: scope)
         file.entries.removeAll { $0.key == key }
-        file.entries.append(ProgressCacheEntry(key: key, usedAt: Date(), detail: d))
+        file.entries.append(ProgressCacheEntry(key: key, savedAt: Date(), detail: d))
         if file.entries.count > Self.maxProgressRefs {
-            file.entries.sort { $0.usedAt < $1.usedAt }
             file.entries.removeFirst(file.entries.count - Self.maxProgressRefs)
         }
         guard let data = try? JSONEncoder().encode(file) else { return }
@@ -120,6 +119,11 @@ struct OfflineSnapshotStore {
     func loadProgressDetail(refType: String, refId: String, scope: OfflineScope) -> ProgressDetail? {
         guard let key = Self.cacheKey(refType: refType, refId: refId) else { return nil }
         return loadCacheFile(scope: scope).entries.first { $0.key == key }?.detail
+    }
+
+    /// Loescht den gesamten Scope (Snapshot, Outbox, Caches, Quarantaene) - fuer Nutzerwechsel.
+    func removeScope(_ scope: OfflineScope) {
+        store.removeScope(scopeKey: scope.key)
     }
 
     /// Namespace "Offline" komplett (alle Scopes, Marker, Quarantaene).

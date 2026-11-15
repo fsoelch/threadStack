@@ -11,11 +11,11 @@ import Combine
 //  failed); `failedCount` ist die Teilmenge der fehlgeschlagenen.
 //  "Ausstehend" (ohne fehlgeschlagene) = `unsyncedCount - failedCount`.
 
-enum OfflineOfflineReason: Equatable { case noNetwork, serverUnreachable }
+enum OfflineReason: Equatable { case noNetwork, serverUnreachable }
 
 enum OfflineConnectionState: Equatable {
     case online
-    case offline(OfflineOfflineReason)
+    case offline(OfflineReason)
 }
 
 enum OfflinePauseReason: Equatable { case needsReauth, serverUnsupported, userMismatch, storageProblem }
@@ -72,6 +72,8 @@ final class OfflineStatusStore: ObservableObject {
 
     var isOffline: Bool { connection != .online }
     var unsyncedCount: Int { items.count }
+    /// Ausstehend ohne fehlgeschlagene (`unsyncedCount - failedCount`), z.B. fuer "N ausstehend".
+    var outstandingCount: Int { unsyncedCount - failedCount }
     var failedCount: Int {
         items.filter { if case .failed = $0.status { return true } else { return false } }.count
     }
@@ -129,35 +131,31 @@ final class OfflineStatusStore: ObservableObject {
             case .progress(let p):
                 title = preview(p.bodyHTML)
                 fullText = plain(p.bodyHTML)
-                switch p.ref {
+                // Ein Switch ueber resolve leitet Kontext und Wartehinweis gemeinsam ab.
+                switch outbox.resolve(p.ref) {
                 case .server(let t, let id):
                     refType = t; refId = id
                     context = serverTitles[t + ":" + id]
-                case .local(let parentId):
-                    switch outbox.resolve(p.ref) {
-                    case .server(let t, let id):
-                        refType = t; refId = id
-                        context = serverTitles[t + ":" + id]
-                    case .waitingForParent, .parentFailed:
-                        if let parent = outbox.changes.first(where: { $0.id == parentId }) {
-                            let parentTitle: String
-                            switch parent.payload {
-                            case .todo(let tp): parentTitle = tp.title
-                            case .topic(let tp): parentTitle = tp.title
-                            case .progress: parentTitle = ""
-                            }
-                            context = parentTitle
-                            refType = parent.kind == .createTodo ? "todo" : "topic"
-                            refId = parent.localEntityId
-                            if case .failed = parent.state {
-                                blockedMessage = "Wartet auf '\(parentTitle)', der fehlgeschlagen ist."
-                            } else {
-                                blockedMessage = "Wird nach dem Vorhaben übertragen."
-                            }
+                case .waitingForParent(let parentId), .parentFailed(let parentId):
+                    if let parent = outbox.changes.first(where: { $0.id == parentId }) {
+                        let parentTitle: String
+                        switch parent.payload {
+                        case .todo(let tp): parentTitle = tp.title
+                        case .topic(let tp): parentTitle = tp.title
+                        case .progress: parentTitle = ""
                         }
-                    case .parentGone:
-                        blockedMessage = nil
+                        context = parentTitle
+                        refType = parent.kind.refType
+                        refId = parent.localEntityId
+                        if case .failed = parent.state {
+                            blockedMessage = "Wartet auf '\(parentTitle)', der fehlgeschlagen ist."
+                        } else {
+                            blockedMessage = "Wird nach dem Vorhaben übertragen."
+                        }
                     }
+                case .parentGone:
+                    // Der Sync-Motor (P3) markiert diesen Eintrag beim Senden als failed(.refGone).
+                    blockedMessage = PendingFailureReason.refGone.userMessage
                 }
             }
 
@@ -166,11 +164,7 @@ final class OfflineStatusStore: ObservableObject {
             case .inFlight: status = .syncing
             case .failed(let reason): status = .failed(message: reason.userMessage)
             case .pending, .acknowledged:
-                if let blockedMessage { status = .blocked(message: blockedMessage) }
-                else if c.kind == .createProgressEntry, case .progress(let p) = c.payload,
-                        case .local = p.ref, outbox.resolve(p.ref) == .parentGone {
-                    status = .failed(message: PendingFailureReason.refGone.userMessage)
-                } else { status = .pending }
+                if let blockedMessage { status = .blocked(message: blockedMessage) } else { status = .pending }
             }
 
             return PendingItemSummary(id: c.id, kind: c.kind, title: title, contextText: context,

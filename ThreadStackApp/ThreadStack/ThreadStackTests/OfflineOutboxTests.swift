@@ -5,7 +5,7 @@ import Foundation
 //  Paket P2, S-7: OfflineOutbox (Regeln: Persistenz vor Rueckkehr, Quarantaene,
 //  Zustandsuebergaenge, Aliasse).
 
-@Suite(.serialized)
+@MainActor @Suite(.serialized)
 struct OfflineOutboxTests {
     typealias T = OfflineTestSupport
 
@@ -113,8 +113,6 @@ struct OfflineOutboxTests {
         let given = UUID().uuidString
         let c = try ob.enqueueTodo(T.todo(), clientToken: given)
         #expect(c.clientToken == given)
-        let bad = try ob.enqueueTodo(T.todo(), clientToken: "../../x")
-        #expect(UUID(uuidString: bad.clientToken) != nil && bad.clientToken != "../../x")
     }
 
     @Test func capturedAtUsesGivenOrNow() throws {
@@ -421,31 +419,84 @@ struct OfflineOutboxTests {
 
     // MARK: reconcile
 
-    @Test func reconcileRemovesOldAcknowledgedWithoutFollowUp() throws {
-        var clock = Date(timeIntervalSince1970: 1_000)
-        let (ob, store) = try make(now: { clock }); defer { store.removeAll() }
-        let old = try ob.enqueueTodo(T.todo("alt"))
-        try ack(ob, old, serverId: "s_old")
-        let oldMissing = try ob.enqueueTodo(T.todo("alt2"))
-        try ack(ob, oldMissing, serverId: "s_gone")
-        let oldFollow = try ob.enqueueTodo(T.todo("follow"))
-        try ack(ob, oldFollow, serverId: "s_f")
-        try ob.updatePayload(id: oldFollow.id, .todo(T.todo("f2")))
-        let pending = try ob.enqueueTodo(T.todo("pending"))
-        clock = Date(timeIntervalSince1970: 2_000)
-        let fetchStart = Date(timeIntervalSince1970: 1_500)
-        clock = Date(timeIntervalSince1970: 3_000)
-        let young = try ob.enqueueTodo(T.todo("jung"))
-        try ack(ob, young, serverId: "s_young")
+    /// Uhr: Quittierung bei t=1000, Abruf startet bei t=1500, "junge" Quittierung bei t=3000.
+    private func reconcileFixture() throws -> (ob: OfflineOutbox, store: UserScopedFileStore, fetchStart: Date,
+                                              setClock: (Double) -> Void) {
+        let box = ClockBox()
+        let (ob, store) = try make(now: { box.now })
+        box.now = Date(timeIntervalSince1970: 1_000)
+        return (ob, store, Date(timeIntervalSince1970: 1_500), { box.now = Date(timeIntervalSince1970: $0) })
+    }
 
-        try ob.reconcile(serverTodoIds: ["s_old"], serverTopicIds: [], fetchStartedAt: fetchStart)
-        let ids = Set(ob.changes.map(\.id))
-        #expect(!ids.contains(old.id))          // enthalten: Server liefert es selbst
-        #expect(!ids.contains(oldMissing.id))   // fehlt: Server ist die Wahrheit
-        #expect(ids.contains(oldFollow.id))     // Folgeaktion offen
+    @Test func reconcileRemovesOldAcknowledgedWithoutFollowUpRegardlessOfServerData() throws {
+        let f = try reconcileFixture(); defer { f.store.removeAll() }
+        let inData = try f.ob.enqueueTodo(T.todo("enthalten"))
+        try ack(f.ob, inData, serverId: "s_in")
+        let notInData = try f.ob.enqueueTodo(T.todo("fehlt"))
+        try ack(f.ob, notInData, serverId: "s_gone")
+        let pending = try f.ob.enqueueTodo(T.todo("pending"))
+        f.setClock(3_000)
+        let young = try f.ob.enqueueTodo(T.todo("jung"))
+        try ack(f.ob, young, serverId: "s_young")
+
+        try f.ob.reconcile(serverTodoIds: ["s_in"], serverTopicIds: [], fetchStartedAt: f.fetchStart)
+        let ids = Set(f.ob.changes.map(\.id))
+        #expect(!ids.contains(inData.id))
+        #expect(!ids.contains(notInData.id))   // followUp none: egal ob in den Serverdaten
         #expect(ids.contains(pending.id))
-        #expect(ids.contains(young.id))         // nach Abrufbeginn quittiert
-        #expect(try reload(store).changes.map(\.id) == ob.changes.map(\.id))
+        #expect(ids.contains(young.id))        // nach Abrufbeginn quittiert
+        #expect(try reload(f.store).changes.map(\.id) == f.ob.changes.map(\.id))
+    }
+
+    @Test func reconcileKeepsFollowUpWhenServerIdIsPresent() throws {
+        let f = try reconcileFixture(); defer { f.store.removeAll() }
+        let todo = try f.ob.enqueueTodo(T.todo())
+        try ack(f.ob, todo, serverId: "s_t")
+        try f.ob.updatePayload(id: todo.id, .todo(T.todo("neu")))
+        let topic = try f.ob.enqueueTopic(T.topic())
+        _ = try f.ob.markInFlight(id: topic.id)
+        try f.ob.markAcknowledged(id: topic.id, serverId: "s_tp", object: .topic(meetingId: "m1", T.serverTopic("s_tp", meeting: "m1")))
+        try f.ob.discard(id: topic.id) // Tombstone, followUp delete
+        try f.ob.reconcile(serverTodoIds: ["s_t"], serverTopicIds: ["s_tp"], fetchStartedAt: f.fetchStart)
+        #expect(f.ob.changes.count == 2)
+        #expect(f.ob.changes.first { $0.id == todo.id }?.followUp == .update)
+        #expect(f.ob.changes.first { $0.id == topic.id }?.followUp == .delete)
+    }
+
+    @Test func reconcileRemovesDeleteFollowUpAndTombstonesWhoseTargetIsGone() throws {
+        let f = try reconcileFixture(); defer { f.store.removeAll() }
+        let todo = try f.ob.enqueueTodo(T.todo())
+        try ack(f.ob, todo, serverId: "s_t")
+        try f.ob.discard(id: todo.id)
+        let topic = try f.ob.enqueueTopic(T.topic())
+        _ = try f.ob.markInFlight(id: topic.id)
+        try f.ob.markAcknowledged(id: topic.id, serverId: "s_tp", object: .topic(meetingId: "m1", T.serverTopic("s_tp", meeting: "m1")))
+        try f.ob.discard(id: topic.id)
+        try f.ob.reconcile(serverTodoIds: [], serverTopicIds: [], fetchStartedAt: f.fetchStart)
+        #expect(f.ob.changes.isEmpty) // Ziel schon weg = Erfolg
+    }
+
+    @Test func reconcileMarksUpdateFollowUpAsRefGoneWhenTargetIsGone() throws {
+        let f = try reconcileFixture(); defer { f.store.removeAll() }
+        let todo = try f.ob.enqueueTodo(T.todo())
+        try ack(f.ob, todo, serverId: "s_t")
+        try f.ob.updatePayload(id: todo.id, .todo(T.todo("Text zum Kopieren")))
+        try f.ob.reconcile(serverTodoIds: [], serverTopicIds: [], fetchStartedAt: f.fetchStart)
+        let c = try #require(f.ob.changes.first)
+        #expect(c.state == .failed(.refGone))
+        #expect(c.followUp == .none)
+        #expect(c.payload == .todo(T.todo("Text zum Kopieren"))) // Text bleibt erhalten
+        #expect(f.ob.visibleChanges.count == 1)
+    }
+
+    @Test func reconcileDoesNotTouchFollowUpOfEntriesAcknowledgedAfterFetchStart() throws {
+        let f = try reconcileFixture(); defer { f.store.removeAll() }
+        f.setClock(3_000)
+        let todo = try f.ob.enqueueTodo(T.todo())
+        try ack(f.ob, todo, serverId: "s_t")
+        try f.ob.updatePayload(id: todo.id, .todo(T.todo("neu")))
+        try f.ob.reconcile(serverTodoIds: [], serverTopicIds: [], fetchStartedAt: f.fetchStart)
+        #expect(f.ob.changes.first?.followUp == .update)
     }
 
     // MARK: Aliasse
@@ -477,6 +528,25 @@ struct OfflineOutboxTests {
         #expect(ob.alias(forLocalId: c.localEntityId) == nil)
         #expect(try store.read(scopeKey: T.scope.key, fileName: "outbox") == nil)
         #expect(try reload(store).changes.isEmpty)
+    }
+
+    @Test func deleteStorageLeavesNeighbouringFilesOfTheScopeAlone() async throws {
+        let (ob, store) = try make(); defer { store.removeAll() }
+        let snapshots = OfflineSnapshotStore(store: store)
+        let snap = OfflineSnapshot(savedAt: Date(), data: ServerDataSet(meetings: [], todos: [T.serverTodo("a")], themes: []))
+        try await snapshots.saveSnapshot(snap, scope: T.scope)
+        _ = try ob.enqueueTodo(T.todo())
+        ob.deleteStorage()
+        #expect(snapshots.loadSnapshot(scope: T.scope)?.data.todos.count == 1)
+        // Scope-Loeschen (Nutzerwechsel) ist eine eigene Funktion des Snapshot-Stores.
+        snapshots.removeScope(T.scope)
+        #expect(snapshots.loadSnapshot(scope: T.scope) == nil)
+    }
+
+    @Test func kindRefTypeIsCentral() {
+        #expect(PendingChangeKind.createTodo.refType == "todo")
+        #expect(PendingChangeKind.createTopic.refType == "topic")
+        #expect(PendingChangeKind.createProgressEntry.refType == "progress")
     }
 
     // MARK: Abfragen / Callbacks

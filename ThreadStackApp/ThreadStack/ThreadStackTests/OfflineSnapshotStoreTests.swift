@@ -4,7 +4,7 @@ import Foundation
 
 //  Paket P2, S-9: OfflineSnapshotStore.
 
-@Suite(.serialized)
+@MainActor @Suite(.serialized)
 struct OfflineSnapshotStoreTests {
     typealias T = OfflineTestSupport
 

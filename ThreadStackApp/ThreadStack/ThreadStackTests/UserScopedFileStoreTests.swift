@@ -5,7 +5,7 @@ import CryptoKit
 
 //  Paket P2, S-5: UserScopedFileStore.
 
-@Suite(.serialized)
+@MainActor @Suite(.serialized)
 struct UserScopedFileStoreTests {
 
     private func data(_ s: String) -> Data { Data(s.utf8) }

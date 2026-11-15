@@ -3,6 +3,11 @@ import Foundation
 
 //  Gemeinsame Test-Helfer fuer die Offline-Basis (Paket P2).
 
+/// Veraenderliche Uhr fuer Tests mit `now: () -> Date`.
+final class ClockBox {
+    var now = Date(timeIntervalSince1970: 1_000)
+}
+
 enum OfflineTestSupport {
     static func tempDir() -> URL {
         FileManager.default.temporaryDirectory

@@ -11,7 +11,6 @@ import SwiftUI
 enum OfflineTexts {
     static let unavailableTitle = "Offline nicht verfügbar"
     static let notLoadedYet = "Dieser Inhalt wurde noch nicht geladen. Er ist verfügbar, sobald du wieder online bist."
-    static let requiresConnection = "Diese Funktion benötigt eine Verbindung zum Server."
     static let retry = "Erneut versuchen"
 }
 
@@ -99,14 +98,11 @@ struct PendingSyncBadge: View {
 enum OfflineUnavailableReason: Equatable {
     /// Bereich wurde nie geladen.
     case notLoadedYet
-    /// Funktion braucht grundsaetzlich den Server.
-    case requiresConnection
     case custom(String)
 
     var explanation: String {
         switch self {
         case .notLoadedYet: return OfflineTexts.notLoadedYet
-        case .requiresConnection: return OfflineTexts.requiresConnection
         case .custom(let s): return s
         }
     }
@@ -145,26 +141,52 @@ struct DisabledWhenOfflineModifier: ViewModifier {
     let isOffline: Bool
     let hint: String
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            content
-                .disabled(isOffline)
-                .accessibilityHint(isOffline ? hint : "")
-            if isOffline {
+        if isOffline {
+            VStack(alignment: .leading, spacing: 2) {
+                content
+                    .disabled(true)
+                    .accessibilityHint(hint)
                 Text(OfflineTexts.unavailableTitle)
                     .scaledFont(.caption2)
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
             }
+        } else {
+            content   // online: unveraendert durchgereicht
+        }
+    }
+}
+
+/// Leichte Variante ohne zusaetzliche Zeile: `.disabled` + accessibilityHint.
+struct DisabledWhenOfflineCompactModifier: ViewModifier {
+    let isOffline: Bool
+    let hint: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isOffline {
+            content.disabled(true).accessibilityHint(hint)
+        } else {
+            content
         }
     }
 }
 
 extension View {
-    /// Deaktiviert die Aktion offline und zeigt den sichtbaren Zusatz
-    /// "Offline nicht verfügbar" (Pflicht laut UX) samt accessibilityHint.
+    /// Fuer Buttons/Zeilen in Form/List: deaktiviert offline und zeigt den
+    /// sichtbaren Zusatz "Offline nicht verfügbar" (Pflicht laut UX) samt
+    /// accessibilityHint. Online bleibt der Inhalt unveraendert.
+    /// NICHT in Toolbar, Menu oder Swipe-Aktionen verwenden (dort ist keine
+    /// Zusatzzeile moeglich) - dort `.disabledWhenOfflineCompact(_:hint:)`.
     func disabledWhenOffline(_ isOffline: Bool, hint: String = OfflineTexts.unavailableTitle) -> some View {
         modifier(DisabledWhenOfflineModifier(isOffline: isOffline, hint: hint))
+    }
+
+    /// Fuer Toolbar/Menu/Swipe: nur `.disabled(isOffline)` + accessibilityHint, ohne sichtbaren Zusatz.
+    func disabledWhenOfflineCompact(_ isOffline: Bool, hint: String = OfflineTexts.unavailableTitle) -> some View {
+        modifier(DisabledWhenOfflineCompactModifier(isOffline: isOffline, hint: hint))
     }
 }
 
@@ -174,23 +196,37 @@ extension View {
 /// "heute, 14:32" / "gestern, 14:32" / "15.11., 14:32"; in einem anderen
 /// Kalenderjahr mit Jahr: "15.11.2025, 14:32".
 enum OfflineDataAsOfFormatter {
+    enum DayKind: Equatable { case today, yesterday, other }
+
+    static func dayKind(for date: Date, now: Date, calendar: Calendar) -> DayKind {
+        if calendar.isDate(date, inSameDayAs: now) { return .today }
+        if let y = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: y) {
+            return .yesterday
+        }
+        return .other
+    }
+
     static func string(for date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
         let c = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
         let time = String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
-        if calendar.isDate(date, inSameDayAs: now) { return "heute, \(time)" }
-        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now),
-           calendar.isDate(date, inSameDayAs: yesterday) { return "gestern, \(time)" }
-        let day = String(format: "%02d.%02d.", c.day ?? 0, c.month ?? 0)
-        if c.year != calendar.component(.year, from: now) { return "\(day)\(c.year ?? 0), \(time)" }
-        return "\(day), \(time)"
+        switch dayKind(for: date, now: now, calendar: calendar) {
+        case .today: return "heute, \(time)"
+        case .yesterday: return "gestern, \(time)"
+        case .other:
+            let day = String(format: "%02d.%02d.", c.day ?? 0, c.month ?? 0)
+            if c.year != calendar.component(.year, from: now) { return "\(day)\(c.year ?? 0), \(time)" }
+            return "\(day), \(time)"
+        }
     }
 
-    /// "Stand vom 15.11., 14:32" - der Zeitpunkt wird je nach Tag mit "heute"/"gestern" ersetzt.
+    /// "Stand: heute, 14:32" bzw. "Stand vom 15.11., 14:32".
     static func label(for date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
         guard let date else { return "Noch kein Stand geladen" }
         let s = string(for: date, now: now, calendar: calendar)
-        if s.hasPrefix("heute") || s.hasPrefix("gestern") { return "Stand: \(s)" }
-        return "Stand vom \(s)"
+        switch dayKind(for: date, now: now, calendar: calendar) {
+        case .today, .yesterday: return "Stand: \(s)"
+        case .other: return "Stand vom \(s)"
+        }
     }
 }
 

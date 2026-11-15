@@ -149,9 +149,13 @@ final class OfflineOutbox {
         }
     }
 
-    /// Uebergebenes Token nur akzeptieren, wenn es ein UUID-String ist.
+    /// Uebergebenes Token nur akzeptieren, wenn es ein UUID-String ist; sonst assertionFailure (Debug) + neues Token.
     private static func normalizedToken(_ t: String?) -> String {
-        if let t, UUID(uuidString: t) != nil { return t }
+        if let t {
+            if UUID(uuidString: t) != nil { return t }
+            // Programmierfehler des Aufrufers: Debug bricht ab, Release ersetzt das Token.
+            assertionFailure("OfflineOutbox: clientToken ist keine UUID")
+        }
         return UUID().uuidString
     }
 
@@ -301,14 +305,8 @@ final class OfflineOutbox {
             c.state = .acknowledged(serverId: serverId, at: now())
             c.acknowledgedObject = object
             s.changes[i] = c
-            let refType: String
-            switch c.kind {
-            case .createTodo: refType = "todo"
-            case .createTopic: refType = "topic"
-            case .createProgressEntry: refType = "progress"
-            }
             s.aliases.removeAll { $0.localId == c.localEntityId }
-            s.aliases.append(AliasEntry(localId: c.localEntityId, serverId: serverId, refType: refType))
+            s.aliases.append(AliasEntry(localId: c.localEntityId, serverId: serverId, refType: c.kind.refType))
             if s.aliases.count > Self.maxAliases { s.aliases.removeFirst(s.aliases.count - Self.maxAliases) }
         }
     }
@@ -369,12 +367,8 @@ final class OfflineOutbox {
         case .local(let changeId):
             if let c = state.changes.first(where: { $0.id == changeId }) {
                 if c.isTombstone { return .parentGone }
-                let refType: String
-                switch c.kind {
-                case .createTodo: refType = "todo"
-                case .createTopic: refType = "topic"
-                case .createProgressEntry: return .parentGone
-                }
+                guard c.kind != .createProgressEntry else { return .parentGone }
+                let refType = c.kind.refType
                 switch c.state {
                 case .acknowledged(let serverId, _): return .server(refType: refType, refId: serverId)
                 case .failed: return .parentFailed(changeId)
@@ -390,18 +384,40 @@ final class OfflineOutbox {
         }
     }
 
-    /// Entfernt `acknowledged`-Eintraege ohne Folgeaktion, die vor Beginn des
-    /// Server-Abrufs quittiert wurden (der Server ist die Wahrheit - ist die
-    /// serverId im Abruf enthalten, liefert er das Objekt selbst; fehlt sie,
-    /// wurde es serverseitig inzwischen geloescht). Neuere Quittierungen
-    /// bleiben, weil der Abruf sie evtl. noch nicht enthalten konnte.
+    /// Abgleich nach einem Server-Abruf (Orchestrator-Entscheidung, verbindlich fuer P3).
+    /// Betrachtet werden nur `acknowledged`-Eintraege mit `at < fetchStartedAt`
+    /// (neuere kann der Abruf noch nicht enthalten):
+    /// - `followUp == .none`: entfernen (egal ob die serverId in den Daten steht).
+    /// - `followUp != .none` und serverId NICHT in den Serverdaten:
+    ///   `.delete` (auch Tombstones): entfernen - das Ziel ist schon weg (Erfolg).
+    ///   `.update`: Zustand `failed(.refGone)`, `followUp = .none`, damit der
+    ///   Nutzer den Text kopieren kann (kein stiller Verlust).
+    /// - `followUp != .none` und serverId vorhanden: unveraendert (Folgeaktion offen).
+    /// Zwischenstaende (Typ "progress") haben keine ID-Menge im Abruf und werden
+    /// bei offener Folgeaktion nicht angefasst.
     func reconcile(serverTodoIds: Set<String>, serverTopicIds: Set<String>, fetchStartedAt: Date) throws {
-        _ = serverTodoIds; _ = serverTopicIds
         try mutate { s in
-            s.changes.removeAll { c in
-                guard case .acknowledged(_, let at) = c.state else { return false }
-                return c.followUp == PendingFollowUp.none && at < fetchStartedAt
+            var kept: [PendingChange] = []
+            kept.reserveCapacity(s.changes.count)
+            for var c in s.changes {
+                guard case .acknowledged(let serverId, let at) = c.state, at < fetchStartedAt else {
+                    kept.append(c); continue
+                }
+                if c.followUp == PendingFollowUp.none { continue }
+                let present: Bool
+                switch c.kind {
+                case .createTodo: present = serverTodoIds.contains(serverId)
+                case .createTopic: present = serverTopicIds.contains(serverId)
+                case .createProgressEntry: present = true
+                }
+                if present { kept.append(c); continue }
+                if c.followUp == .delete || c.isTombstone { continue }
+                c.state = .failed(.refGone)
+                c.followUp = PendingFollowUp.none
+                c.acknowledgedObject = nil
+                kept.append(c)
             }
+            s.changes = kept
         }
     }
 
@@ -432,9 +448,10 @@ final class OfflineOutbox {
         state.changes.first { $0.localEntityId == id && !$0.isTombstone }
     }
 
-    /// Loescht Datei und Speicherzustand (Logout).
+    /// Loescht die Outbox-Datei und den Speicherzustand. Scope komplett loeschen: `OfflineSnapshotStore.removeScope(_:)`.
     func deleteStorage() {
-        store.removeScope(scopeKey: scope.key)
+        // Nur die eigene Datei: Snapshot/Caches im selben Scope bleiben erhalten.
+        store.remove(scopeKey: scope.key, fileName: Self.fileName)
         state = State()
         onChange?()
     }
