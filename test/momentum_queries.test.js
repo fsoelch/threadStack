@@ -187,4 +187,13 @@ test('weekCounts/weekMilestones: zaehlt Todos/Themen und filtert Meilensteine au
   const milestones = q.weekMilestones(db, 'u1', '2026-09-07', '2026-09-13');
   assert.equal(milestones.length, 1);
   assert.equal(milestones[0].name, 'Serverumzug');
+  // Regressionstest fuer den Bug "Fortschrittsdaten konnten nicht geladen
+  // werden": die Query MUSS die Felder als `type`/`id` liefern (Vertrag von
+  // completion.js und des iOS-Clients, MomentumMilestone), nicht als die
+  // rohen Spaltennamen `kind`/`refId` - sonst schlaegt das strikte
+  // Codable-Decoding in der App fehl, sobald ein Meilenstein existiert.
+  assert.equal(milestones[0].type, 'topic');
+  assert.equal(milestones[0].id, 'tpX');
+  assert.equal('kind' in milestones[0], false);
+  assert.equal('refId' in milestones[0], false);
 });

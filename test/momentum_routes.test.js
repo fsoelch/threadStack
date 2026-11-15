@@ -78,6 +78,31 @@ test('GET /overview: ungueltiger utcOffsetMinutes-Wert -> 400', async (t) => {
   assert.equal(res.status, 400);
 });
 
+// Regressionstest fuer den Bug "Fortschrittsdaten konnten nicht geladen
+// werden": sobald `week.milestones` nicht leer ist, MUSS jeder Eintrag die
+// Felder `type`/`id`/`name` tragen (Vertrag von completion.js und des
+// streng typisierten iOS-Clients MomentumMilestone) statt der rohen
+// Spaltennamen `kind`/`refId` - andernfalls scheitert das Decoding in der
+// App bzw. zeigt die Web-Oberflaeche ein falsches Label an.
+test('GET /overview: Meilenstein in week.milestones liefert type/id/name statt kind/refId', async (t) => {
+  const { app, db, dir } = buildTestApp();
+  t.after(() => cleanup(dir));
+  const agent = await loginAgent(app);
+  db.prepare(
+    "INSERT INTO momentum_milestones(id,user_id,kind,ref_id,name,occurred_at) VALUES ('ms1','u1','topic','tpX','Serverumzug','2026-09-09T12:00:00.000Z')"
+  ).run();
+
+  const res = await agent.get('/api/momentum/overview');
+  assert.equal(res.status, 200);
+  assert.equal(res.body.week.milestones.length, 1);
+  const milestone = res.body.week.milestones[0];
+  assert.equal(milestone.type, 'topic');
+  assert.equal(milestone.id, 'tpX');
+  assert.equal(milestone.name, 'Serverumzug');
+  assert.equal('kind' in milestone, false);
+  assert.equal('refId' in milestone, false);
+});
+
 test('PUT /settings: partielles Update, ungueltiger Typ -> 400', async (t) => {
   const { app, dir } = buildTestApp();
   t.after(() => cleanup(dir));
