@@ -47,6 +47,12 @@ test('lookup/record: je Nutzer getrennt, PK-Konflikt wirft', () => {
   idem.recordClientToken(db, { userId: 'u2', token: 't', refType: 'todo', refId: 'z', nowIso });
 });
 
-test('CLIENT_TOKEN_RE wird auch von lib/progress verwendet (eine Quelle)', () => {
+test('CLIENT_TOKEN_RE: Vertrags-Regex', () => {
   assert.equal(idem.CLIENT_TOKEN_RE.source, '^[A-Za-z0-9_-]{1,64}$');
+});
+
+test('lib/progress/routes.js importiert CLIENT_TOKEN_RE aus dem Modul (keine zweite Definition)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'lib', 'progress', 'routes.js'), 'utf8');
+  assert.match(src, /const \{ CLIENT_TOKEN_RE \} = require\('\.\.\/client-idempotency'\);/);
+  assert.doesNotMatch(src, /CLIENT_TOKEN_RE\s*=\s*\//);
 });

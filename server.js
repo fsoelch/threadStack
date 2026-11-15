@@ -69,7 +69,6 @@ try {
   console.error('[client-idempotency] purge failed:', e.message || e);
 }
 
-
 // ── Migration: Zielbild/Fortschrittsverlauf (Arbeitspaket S1/S2) ────
 // Additive CREATE TABLE/INDEX IF NOT EXISTS für progress_entries/progress_meta.
 // Läuft NACH den Kern-Tabellen (users/todos/topics), da progress_entries.user_id
@@ -220,6 +219,27 @@ const MAX_DESC  = 500_000;
 // { error: 'Deutscher Klartext', code: 'UPPER_SNAKE_CASE', ...extra }
 function fail(res, status, code, msg, extra) {
   res.status(status).json(Object.assign({ error: msg, code }, extra || {}));
+}
+
+// Idempotenz-Replay (Paket P1, S-1/S-2): einheitliche Behandlung eines
+// vorhandenen Client-Tokens fuer POST /todos und POST /meetings/:id/topics.
+// loadRow() liefert die (eigentumsgeprueft geladene) Zeile oder undefined,
+// toBody(row) den 200-Body. Liefert true, wenn bereits geantwortet wurde.
+function handleClientTokenReplay(res, userId, token, refType, loadRow, toBody) {
+  if (!token) return false;
+  const hit = clientIdem.lookupClientToken(db, userId, token);
+  if (!hit) return false;
+  if (hit.refType !== refType) {
+    fail(res, 409, 'CLIENT_TOKEN_CONFLICT', 'Client-Token wurde bereits für einen anderen Eintrag verwendet.');
+    return true;
+  }
+  const row = loadRow(hit.refId);
+  if (row) {
+    res.status(200).json({ ...toBody(row), idempotent: true });
+  } else {
+    fail(res, 410, 'CLIENT_TOKEN_TARGET_GONE', 'Dieser Eintrag wurde bereits übertragen und inzwischen entfernt.', { refType, refId: hit.refId });
+  }
+  return true;
 }
 
 function stripUnsafeHtml(s) {
@@ -575,29 +595,28 @@ function archivedFlagsForTopics(topicIds) {
 }
 
 app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
-  const tok = clientIdem.parseClientToken((req.body || {}).clientToken);
+  const body = req.body || {};
+  const tok = clientIdem.parseClientToken(body.clientToken);
   if (!tok.ok) return fail(res, 400, 'INVALID_CLIENT_TOKEN', 'Ungültiges Client-Token.');
-  if (tok.token) {
-    const hit = clientIdem.lookupClientToken(db, req.session.uid, tok.token);
-    if (hit) {
-      if (hit.refType !== 'topic') return fail(res, 409, 'CLIENT_TOKEN_CONFLICT', 'Client-Token wurde bereits für einen anderen Eintrag verwendet.');
-      const row = db.prepare('SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?').get(hit.refId, req.session.uid);
-      if (row) return res.status(200).json({ ...parseTopic(row), contacts: [], idempotent: true });
-      return fail(res, 410, 'CLIENT_TOKEN_TARGET_GONE', 'Dieser Eintrag wurde bereits übertragen und inzwischen entfernt.', { refType: 'topic', refId: hit.refId });
-    }
-  }
+  if (handleClientTokenReplay(res, req.session.uid, tok.token, 'topic',
+    (id) => db.prepare('SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?').get(id, req.session.uid),
+    (row) => ({ ...parseTopic(row), contacts: [] }))) return;
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   if (meetingArchivedGuard(res, req.params.id)) return;
-  const { title, description='', snoozedUntil, isTodo } = req.body || {};
+  const { title, description='', snoozedUntil, isTodo } = body;
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
-  const cap = clientIdem.parseCapturedAt((req.body || {}).capturedAt);
+  const cap = clientIdem.parseCapturedAt(body.capturedAt);
   if (!cap.ok) return fail(res, 400, 'INVALID_CAPTURED_AT', 'Ungültiger Erfassungszeitpunkt.');
   const cleanDesc = stripUnsafeHtml(description);
   const id = uid();
   const nowIso = new Date().toISOString();
+  // Parallele Erst-Requests mit demselben Token: der zweite scheitert am PK
+  // (user_id, client_token), die Transaktion rollt komplett zurueck (kein
+  // Duplikat) und der globale Handler antwortet 500. Der Client-Retry trifft
+  // dann den Replay-Pfad oben (200).
   db.transaction(() => {
     const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(req.params.id).m;
     db.prepare(`INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,is_todo,snoozed_until,created_at,sort_order) VALUES (?,?,?,?,0,'','',?,?,?,?)`)
@@ -852,27 +871,26 @@ app.get(`${A}/todos`, requireAuth, (req, res) => {
 });
 
 app.post(`${A}/todos`, requireAuth, (req, res) => {
-  const tok = clientIdem.parseClientToken((req.body || {}).clientToken);
+  const body = req.body || {};
+  const tok = clientIdem.parseClientToken(body.clientToken);
   if (!tok.ok) return fail(res, 400, 'INVALID_CLIENT_TOKEN', 'Ungültiges Client-Token.');
-  if (tok.token) {
-    const hit = clientIdem.lookupClientToken(db, req.session.uid, tok.token);
-    if (hit) {
-      if (hit.refType !== 'todo') return fail(res, 409, 'CLIENT_TOKEN_CONFLICT', 'Client-Token wurde bereits für einen anderen Eintrag verwendet.');
-      const row = db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(hit.refId, req.session.uid);
-      if (row) return res.status(200).json({ ...parseTodo(row), aiSummary: { pending: false }, contacts: [], idempotent: true });
-      return fail(res, 410, 'CLIENT_TOKEN_TARGET_GONE', 'Dieser Eintrag wurde bereits übertragen und inzwischen entfernt.', { refType: 'todo', refId: hit.refId });
-    }
-  }
-  const { title, description='', dueDate, isPrivate, snoozedUntil } = req.body || {};
+  if (handleClientTokenReplay(res, req.session.uid, tok.token, 'todo',
+    (id) => db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(id, req.session.uid),
+    (row) => ({ ...parseTodo(row), aiSummary: { pending: false }, contacts: [] }))) return;
+  const { title, description='', dueDate, isPrivate, snoozedUntil } = body;
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (dueDate !== undefined && !isValidDate(dueDate)) return res.status(400).json({ error: 'Ungültiges Fälligkeitsdatum' });
-  const cap = clientIdem.parseCapturedAt((req.body || {}).capturedAt);
+  const cap = clientIdem.parseCapturedAt(body.capturedAt);
   if (!cap.ok) return fail(res, 400, 'INVALID_CAPTURED_AT', 'Ungültiger Erfassungszeitpunkt.');
   const id = uid();
   const nowIso = new Date().toISOString();
+  // Parallele Erst-Requests mit demselben Token: der zweite scheitert am PK
+  // (user_id, client_token), die Transaktion rollt komplett zurueck (kein
+  // Duplikat) und der globale Handler antwortet 500. Der Client-Retry trifft
+  // dann den Replay-Pfad oben (200).
   db.transaction(() => {
     const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
     db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,snoozed_until,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), dueDate || '', isPrivate ? 1 : 0, snoozedUntil || '', mx+1, cap.iso || nowIso);
@@ -2576,11 +2594,12 @@ app.use(`${A}/progress`, progress.createProgressRouter({
   onProgressEntriesChanged: summaries.onProgressEntriesChanged,
 }));
 
+// ── Sync-API (Offline-Modus, Paket P1): GET ${A}/sync/capabilities ──
+app.use(`${A}/sync`, clientIdem.createSyncRouter({ requireAuth }));
+
 // ── Archiv-API (Meetings archivieren statt löschen, Arbeitspaket B1/B2) ──
 // Mount-Pfad folgt derselben App-weiten BASE_PATH-Konvention wie das
 // Progress-Modul oben (`${A}/archive`, siehe Kommentar dort).
-app.use(`${A}/sync`, clientIdem.createSyncRouter({ requireAuth }));
-
 app.use(`${A}/archive`, archive.createArchiveRouter({
   db,
   requireAuth,
