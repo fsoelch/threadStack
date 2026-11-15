@@ -20,6 +20,7 @@ const contacts = require('./lib/contacts');
 const assignments = require('./lib/contacts/assignments');
 const momentum = require('./lib/momentum');
 const backup = require('./lib/backup');
+const clientIdem = require('./lib/client-idempotency');
 const { runCoreMigrations, rebuildSearchIndex } = require('./db/schema');
 let summaryScheduler; // wird nach dem Laden von ai/index.js weiter unten gesetzt
 
@@ -58,6 +59,15 @@ db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
 runCoreMigrations(db, { htmlToText });
+
+// ── Migration: Client-Token-Mapping fuer idempotente Neuanlage (Paket P1,
+// Offline-Modus). Braucht users aus den Kern-Migrationen.
+clientIdem.runClientIdempotencyMigrations(db);
+try {
+  clientIdem.purgeExpiredClientTokens(db);
+} catch (e) {
+  console.error('[client-idempotency] purge failed:', e.message || e);
+}
 
 
 // ── Migration: Zielbild/Fortschrittsverlauf (Arbeitspaket S1/S2) ────
@@ -565,6 +575,17 @@ function archivedFlagsForTopics(topicIds) {
 }
 
 app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
+  const tok = clientIdem.parseClientToken((req.body || {}).clientToken);
+  if (!tok.ok) return fail(res, 400, 'INVALID_CLIENT_TOKEN', 'Ungültiges Client-Token.');
+  if (tok.token) {
+    const hit = clientIdem.lookupClientToken(db, req.session.uid, tok.token);
+    if (hit) {
+      if (hit.refType !== 'topic') return fail(res, 409, 'CLIENT_TOKEN_CONFLICT', 'Client-Token wurde bereits für einen anderen Eintrag verwendet.');
+      const row = db.prepare('SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?').get(hit.refId, req.session.uid);
+      if (row) return res.status(200).json({ ...parseTopic(row), contacts: [], idempotent: true });
+      return fail(res, 410, 'CLIENT_TOKEN_TARGET_GONE', 'Dieser Eintrag wurde bereits übertragen und inzwischen entfernt.', { refType: 'topic', refId: hit.refId });
+    }
+  }
   if (!ownsMeeting(req.session.uid, req.params.id)) return res.status(404).json({ error: 'Nicht gefunden' });
   if (meetingArchivedGuard(res, req.params.id)) return;
   const { title, description='', snoozedUntil, isTodo } = req.body || {};
@@ -572,11 +593,17 @@ app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
+  const cap = clientIdem.parseCapturedAt((req.body || {}).capturedAt);
+  if (!cap.ok) return fail(res, 400, 'INVALID_CAPTURED_AT', 'Ungültiger Erfassungszeitpunkt.');
   const cleanDesc = stripUnsafeHtml(description);
   const id = uid();
-  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(req.params.id).m;
-  db.prepare(`INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,is_todo,snoozed_until,created_at,sort_order) VALUES (?,?,?,?,0,'','',?,?,?,?)`)
-    .run(id, req.params.id, title.trim(), cleanDesc, isTodo ? 1 : 0, snoozedUntil || '', new Date().toISOString(), maxOrder + 1);
+  const nowIso = new Date().toISOString();
+  db.transaction(() => {
+    const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(req.params.id).m;
+    db.prepare(`INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,is_todo,snoozed_until,created_at,sort_order) VALUES (?,?,?,?,0,'','',?,?,?,?)`)
+      .run(id, req.params.id, title.trim(), cleanDesc, isTodo ? 1 : 0, snoozedUntil || '', cap.iso || nowIso, maxOrder + 1);
+    if (tok.token) clientIdem.recordClientToken(db, { userId: req.session.uid, token: tok.token, refType: 'topic', refId: id, nowIso });
+  })();
   // Neuanlage: noch keine Zuständigkeiten möglich -> immer leeres Array
   // (konsistent mit der contactsForRefs()-Anreicherung in GET /meetings).
   res.status(201).json({ ...parseTopic(db.prepare('SELECT * FROM topics WHERE id=?').get(id)), contacts: [] });
@@ -825,15 +852,32 @@ app.get(`${A}/todos`, requireAuth, (req, res) => {
 });
 
 app.post(`${A}/todos`, requireAuth, (req, res) => {
+  const tok = clientIdem.parseClientToken((req.body || {}).clientToken);
+  if (!tok.ok) return fail(res, 400, 'INVALID_CLIENT_TOKEN', 'Ungültiges Client-Token.');
+  if (tok.token) {
+    const hit = clientIdem.lookupClientToken(db, req.session.uid, tok.token);
+    if (hit) {
+      if (hit.refType !== 'todo') return fail(res, 409, 'CLIENT_TOKEN_CONFLICT', 'Client-Token wurde bereits für einen anderen Eintrag verwendet.');
+      const row = db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(hit.refId, req.session.uid);
+      if (row) return res.status(200).json({ ...parseTodo(row), aiSummary: { pending: false }, contacts: [], idempotent: true });
+      return fail(res, 410, 'CLIENT_TOKEN_TARGET_GONE', 'Dieser Eintrag wurde bereits übertragen und inzwischen entfernt.', { refType: 'todo', refId: hit.refId });
+    }
+  }
   const { title, description='', dueDate, isPrivate, snoozedUntil } = req.body || {};
   if (!title?.trim()) return res.status(400).json({ error: 'Titel erforderlich' });
   if (String(title).length > MAX_TITLE) return res.status(400).json({ error: 'Titel zu lang' });
   if (String(description).length > MAX_DESC) return res.status(400).json({ error: 'Beschreibung zu lang' });
   if (snoozedUntil !== undefined && !isValidDate(snoozedUntil)) return res.status(400).json({ error: 'Ungültiges Schlafen-bis-Datum' });
   if (dueDate !== undefined && !isValidDate(dueDate)) return res.status(400).json({ error: 'Ungültiges Fälligkeitsdatum' });
+  const cap = clientIdem.parseCapturedAt((req.body || {}).capturedAt);
+  if (!cap.ok) return fail(res, 400, 'INVALID_CAPTURED_AT', 'Ungültiger Erfassungszeitpunkt.');
   const id = uid();
-  const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
-  db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,snoozed_until,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), dueDate || '', isPrivate ? 1 : 0, snoozedUntil || '', mx+1, new Date().toISOString());
+  const nowIso = new Date().toISOString();
+  db.transaction(() => {
+    const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
+    db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,snoozed_until,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), dueDate || '', isPrivate ? 1 : 0, snoozedUntil || '', mx+1, cap.iso || nowIso);
+    if (tok.token) clientIdem.recordClientToken(db, { userId: req.session.uid, token: tok.token, refType: 'todo', refId: id, nowIso });
+  })();
   let pendingSummary = false;
   try {
     const r = summaries.onDescriptionChanged({ userId: req.session.uid, refType: 'todo', refId: id, reason: 'created' });
@@ -2535,6 +2579,8 @@ app.use(`${A}/progress`, progress.createProgressRouter({
 // ── Archiv-API (Meetings archivieren statt löschen, Arbeitspaket B1/B2) ──
 // Mount-Pfad folgt derselben App-weiten BASE_PATH-Konvention wie das
 // Progress-Modul oben (`${A}/archive`, siehe Kommentar dort).
+app.use(`${A}/sync`, clientIdem.createSyncRouter({ requireAuth }));
+
 app.use(`${A}/archive`, archive.createArchiveRouter({
   db,
   requireAuth,
