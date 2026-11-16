@@ -221,7 +221,6 @@ const createLimiter = createRateLimiter({
   windowMs: 10 * 60 * 1000,
   max: 120,
   message: 'Zu viele Anfragen. Bitte später erneut versuchen.',
-  code: 'RATE_LIMITED',
 });
 
 const MAX_TITLE = 300;

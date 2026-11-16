@@ -207,7 +207,7 @@ test('Rate-Limit: POST /todos und Topics -> 429 mit Retry-After nach 120 Anfrage
   }
   const over = await agent.post('/api/todos').send({ title: 'zu viel' });
   assert.equal(over.status, 429);
-  assert.equal(over.body.code, 'RATE_LIMITED');
+  assert.equal(over.body.code, 'rate_limited');
   assert.equal(typeof over.body.error, 'string');
   assert.ok(Number(over.headers['retry-after']) >= 1);
   // Topics teilen sich das Limit pro Nutzer

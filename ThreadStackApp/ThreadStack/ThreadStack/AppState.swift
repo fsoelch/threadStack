@@ -494,9 +494,9 @@ final class AppState: ObservableObject {
     func clearLocalSessionCookies() {
         var storages: [HTTPCookieStorage] = [HTTPCookieStorage.shared]
         if let own = session.configuration.httpCookieStorage, own !== HTTPCookieStorage.shared { storages.append(own) }
-        if let url = try? url("") {
-            for st in storages { for c in st.cookies(for: url) ?? [] { st.deleteCookie(c) } }
-        }
+        // Die App spricht nur mit ihrem eigenen Server: alle Cookies loeschen, damit auch Cookies
+        // einer frueheren/ungueltigen Server-URL nicht liegen bleiben.
+        for st in storages { for c in st.cookies ?? [] { st.deleteCookie(c) } }
         session.configuration.urlCache?.removeAllCachedResponses()
         URLCache.shared.removeAllCachedResponses()
     }
