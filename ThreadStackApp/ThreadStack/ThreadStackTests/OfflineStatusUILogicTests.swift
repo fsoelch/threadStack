@@ -60,7 +60,7 @@ private func item(kind: PendingChangeKind = .createTodo, title: String = "Titel"
         #expect(c.isWarning)
         #expect(c.detail == "Stand vom 01.11., 14:32")
         #expect(c.accessibilityLabel
-                == "Offline. Stand: 1. November, 14 Uhr 32. 3 Änderungen ausstehend, 1 Änderung fehlgeschlagen.")
+                == "Offline. Stand vom 1. November, 14 Uhr 32. 3 Änderungen ausstehend, 1 Änderung fehlgeschlagen.")
     }
 
     @Test func onlinePendingAndFailed() {
@@ -118,6 +118,18 @@ private func item(kind: PendingChangeKind = .createTodo, title: String = "Titel"
         #expect(OfflineBannerLogic.spokenDate(date(2026, 11, 14), now: now, calendar: cal) == "gestern, 14 Uhr 32")
         #expect(OfflineBannerLogic.spokenDate(date(2026, 3, 2, 9, 5), now: now, calendar: cal) == "2. März, 9 Uhr 5")
         #expect(OfflineBannerLogic.spokenDate(date(2025, 12, 24), now: now, calendar: cal) == "24. Dezember 2025, 14 Uhr 32")
+    }
+
+    @Test func announcementKeyIgnoresProgressSteps() {
+        let a = banner(.online, .syncing(done: 1, total: 5), unsynced: 5)!
+        let b = banner(.online, .syncing(done: 2, total: 5), unsynced: 5)!
+        #expect(a.accessibilityLabel != b.accessibilityLabel)
+        #expect(a.announcementKey == b.announcementKey)
+        #expect(a.announcementKey != banner(.offline(.noNetwork))!.announcementKey)
+    }
+
+    @Test func userMismatchReusesOfflineErrorText() {
+        #expect(OfflineBannerLogic.userMismatchText == OfflineError.scopeMismatch.errorDescription)
     }
 
     @Test func countTexts() {
@@ -242,6 +254,12 @@ private func item(kind: PendingChangeKind = .createTodo, title: String = "Titel"
     @Test func copyTextFallsBackToTitle() {
         #expect(PendingDetailLogic.copyText(for: item(title: "T", full: "T\n\nBody")) == "T\n\nBody")
         #expect(PendingDetailLogic.copyText(for: item(title: "T", full: "  \n")) == "T")
+    }
+
+    @Test func sheetTitleFollowsStatus() {
+        #expect(PendingDetailLogic.title(for: .failed(message: "x")) == "Änderung fehlgeschlagen")
+        #expect(PendingDetailLogic.title(for: .blocked(message: "x")) == "Änderung wartet")
+        #expect(PendingDetailLogic.title(for: .pending) == "Ausstehende Änderung")
     }
 
     @Test func actionTitlesFollowUX() {

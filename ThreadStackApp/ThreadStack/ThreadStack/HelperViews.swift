@@ -119,6 +119,27 @@ enum MoveItemType {
     case todo(id: String)
 }
 
+/// Gemeinsame Zeile fuer Meeting-Auswahllisten (MoveItemSheet, PendingMeetingPickerSheet):
+/// Farbpunkt, Titel, optional "aktuell", Checkmark bei Auswahl.
+struct MeetingSelectionRow: View {
+    let meeting: Meeting
+    var isSelected: Bool = false
+    var isCurrent: Bool = false
+
+    var body: some View {
+        HStack {
+            Circle().fill(Color(hex: meeting.color)).frame(width: 8, height: 8).accessibilityHidden(true)
+            Text(meeting.title).foregroundStyle(.primary)
+            if isCurrent { Text("aktuell").font(.caption).foregroundStyle(.secondary) }
+            Spacer()
+            if isSelected {
+                Image(systemName: "checkmark").foregroundStyle(DS.accent).accessibilityHidden(true)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+}
+
 struct MoveItemSheet: View {
     let type: MoveItemType
     @EnvironmentObject var state: AppState
@@ -158,14 +179,7 @@ struct MoveItemSheet: View {
                                 Button {
                                     selectedMeetingId = m.id
                                 } label: {
-                                    HStack {
-                                        Circle().fill(Color(hex: m.color)).frame(width: 8, height: 8)
-                                        Text(m.title).foregroundStyle(.primary)
-                                        Spacer()
-                                        if selectedMeetingId == m.id {
-                                            Image(systemName: "checkmark").foregroundStyle(DS.accent)
-                                        }
-                                    }
+                                    MeetingSelectionRow(meeting: m, isSelected: selectedMeetingId == m.id)
                                 }
                             }
                         }

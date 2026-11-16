@@ -46,12 +46,15 @@ struct OfflineBannerContent: Equatable {
     /// Tipp auf die Leiste oeffnet die Liste (nur wenn es Eintraege gibt).
     var opensList: Bool
     var accessibilityLabel: String
+
+    /// Aendert sich nur beim Zustandswechsel (Symbol/Spinner/Warnung), nicht bei Fortschrittszaehlern.
+    var announcementKey: String { showsSpinner ? "syncing" : icon + (isWarning ? "!" : "") }
 }
 
 enum OfflineBannerLogic {
     static let largeBatchThreshold = 50
     static let serverUnsupportedText = "Der Server unterstützt die Übertragung noch nicht. Deine Änderungen bleiben gespeichert."
-    static let userMismatchText = "Die Änderungen gehören zu einem anderen Konto und werden nicht übertragen."
+    static let userMismatchText = OfflineError.scopeMismatch.errorDescription ?? ""
     static let retryLaterText = "Wird später erneut versucht."
     static let openListHint = "Doppeltippen öffnet die Liste der ausstehenden Änderungen."
     static let reauthButtonTitle = "Anmelden"
@@ -85,7 +88,11 @@ enum OfflineBannerLogic {
     /// "Stand: 15. November, 14 Uhr 32" (VoiceOver).
     static func spokenDataAsOf(_ date: Date?, now: Date = Date(), calendar: Calendar = .current) -> String {
         guard let date else { return "Noch kein Stand geladen" }
-        return "Stand: " + spokenDate(date, now: now, calendar: calendar)
+        // Gleiche dayKind-Weiche wie OfflineDataAsOfFormatter.label ("Stand: heute" / "Stand vom 15. November").
+        switch OfflineDataAsOfFormatter.dayKind(for: date, now: now, calendar: calendar) {
+        case .today, .yesterday: return "Stand: " + spokenDate(date, now: now, calendar: calendar)
+        case .other: return "Stand vom " + spokenDate(date, now: now, calendar: calendar)
+        }
     }
 
     static func summaryText(outstanding: Int, failed: Int) -> String? {
@@ -200,8 +207,11 @@ struct OfflineStatusBanner: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: content)
-        .onChange(of: content?.accessibilityLabel) { _, new in
-            if let new { AccessibilityNotification.Announcement(new).post() }
+        .onChange(of: content?.announcementKey) { _, key in
+            // Nur bei Zustandswechsel, nicht bei jedem Fortschrittsschritt.
+            if key != nil, let label = content?.accessibilityLabel {
+                AccessibilityNotification.Announcement(label).post()
+            }
         }
         .sheet(isPresented: $showChanges) { PendingChangesSheet() }
     }

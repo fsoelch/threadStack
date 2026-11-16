@@ -91,15 +91,7 @@ struct PendingMeetingPickerSheet: View {
         let isSelected = selection == m.id
         let isCurrent = m.id == currentMeetingId
         return Button { selection = m.id } label: {
-            HStack {
-                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                    .accessibilityHidden(true)
-                Text(m.title)
-                if isCurrent { Text("aktuell").scaledFont(.caption).foregroundStyle(.secondary) }
-                Spacer()
-            }
-            .contentShape(Rectangle())
+            MeetingSelectionRow(meeting: m, isSelected: isSelected, isCurrent: isCurrent)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(isCurrent ? "\(m.title), aktuell" : m.title)

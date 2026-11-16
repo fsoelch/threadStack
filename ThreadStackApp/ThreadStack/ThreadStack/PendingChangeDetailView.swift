@@ -1,10 +1,4 @@
 import SwiftUI
-import UniformTypeIdentifiers
-#if os(macOS)
-import AppKit
-#else
-import UIKit
-#endif
 
 //  PendingChangeDetailView.swift
 //  Arbeitspaket P4: Fehlerausloesung fuer einen Eintrag (UX "FailedEntrySheet").
@@ -19,7 +13,18 @@ enum PendingDetailAction: Equatable {
 }
 
 enum PendingDetailLogic {
-    static let title = "Änderung fehlgeschlagen"
+    static let failedTitle = "Änderung fehlgeschlagen"
+    static let blockedTitle = "Änderung wartet"
+    static let pendingTitle = "Ausstehende Änderung"
+
+    /// Sheet-Titel nach Status.
+    static func title(for status: PendingItemStatus) -> String {
+        switch status {
+        case .failed: return failedTitle
+        case .blocked: return blockedTitle
+        case .pending, .syncing: return pendingTitle
+        }
+    }
     static let editTitle = "Bearbeiten und erneut senden"
     static let retryTitle = "Erneut senden"
     static let reassignTitle = "Anderem Meeting zuordnen"
@@ -91,21 +96,6 @@ enum PendingDetailLogic {
     }
 }
 
-/// Kopieren mit lokaler Zwischenablage (analog zum Wissens-Editor: kein Universal Clipboard, Ablauf nach 5 Minuten auf iOS).
-enum PendingClipboard {
-    static func copy(_ text: String) {
-        #if os(macOS)
-        NSPasteboard.general.prepareForNewContents(with: .currentHostOnly)
-        NSPasteboard.general.setString(text, forType: .string)
-        #else
-        UIPasteboard.general.setItems(
-            [[UTType.utf8PlainText.identifier: text]],
-            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
-        )
-        #endif
-    }
-}
-
 // MARK: - View
 
 struct PendingChangeDetailView: View {
@@ -116,7 +106,6 @@ struct PendingChangeDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var isSending = false
-    @State private var didRetry = false
     @State private var editTarget: PendingEditTarget?
     @State private var showPicker = false
     @State private var discardCandidate: PendingItemSummary?
@@ -129,7 +118,7 @@ struct PendingChangeDetailView: View {
             Group {
                 if let item { content(item) } else { Color.clear }
             }
-            .navigationTitle(PendingDetailLogic.title)
+            .navigationTitle(item.map { PendingDetailLogic.title(for: $0.status) } ?? PendingDetailLogic.failedTitle)
             .inlineTitle()
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } }
@@ -139,11 +128,8 @@ struct PendingChangeDetailView: View {
         .frame(minWidth: 460, minHeight: 440)
         #endif
         .onChange(of: item == nil) { _, gone in
-            // Uebertragen oder verworfen: Sheet schliesst, nach manuellem Erneut-Senden mit Toast.
-            if gone {
-                if didRetry { state.showToast(PendingDetailLogic.sentToast) }
-                dismiss()
-            }
+            // Uebertragen oder verworfen: Sheet schliesst (Toast entscheidet nur der Retry-Task).
+            if gone { dismiss() }
         }
         .sheet(item: $editTarget) { PendingEditForm(target: $0) }
         .sheet(isPresented: $showPicker) {
@@ -218,7 +204,7 @@ struct PendingChangeDetailView: View {
     private func perform(_ action: PendingDetailAction, item: PendingItemSummary) {
         switch action {
         case .copy:
-            PendingClipboard.copy(PendingDetailLogic.copyText(for: item))
+            LocalClipboard.copyPlainText(PendingDetailLogic.copyText(for: item))
             state.showToast(PendingDetailLogic.copiedToast)
         case .edit:
             if let t = PendingEditTarget.make(summary: item, payload: offline.intents.payload(item.id)) {
@@ -247,11 +233,12 @@ struct PendingChangeDetailView: View {
             errorText = PendingChangesLogic.errorMessage(for: error)
             return
         }
-        didRetry = true
         isSending = true
         Task {
             await offline.intents.syncNow()
             isSending = false
+            // Nur nach erfolgreicher Uebertragung (Eintrag verschwunden) - nicht nach Verwerfen.
+            if !offline.items.contains(where: { $0.id == item.id }) { state.showToast(PendingDetailLogic.sentToast) }
         }
     }
 

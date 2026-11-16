@@ -23,13 +23,12 @@ struct LogoutConfirmationModifier: ViewModifier {
     let onConfirm: () -> Void
     let onShowChanges: (() -> Void)?
 
+    /// Interner Dialogzustand; `isPresented` ist nur ein Impuls und wird sofort zurueckgesetzt.
+    @State private var showDialog = false
+
     func body(content: Content) -> some View {
         content
-            .confirmationDialog(LogoutConfirmationLogic.title,
-                                isPresented: Binding(
-                                    get: { isPresented && LogoutConfirmationLogic.needsConfirmation(unsyncedCount: unsyncedCount) },
-                                    set: { isPresented = $0 }),
-                                titleVisibility: .visible) {
+            .confirmationDialog(LogoutConfirmationLogic.title, isPresented: $showDialog, titleVisibility: .visible) {
                 Button(LogoutConfirmationLogic.confirmTitle, role: .destructive) { onConfirm() }
                 if let onShowChanges {
                     Button(LogoutConfirmationLogic.showChangesTitle) { onShowChanges() }
@@ -38,10 +37,12 @@ struct LogoutConfirmationModifier: ViewModifier {
             } message: {
                 Text(LogoutConfirmationLogic.message(unsyncedCount: unsyncedCount))
             }
-            // Ohne ausstehende Aenderungen: sofort abmelden, keine Rueckfrage.
             .onChange(of: isPresented) { _, presented in
-                if presented && !LogoutConfirmationLogic.needsConfirmation(unsyncedCount: unsyncedCount) {
-                    isPresented = false
+                guard presented else { return }
+                isPresented = false
+                if LogoutConfirmationLogic.needsConfirmation(unsyncedCount: unsyncedCount) {
+                    showDialog = true
+                } else {
                     onConfirm()
                 }
             }

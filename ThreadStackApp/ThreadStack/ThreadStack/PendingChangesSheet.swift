@@ -120,6 +120,9 @@ enum PendingEditTarget: Identifiable {
     /// `nil`, wenn Payload fehlt (z.B. inzwischen uebertragen) oder die Referenz eines Zwischenstands unbekannt ist.
     static func make(summary: PendingItemSummary, payload: PendingPayload?) -> PendingEditTarget? {
         guard let payload else { return nil }
+        // Annahme: Schein-PendingChange dient nur als Huelle fuer die P2-Builder
+        // (`local*`). Die lokale ID leitet sich allein aus `id` ab; seq, Token, Status
+        // usw. sind fuer die Builder ohne Bedeutung.
         let change = PendingChange(id: summary.id, seq: 0, clientToken: "", capturedAt: summary.capturedAt,
                                    payload: payload, state: .pending, revision: 0, followUp: .none,
                                    isTombstone: false, attemptCount: 0, lastAttemptAt: nil,
@@ -147,7 +150,7 @@ extension View {
                                                 set: { if !$0 { item.wrappedValue = nil } }),
                            titleVisibility: .visible,
                            presenting: item.wrappedValue) { it in
-            Button("Verwerfen", role: .destructive) { onConfirm(it) }
+            Button(PendingDetailLogic.discardTitle, role: .destructive) { onConfirm(it) }
             Button("Abbrechen", role: .cancel) {}
         } message: { it in
             Text(PendingChangesLogic.discardMessage(title: it.title))
@@ -257,10 +260,10 @@ struct PendingChangesSheet: View {
         .accessibilityLabel(PendingChangesLogic.rowAccessibilityLabel(item))
         .accessibilityAddTraits(.isButton)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) { discardCandidate = item } label: { Label("Verwerfen", systemImage: "trash") }
+            Button(role: .destructive) { discardCandidate = item } label: { Label(PendingDetailLogic.discardTitle, systemImage: "trash") }
         }
         .contextMenu {
-            Button(role: .destructive) { discardCandidate = item } label: { Label("Verwerfen", systemImage: "trash") }
+            Button(role: .destructive) { discardCandidate = item } label: { Label(PendingDetailLogic.discardTitle, systemImage: "trash") }
         }
     }
 
