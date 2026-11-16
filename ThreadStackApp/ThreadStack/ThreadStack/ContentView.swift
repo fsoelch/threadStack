@@ -3,12 +3,18 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var graphStore: GraphStore
+    // Offline-Modus (P7): Status fuer Logout-Warnung und Offline-Sperren der Menueeintraege.
+    @EnvironmentObject var offline: OfflineStatusStore
     @State private var selectedMeetingId: String? = nil
     @State private var selectedView: SidebarItem = .meetings
     @State private var error: String?
     @State private var showSettings = false
     @State private var showAdmin = false
     @State private var showAiSettings = false
+    // Offline-Modus (P7): gemeinsamer Abmelde-Impuls fuer BEIDE Logout-Stellen (macOS-Menue, iOS-Menue),
+    // "Aenderungen ansehen" aus der Logout-Warnung.
+    @State private var logoutRequested = false
+    @State private var showPendingChanges = false
 
     var body: some View {
         #if os(macOS)
@@ -20,6 +26,8 @@ struct ContentView: View {
         }
         .overlay(alignment: .top) { ToastOverlayView() }
         .sheet(isPresented: $showAiSettings) { AISettingsView() }
+        .offlineIntegration(logoutRequested: $logoutRequested, showPendingChanges: $showPendingChanges,
+                            performLogout: performLogout)
         #else
         iosLayout
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -32,7 +40,14 @@ struct ContentView: View {
             }
             .overlay(alignment: .top) { ToastOverlayView() }
             .sheet(isPresented: $showAiSettings) { AISettingsView() }
+            .offlineIntegration(logoutRequested: $logoutRequested, showPendingChanges: $showPendingChanges,
+                                performLogout: performLogout)
         #endif
+    }
+
+    /// Einzige Abmelde-Aktion (Bestaetigung bei ausstehenden Aenderungen uebernimmt `.logoutConfirmation`).
+    private func performLogout() {
+        Task { try? await state.logout() }
     }
 
     // MARK: - macOS: plain HSplitView (no NSToolbar, no crash)
@@ -69,14 +84,16 @@ struct ContentView: View {
                         Button {
                             showAiSettings = true
                         } label: { Label("AI-Einstellungen", systemImage: "sparkles") }
+                        .disabledWhenOfflineCompact(offline.isOffline)
                         if state.currentUser?.isAdmin == true {
                             Button {
                                 showAdmin = true
                             } label: { Label("Benutzerverwaltung", systemImage: "person.2") }
+                            .disabledWhenOfflineCompact(offline.isOffline)
                         }
                         Divider()
                         Button(role: .destructive) {
-                            Task { try? await state.logout() }
+                            logoutRequested = true
                         } label: { Label("Abmelden", systemImage: "rectangle.portrait.and.arrow.right") }
                     } label: {
                         Image(systemName: "ellipsis.circle")
@@ -91,9 +108,12 @@ struct ContentView: View {
             }
             .frame(minWidth: 220, maxWidth: 320)
 
-            // Detail column
-            detailView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Detail column - Offline-Statusleiste GENAU EINMAL (macOS-Layout), oberhalb der Detailspalte.
+            VStack(spacing: 0) {
+                OfflineStatusBanner()
+                detailView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .errorAlert($error)
         .sheet(isPresented: $showSettings) { SettingsView() }
@@ -108,6 +128,15 @@ struct ContentView: View {
     // MARK: - iOS: NavigationSplitView
     #if os(iOS)
     private var iosLayout: some View {
+        // Offline-Statusleiste GENAU EINMAL (iOS-Layout): oberhalb der gesamten Split-View, damit sie auch
+        // im zusammengeklappten iPhone-Layout (Sidebar/Detail) sichtbar bleibt.
+        VStack(spacing: 0) {
+            OfflineStatusBanner()
+            iosSplitView
+        }
+    }
+
+    private var iosSplitView: some View {
         NavigationSplitView {
             SidebarView(selectedMeetingId: $selectedMeetingId,
                         selectedView: $selectedView)
@@ -121,7 +150,7 @@ struct ContentView: View {
         .errorAlert($error)
         .sheet(isPresented: $showSettings) { SettingsView() }
         .sheet(isPresented: $showAdmin)    { AdminView() }
-        .refreshable { await reload() }
+        .refreshable { await state.refreshAll() }
         .task { await reload() }
         .onChange(of: graphStore.navigationRequest) { _, target in
             applyGraphNavigation(target)
@@ -218,14 +247,16 @@ struct ContentView: View {
             Button { showAiSettings = true } label: {
                 Label("AI-Einstellungen", systemImage: "sparkles")
             }
+            .disabledWhenOfflineCompact(offline.isOffline)
             if state.currentUser?.isAdmin == true {
                 Button { showAdmin = true } label: {
                     Label("Benutzerverwaltung", systemImage: "person.2")
                 }
+                .disabledWhenOfflineCompact(offline.isOffline)
             }
             Divider()
             Button(role: .destructive) {
-                Task { try? await state.logout() }
+                logoutRequested = true
             } label: {
                 Label("Abmelden", systemImage: "rectangle.portrait.and.arrow.right")
             }
@@ -255,15 +286,45 @@ struct ContentView: View {
         graphStore.navigationRequest = nil
     }
 
+    /// Erste Datenladung beim Erscheinen (Boot/Login haben sie ggf. schon erledigt) und Auto-Refresh-Timer.
+    /// Fehler der Ladung behandelt der Offline-Coordinator (still offline, kein Alert pro Ansicht).
     private func reload() async {
-        do { try await state.loadAll() }
-        catch { self.error = error.localizedDescription }
-        await state.loadAiSettings()
-        await state.loadStack()
-        await state.aiLoadDrift()
-        await state.refreshMomentumStreakBadge()
+        if !state.hasCompletedInitialLoad {
+            await state.completeAuthentication(trigger: .afterLogin)
+        }
         // Auto-Refresh-Timer beim ersten Erscheinen starten (idempotent)
         state.startAutoRefresh()
+    }
+}
+
+// MARK: - Offline-Integration (P7)
+
+private extension View {
+    /// Gemeinsame Offline-Bausteine beider Layouts: Abmelde-Bestaetigung (an beiden Menues ueber EINE Funktion),
+    /// "Aenderungen ansehen" aus der Logout-Warnung und das Re-Auth-Sheet. Alle Sheets erben die
+    /// Environment-Objekte (OfflineStatusStore, AppState, ProgressStore, ...) von der WindowGroup.
+    func offlineIntegration(logoutRequested: Binding<Bool>, showPendingChanges: Binding<Bool>,
+                            performLogout: @escaping () -> Void) -> some View {
+        modifier(OfflineIntegrationModifier(logoutRequested: logoutRequested,
+                                            showPendingChanges: showPendingChanges,
+                                            performLogout: performLogout))
+    }
+}
+
+private struct OfflineIntegrationModifier: ViewModifier {
+    @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
+    @Binding var logoutRequested: Bool
+    @Binding var showPendingChanges: Bool
+    let performLogout: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .logoutConfirmation(isPresented: $logoutRequested, unsyncedCount: offline.unsyncedCount,
+                                onConfirm: performLogout,
+                                onShowChanges: { showPendingChanges = true })
+            .sheet(isPresented: $showPendingChanges) { PendingChangesSheet() }
+            .sheet(isPresented: $state.reauthRequested) { LoginView(mode: .reauth) }
     }
 }
 

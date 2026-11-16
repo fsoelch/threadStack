@@ -78,6 +78,9 @@ final class ProgressStore: ObservableObject {
     /// jedem `load(...)` und jedem `dismissReentry(...)` neu berechnet.
     @Published private(set) var reentryVisible: [String: Bool] = [:]
 
+    /// Refs, deren angezeigter Verlauf aus dem lokalen Cache stammt (offline, Server nicht erreichbar).
+    @Published private(set) var staleRefs: Set<String> = []
+
     // MARK: - Internals
 
     /// `clientToken` je Ref für den aktuell laufenden "Zwischenstand
@@ -126,6 +129,9 @@ final class ProgressStore: ObservableObject {
         return pageOverride[k] ?? detail(refType: refType, refId: refId)?.page
     }
 
+    /// `true`, wenn der angezeigte Verlauf aus dem lokalen Cache stammt (Stand kann veraltet sein).
+    func isStale(refType: String, refId: String) -> Bool { staleRefs.contains(key(refType, refId)) }
+
     func shouldShowReentry(refType: String, refId: String) -> Bool {
         reentryVisible[key(refType, refId)] ?? false
     }
@@ -133,18 +139,43 @@ final class ProgressStore: ObservableObject {
     // MARK: - Load
 
     func load(refType: String, refId: String, limit: Int = 20) async {
+        // Ein noch nicht synchronisiertes Vorhaben hat keinen Serververlauf (S-12).
+        guard !OfflineIds.isLocal(refId) else { return }
         let k = key(refType, refId)
         states[k] = .loading
         do {
             let detail = try await appState.loadProgress(refType: refType, refId: refId, limit: limit)
             states[k] = .loaded(detail)
+            staleRefs.remove(k)
             appendedEntries[k] = []
             pageOverride[k] = nil
             loadMoreError[k] = nil
+            cacheDetail(detail, refType: refType, refId: refId)
             recomputeReentryVisibility(refType: refType, refId: refId)
         } catch {
-            states[k] = .failed(Self.mapError(error))
+            let mapped = Self.mapError(error)
+            // Offline: zuletzt geladenen Verlauf aus dem lokalen Bestand zeigen (als veraltet markiert);
+            // ohne Cache bleibt es bei `.failed(.offline)`.
+            if mapped == .offline, let cached = cachedDetail(refType: refType, refId: refId) {
+                states[k] = .loaded(cached)
+                staleRefs.insert(k)
+                appendedEntries[k] = []
+                pageOverride[k] = nil
+                recomputeReentryVisibility(refType: refType, refId: refId)
+            } else {
+                states[k] = .failed(mapped)
+            }
         }
+    }
+
+    private func cacheDetail(_ detail: ProgressDetail, refType: String, refId: String) {
+        guard let snapshots = appState.offlineSnapshots, let scope = appState.offline?.activeScope else { return }
+        snapshots.saveProgressDetail(detail, refType: refType, refId: refId, scope: scope)
+    }
+
+    private func cachedDetail(refType: String, refId: String) -> ProgressDetail? {
+        guard let snapshots = appState.offlineSnapshots, let scope = appState.offline?.activeScope else { return nil }
+        return snapshots.loadProgressDetail(refType: refType, refId: refId, scope: scope)
     }
 
     /// Erneuter Ladeversuch nach einem Fehler (UI: "Erneut versuchen") —
@@ -230,15 +261,48 @@ final class ProgressStore: ObservableObject {
     /// Divergenzquelle). Bewusste Design-Entscheidung: Korrektheit vor
     /// optimistischem UI-Update; A2 kann bei Bedarf zusätzlich einen
     /// optimistischen Zwischenzustand in der View selbst halten.
+    ///
+    /// Offline-Modus (S-12): Fuer Todos/Themen wird der Zwischenstand bei lokalem Vorhaben, bekannter
+    /// Offline-Lage oder `ProgressError.offline` in die Outbox eingereiht (mit dem bestehenden Token) und als
+    /// lokaler `ProgressEntry` (`local-…`) zurueckgegeben - der Composer leert dann das Feld. Fuer andere
+    /// Bezuege (Kontakt) bleibt der Fehler und die Eingabe im Dialog erhalten.
     @discardableResult
     func addEntry(refType: String, refId: String, bodyHTML: String, source: String) async throws -> ProgressEntry {
         let k = key(refType, refId)
         let token = clientTokenForPendingEntry(refType: refType, refId: refId)
+        let canQueue = Self.isQueueable(refType)
+        if canQueue, appState.offline != nil,
+           OfflineIds.isLocal(refId) || appState.offlineStatus?.isOffline == true {
+            return try enqueueOffline(refType: refType, refId: refId, bodyHTML: bodyHTML, source: source, token: token)
+        }
         do {
             let entry = try await appState.addProgressEntry(refType: refType, refId: refId, bodyHTML: bodyHTML,
                                                               source: source, clientToken: token)
             pendingEntryTokens.removeValue(forKey: k)
             await load(refType: refType, refId: refId)
+            return entry
+        } catch {
+            let mapped = Self.mapError(error)
+            if mapped == .offline, canQueue, appState.offline != nil {
+                return try enqueueOffline(refType: refType, refId: refId, bodyHTML: bodyHTML, source: source, token: token)
+            }
+            throw mapped
+        }
+    }
+
+    /// Nur Todos und Themen werden offline eingereiht (Entscheidung: Kontakt-Zwischenstaende nicht).
+    private static func isQueueable(_ refType: String) -> Bool { refType == "todo" || refType == "topic" }
+
+    private func enqueueOffline(refType: String, refId: String, bodyHTML: String, source: String,
+                                token: String) throws -> ProgressEntry {
+        guard let off = appState.offline else { throw ProgressError.offline }
+        do {
+            try OfflineLocalValidation.validateProgress(bodyHTML: bodyHTML)
+            let payload = PendingProgressPayload(ref: off.resolveRef(refType: refType, refId: refId),
+                                                 bodyHTML: bodyHTML, source: source)
+            let entry = try off.enqueueProgress(payload, clientToken: token)
+            pendingEntryTokens.removeValue(forKey: key(refType, refId))
+            appState.showToast(AppState.offlineSavedToast)
             return entry
         } catch {
             throw Self.mapError(error)
@@ -247,6 +311,10 @@ final class ProgressStore: ObservableObject {
 
     @discardableResult
     func updateEntry(refType: String, refId: String, entryId: String, bodyHTML: String) async throws -> ProgressEntry {
+        // Lokaler (noch nicht uebertragener) Eintrag: Outbox bearbeiten statt Server (S-12).
+        if OfflineIds.isLocal(entryId) {
+            return try updateLocalEntry(refType: refType, refId: refId, entryId: entryId, bodyHTML: bodyHTML)
+        }
         do {
             let entry = try await appState.updateProgressEntry(entryId: entryId, bodyHTML: bodyHTML)
             await load(refType: refType, refId: refId)
@@ -257,12 +325,76 @@ final class ProgressStore: ObservableObject {
     }
 
     func deleteEntry(refType: String, refId: String, entryId: String) async throws {
+        if OfflineIds.isLocal(entryId) {
+            guard let off = appState.offline else { throw ProgressError.entryGone }
+            do { _ = try off.discardLocal(entityId: entryId) }
+            catch OfflineOutboxError.notFound { throw ProgressError.entryGone }
+            catch { throw Self.mapError(error) }
+            return
+        }
         do {
             try await appState.deleteProgressEntry(entryId: entryId)
             await load(refType: refType, refId: refId)
         } catch {
             throw Self.mapError(error)
         }
+    }
+
+    private func updateLocalEntry(refType: String, refId: String, entryId: String, bodyHTML: String) throws -> ProgressEntry {
+        guard let off = appState.offline, let status = appState.offlineStatus,
+              let uuid = UUID(uuidString: String(entryId.dropFirst(OfflineIds.localPrefix.count))),
+              case .progress(let existing)? = status.intents.payload(uuid) else { throw ProgressError.entryGone }
+        do {
+            try OfflineLocalValidation.validateProgress(bodyHTML: bodyHTML)
+            let updated = PendingProgressPayload(ref: existing.ref, bodyHTML: bodyHTML, source: existing.source)
+            try off.updateLocal(entityId: entryId, payload: .progress(updated))
+        } catch OfflineOutboxError.notFound {
+            throw ProgressError.entryGone
+        } catch {
+            throw Self.mapError(error)
+        }
+        guard let entry = pendingEntries(refType: refType, refId: refId).first(where: { $0.id == entryId }) else {
+            throw ProgressError.entryGone
+        }
+        return entry
+    }
+
+    // MARK: - Offline: ausstehende Zwischenstaende
+
+    /// Ausstehende (noch nicht uebertragene) Zwischenstaende dieses Vorhabens als lokale `ProgressEntry`
+    /// (`id` = `local-…`), neueste zuerst. Quelle: Spiegel der Outbox in `AppState`.
+    func pendingEntries(refType: String, refId: String) -> [ProgressEntry] {
+        let changes = appState.offlineChanges
+        let byId = Dictionary(changes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var result: [(Int64, ProgressEntry)] = []
+        for c in changes where !c.isTombstone {
+            if case .acknowledged = c.state { continue }
+            guard case .progress(let p) = c.payload else { continue }
+            let target: (refType: String, refId: String)
+            switch p.ref {
+            case .server(let t, let id): target = (t, id)
+            case .local(let parentId):
+                guard let parent = byId[parentId] else { continue }
+                if case .acknowledged(let serverId, _) = parent.state { target = (parent.kind.refType, serverId) }
+                else { target = (parent.kind.refType, parent.localEntityId) }
+            }
+            guard target.refType == refType, target.refId == refId,
+                  let entry = c.localProgressEntry(resolvedRef: target) else { continue }
+            result.append((c.seq, entry))
+        }
+        return result.sorted { $0.0 > $1.0 }.map(\.1)
+    }
+
+    /// Logout: In-Memory-Zustand des vorherigen Nutzers verwerfen.
+    func clearOnLogout() {
+        states = [:]
+        appendedEntries = [:]
+        isLoadingMore = []
+        loadMoreError = [:]
+        reentryVisible = [:]
+        staleRefs = []
+        pendingEntryTokens = [:]
+        pageOverride = [:]
     }
 
     // MARK: - Wiedereinstiegskarte: Dismiss-Handling
@@ -303,6 +435,11 @@ final class ProgressStore: ObservableObject {
     /// verändert, nur für die Store-Konsumenten in eine einheitliche Form bringt.
     static func mapError(_ error: Error) -> ProgressError {
         if let e = error as? ProgressError { return e }
+        if let e = error as? OfflineError {
+            // Verstaendlicher deutscher Text (Validierung, lokaler Speicherfehler, Eintrag noch nicht synchronisiert).
+            return .server(e.errorDescription ?? "Die Aktion konnte nicht ausgeführt werden.")
+        }
+        if error is OfflineOutboxError { return .entryGone }
         if let e = error as? APIError {
             switch e {
             case .unauthorized: return .server("Sitzung abgelaufen — bitte neu anmelden.")

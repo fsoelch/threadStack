@@ -24,6 +24,14 @@ struct LockScreenView: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
 
+            if let notice = state.lockNotice {
+                // Offline-Hinweis (Icon + Text); erscheint nach einem Start ohne Netz.
+                Label(notice, systemImage: "wifi.slash")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+            }
+
             if let error {
                 Text(error)
                     .font(.caption).foregroundStyle(.red)
@@ -70,6 +78,10 @@ struct LockScreenView: View {
         .alert("Anmeldedaten verwerfen?", isPresented: $showForgetConfirm) {
             Button("Verwerfen", role: .destructive) {
                 state.forgetStoredCredentials()
+                // War der lokale Bestand biometrisch geschuetzt, oeffnet er sich ohne Biometrie nicht:
+                // offline bleibt nur der Hinweis (Sicherheitskonzept), kein Zugang ueber "vergessen".
+                if state.bootedOffline { state.loginNotice = OfflineError.offlineLoginUnavailable.errorDescription }
+                state.lockNotice = nil
                 state.isLocked = false
             }
             Button("Abbrechen", role: .cancel) {}
@@ -90,11 +102,9 @@ struct LockScreenView: View {
         attempting = true
         error = nil
         do {
+            // Die Datenladung nach dem Entsperren uebernimmt ContentView (online: Sync + Laden;
+            // offline gestartet: der lokale Bestand ist bereits angewendet).
             try await state.unlockAndAutoLogin()
-            try? await state.loadAll()
-            await state.loadAiSettings()
-            await state.loadStack()
-            await state.aiLoadDrift()
         } catch let e as KeychainError {
             switch e {
             case .userCancelled:

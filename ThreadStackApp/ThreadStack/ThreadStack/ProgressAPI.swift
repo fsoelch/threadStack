@@ -153,6 +153,12 @@ extension AppState {
         return path
     }
 
+    /// Pfad fuer `POST /progress/:refType/:refId/entries` - vom Offline-Sync-Motor (`OfflineHTTPOperations`) genutzt,
+    /// damit Segment-Encoding und Aufbau an genau einer Stelle liegen.
+    func progressEntriesPath(refType: String, refId: String) -> String {
+        progressPath(["progress", refType, refId, "entries"])
+    }
+
     /// Analog zu `AppState.url(_:)` (private, daher hier nachgebaut statt
     /// wiederverwendet — siehe Datei-Kopfkommentar).
     private func progressAPIURL(_ path: String) throws -> URL {
@@ -172,6 +178,8 @@ extension AppState {
     /// gefordert.
     fileprivate func progressRequest<T: Decodable>(_ method: String, _ path: String,
                                                      body: [String: Any]? = nil) async throws -> T {
+        // Zentraler Guard (S-12): lokale (noch nicht synchronisierte) IDs gehen nie zum Server.
+        if AppState.containsLocalId(path: path) { throw OfflineError.pendingNotSynced }
         var req = URLRequest(url: try progressAPIURL(path))
         req.httpMethod = method
         if let body, !body.isEmpty {
@@ -183,9 +191,14 @@ extension AppState {
         do {
             (data, response) = try await ProgressAPISession.session(for: self).data(for: req)
         } catch {
+            if (error as? URLError)?.code != .cancelled { offline?.reportTransport(success: false) }
             throw ProgressError.offline
         }
-        guard let http = response as? HTTPURLResponse else { throw ProgressError.offline }
+        guard let http = response as? HTTPURLResponse else {
+            offline?.reportTransport(success: false)
+            throw ProgressError.offline
+        }
+        if http.statusCode < 500 { offline?.reportTransport(success: true) }
         if http.statusCode == 401 { throw APIError.unauthorized }
         if http.statusCode >= 400 {
             let errorBody = try? JSONDecoder().decode(ProgressErrorBody.self, from: data)

@@ -1,7 +1,35 @@
 import SwiftUI
 
+/// Texte der Anmeldung im Offline-Modus (rein, testbar).
+enum LoginOfflineTexts {
+    static let reauthTitle = "Bitte neu anmelden"
+    static let accountWarning = "Wenn du dich mit einem anderen Konto anmeldest, gehen die nicht übertragenen Änderungen verloren."
+    static let discardAlertTitle = "Anderes Konto?"
+    static let discardConfirm = "Anmelden und verwerfen"
+    static let cancel = "Abbrechen"
+
+    /// "N Änderungen warten auf die Übertragung." (Singular: "1 Änderung wartet auf die Übertragung.")
+    static func pendingText(_ n: Int) -> String {
+        n == 1 ? "1 Änderung wartet auf die Übertragung." : "\(n) Änderungen warten auf die Übertragung."
+    }
+
+    /// Anmeldung ohne Netz: Transportfehler -> Hinweistext statt technischer Meldung.
+    static func message(for error: Error) -> String {
+        isTransportFailure(error)
+            ? (OfflineError.offlineLoginUnavailable.errorDescription ?? error.localizedDescription)
+            : error.localizedDescription
+    }
+}
+
 struct LoginView: View {
+    /// `.initial`: normale Anmeldung. `.reauth`: erneute Anmeldung als Sheet (Sitzung abgelaufen, Aenderungen
+    /// warten; Benutzername vorbelegt, Warnung bei anderem Konto).
+    enum Mode: Equatable { case initial, reauth }
+
+    var mode: Mode = .initial
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
+    @State private var showDiscardConfirm = false
     @State private var username = ""
     @State private var password = ""
     @State private var error: String?
@@ -24,8 +52,25 @@ struct LoginView: View {
                     }
                     Text("ThreadStack")
                         .font(.title2).fontWeight(.bold)
-                    Text("Melden Sie sich an, um fortzufahren")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                    if mode == .reauth {
+                        Text(LoginOfflineTexts.reauthTitle)
+                            .font(.subheadline).fontWeight(.semibold)
+                        Text(LoginOfflineTexts.pendingText(offline.unsyncedCount))
+                            .font(.subheadline).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                        Text(LoginOfflineTexts.accountWarning)
+                            .font(.footnote).foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    } else {
+                        Text("Melden Sie sich an, um fortzufahren")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    if mode == .initial, let notice = state.loginNotice {
+                        // Icon + Text (nie nur Farbe).
+                        Label(notice, systemImage: "wifi.slash")
+                            .font(.footnote).foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                    }
                 }
 
                 // Server URL hint
@@ -92,24 +137,46 @@ struct LoginView: View {
 
             Spacer()
 
-            Button("Einstellungen") { showSettings = true }
-                .font(.footnote).foregroundStyle(.secondary)
-                .padding(.bottom, 20)
+            if mode == .reauth {
+                Button(LoginOfflineTexts.cancel) { state.reauthRequested = false }
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.bottom, 20)
+            } else {
+                Button("Einstellungen") { showSettings = true }
+                    .font(.footnote).foregroundStyle(.secondary)
+                    .padding(.bottom, 20)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DS.groupedBg)
         .sheet(isPresented: $showSettings) { SettingsURLView() }
+        .onAppear {
+            if mode == .reauth, username.isEmpty { username = state.currentUser?.username ?? "" }
+        }
+        .alert(LoginOfflineTexts.discardAlertTitle, isPresented: $showDiscardConfirm) {
+            Button(LoginOfflineTexts.discardConfirm, role: .destructive) {
+                Task { await doLogin(discardPreviousOfflineScope: true) }
+            }
+            Button(LoginOfflineTexts.cancel, role: .cancel) {}
+        } message: {
+            Text(LoginOfflineTexts.accountWarning)
+        }
     }
 
-    private func doLogin() async {
+    private func doLogin(discardPreviousOfflineScope: Bool = false) async {
         error = nil; loading = true
         defer { loading = false }
         do {
             try await state.login(username: username, password: password,
-                                  rememberWithBiometry: rememberWithBiometry && Keychain.biometryAvailable)
-            try await state.loadAll()
+                                  rememberWithBiometry: rememberWithBiometry && Keychain.biometryAvailable,
+                                  discardPreviousOfflineScope: discardPreviousOfflineScope)
+            // Die erste Datenladung uebernimmt ContentView (bzw. hier im Re-Auth-Sheet der Sync).
+            if mode == .reauth { await state.refreshAfterReauth() }
+        } catch OfflineError.scopeMismatch {
+            // Anderes Konto mit ausstehenden Aenderungen: erst bestaetigen lassen (Daten gehen verloren).
+            showDiscardConfirm = true
         } catch {
-            self.error = error.localizedDescription
+            self.error = LoginOfflineTexts.message(for: error)
         }
     }
 

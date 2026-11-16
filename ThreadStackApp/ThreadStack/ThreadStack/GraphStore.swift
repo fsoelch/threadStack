@@ -38,7 +38,10 @@ final class GraphStore: ObservableObject {
     @Published var stats: GraphStats = GraphStats()
     @Published var isLoading = false
     /// Set when the last load failed but a cached snapshot could be shown instead.
-    @Published var isOffline = false
+    @Published private(set) var isShowingCache = false
+    /// Offline-Modus (P7): einzige Wahrheitsquelle ist der globale Offline-Status; zusaetzlich gilt
+    /// "Cache wird angezeigt" (ein einzelner Graph-Request kann scheitern, ohne dass der globale Status kippt).
+    var isOffline: Bool { isShowingCache || (offlineStatus?.isOffline ?? false) }
     /// User-facing error text when neither a live load nor a cache was available.
     @Published var error: String?
     @Published var lastLoadedAt: Date?
@@ -50,6 +53,8 @@ final class GraphStore: ObservableObject {
     @Published var navigationRequest: GraphNavigationTarget?
 
     private let appState: AppState
+    private weak var offlineStatus: OfflineStatusStore?
+    private var offlineCancellable: AnyCancellable?
 
     private lazy var positionSync: GraphPositionSync = {
         let sync = GraphPositionSync()
@@ -66,6 +71,23 @@ final class GraphStore: ObservableObject {
         self.appState = appState
     }
 
+    /// Kompositionswurzel: leitet den globalen Offline-Status ab (`isOffline`) und stoesst bei Wiederverbindung
+    /// das Nachsenden gepufferter Positionen an (`positionSync.flushNow()`).
+    func bindOfflineStatus(_ status: OfflineStatusStore) {
+        offlineStatus = status
+        offlineCancellable = status.$connection
+            .removeDuplicates()
+            .sink { [weak self] connection in
+                guard let self else { return }
+                self.objectWillChange.send()
+                if connection == .online {
+                    Task { @MainActor in await self.positionSync.flushNow() }
+                }
+            }
+    }
+
+    private var cacheScope: OfflineScope? { appState.offline?.activeScope }
+
     /// Loads the full graph in a single round trip. Falls back to the last
     /// cached snapshot (see `GraphCache`) if the request fails, so the view
     /// still has something useful to show when offline.
@@ -78,23 +100,23 @@ final class GraphStore: ObservableObject {
             edges = resp.edges
             schema = resp.schema
             stats = resp.stats
-            isOffline = false
+            isShowingCache = false
             error = nil
             lastLoadedAt = Date()
-            GraphCache.save(resp)
+            GraphCache.save(resp, scope: cacheScope)
             // A reconnect might have brought back moves queued while offline.
             await positionSync.flushNow()
         } catch let loadError {
-            if let cached = GraphCache.load() {
+            if let cached = GraphCache.load(scope: cacheScope) {
                 nodes = cached.nodes
                 edges = cached.edges
                 schema = cached.schema
                 stats = cached.stats
-                isOffline = true
+                isShowingCache = true
                 error = nil
             } else {
                 nodes = []; edges = []
-                isOffline = false
+                isShowingCache = false
                 error = loadError.localizedDescription
             }
         }
@@ -133,8 +155,8 @@ final class GraphStore: ObservableObject {
     func clearOnLogout() {
         nodes = []; edges = []
         schema = GraphSchema(); stats = GraphStats()
-        isOffline = false; error = nil; positionSaveError = nil
+        isShowingCache = false; error = nil; positionSaveError = nil
         lastLoadedAt = nil
-        GraphCache.clear()
+        GraphCache.clear(scope: cacheScope)
     }
 }
