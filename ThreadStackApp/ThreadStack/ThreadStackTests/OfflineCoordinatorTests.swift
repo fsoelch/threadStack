@@ -679,4 +679,42 @@ struct OfflineCoordinatorTests {
         #expect(r.status.activity == .paused(.serverUnsupported))
         #expect(r.status.items.count == 1)                      // Aenderung bleibt gespeichert
     }
+
+    @Test func staleRefreshDoesNotClearHandleOfNewerRefresh() async throws {
+        let r = try CoordRig()
+        r.gateFetch = true
+        let a = Task { await r.coordinator.refresh(.manual) }
+        await r.settle { r.fetchGate != nil }
+        let gateA = try #require(r.fetchGate)
+        r.fetchGate = nil
+        r.coordinator.deactivateAndPurgeAll()
+        try r.coordinator.activate(user: r.user, serverURL: "https://example.test", biometricProtected: false)
+        let b = Task { await r.coordinator.refresh(.manual) }
+        await r.settle { r.fetchGate != nil }
+        #expect(r.fetchCount == 2)
+        gateA.resume()                      // A endet, darf das Handle von B nicht loeschen
+        await a.value
+        let c = Task { await r.coordinator.refresh(.manual) }
+        for _ in 0..<30 { await Task.yield() }
+        #expect(r.fetchCount == 2)          // C teilt B
+        r.gateFetch = false
+        r.fetchGate?.resume()
+        await b.value; await c.value
+        #expect(r.fetchCount == 2)
+        #expect(r.applied.count == 1)       // nur B wurde angewendet
+    }
+
+    @Test func pauseSetByCoordinatorIsStickyInEngineToo() async throws {
+        let r = try CoordRig()
+        r.fetchError = APIError.unauthorized
+        r.renewResult = nil
+        await r.coordinator.refresh(.manual)
+        #expect(r.status.activity == .paused(.needsReauth))
+        _ = try r.coordinator.enqueueTodo(T.todo("A"), clientToken: nil, capturedAt: nil)
+        r.http.requests.removeAll()
+        r.fetchError = nil
+        await r.coordinator.refresh(.manual)
+        #expect(!r.http.requests.contains { $0.method == "POST" })   // Motor bleibt pausiert
+        #expect(r.status.activity == .paused(.needsReauth))
+    }
 }

@@ -16,6 +16,12 @@ enum SyncRunOutcome: Equatable {
     case nothingToDo
 }
 
+extension OfflineTexts {
+    // Eigene Erweiterung (OfflineUIComponents.swift wird parallel von P5 angepasst).
+    /// Neuanlage, deren Ziel der Server inzwischen geloescht hat (410 CLIENT_TOKEN_TARGET_GONE).
+    static let alreadyGoneOnServer = "Der Eintrag wurde auf dem Server bereits gelöscht."
+}
+
 final class OfflineSyncEngine {
     static let backoffSteps: [TimeInterval] = [5, 10, 20, 40, 80, 160, 300]
     static let capabilityCacheDuration: TimeInterval = 600
@@ -71,7 +77,7 @@ final class OfflineSyncEngine {
         notBefore = nil
     }
 
-    /// Verbindungswechsel: Backoff, Capability-Cache und technische Pausen (storageProblem) zuruecksetzen.
+    /// Aufrufer: Coordinator bei jedem Verbindungswechsel (offline<->online) und bei `.manual`. Setzt Backoff, Capability-Cache und technische Pausen (storageProblem) zuruecksetzen.
     func resetBackoff() {
         consecutiveFailures = 0
         notBefore = nil
@@ -94,7 +100,8 @@ final class OfflineSyncEngine {
         let task = Task { await self.performRun() }
         currentRun = task
         let outcome = await task.value
-        currentRun = nil
+        // Nur das EIGENE Handle freigeben (ein inzwischen gestarteter neuer Lauf bleibt teilbar).
+        if currentRun == task { currentRun = nil }
         return outcome
     }
 
@@ -161,21 +168,38 @@ final class OfflineSyncEngine {
             case .transient:
                 return .finish(stopTransient(retryAfter: nil))
             case .unauthorized:
-                if renewedOnce { return .finish(pause(.needsReauth, sticky: true)) }
+                if renewedOnce { return .finish(pause(.needsReauth)) }
                 renewedOnce = true
                 if let outcome = await renewOrPause() { return .finish(outcome) }
             }
         }
     }
 
+    /// Einzige Entscheidung nach einem expliziten Renewal (Motor UND Coordinator): nil = Sitzung gehoert zum
+    /// Scope, Wiederholung erlaubt; sonst der Pausengrund (kein Renewal -> needsReauth, fremdes Konto -> userMismatch).
+    static func classifyRenewal(_ user: AppUser?, scopeUserId: String) -> OfflinePauseReason? {
+        guard let user else { return .needsReauth }
+        return user.id == scopeUserId ? nil : .userMismatch
+    }
+
     /// Fuehrt das explizite Renewal aus. nil = erfolgreich (Aufrufer wiederholt einmal); sonst Abbruchergebnis.
     private func renewOrPause() async -> SyncRunOutcome? {
         let user = await renewSession()
         if stopped { return .nothingToDo }
-        guard let user else { return pause(.needsReauth, sticky: true) }
-        guard user.id == scopeUserId else { return pause(.userMismatch) }
+        if let reason = Self.classifyRenewal(user, scopeUserId: scopeUserId) { return pause(reason) }
         return nil
     }
+
+    /// Klebrige Pausen bleiben bis `resume()` (needsReauth) bzw. `resetBackoff()` (storageProblem) bestehen;
+    /// userMismatch und serverUnsupported werden bei jedem Lauf neu bewertet.
+    static func isSticky(_ reason: OfflinePauseReason) -> Bool {
+        reason == .needsReauth || reason == .storageProblem
+    }
+
+    /// Einzige Stelle, an der Pausen gesetzt werden - auch fuer den Coordinator (haelt Motor und
+    /// `OfflineStatusStore.activity` konsistent; die Klebrigkeit folgt immer `isSticky`).
+    @discardableResult
+    func setPaused(_ reason: OfflinePauseReason) -> SyncRunOutcome { pause(reason) }
 
     // MARK: Auswahl
 
@@ -216,7 +240,7 @@ final class OfflineSyncEngine {
     /// (der Eintrag wurde z.B. waehrenddessen verworfen).
     private func mutate(_ body: () throws -> Void) -> Step? {
         do { try body() }
-        catch let e as OfflineStorageError where e == .writeFailed { return .finish(pause(.storageProblem, sticky: true)) }
+        catch let e as OfflineStorageError where e == .writeFailed { return .finish(pause(.storageProblem)) }
         catch { /* notFound/invalidState: Eintrag wurde zwischenzeitlich veraendert */ }
         return nil
     }
@@ -271,7 +295,7 @@ final class OfflineSyncEngine {
             case .alreadyGone:
                 // Server kennt das Ziel nicht mehr. Die Outbox kann ein nicht-quittiertes Element nur ueber
                 // markFailed entfernen; ein Tombstone verschwindet dabei, sonst bleibt der Text kopierbar sichtbar.
-                let reason = PendingFailureReason.rejected(message: "Der Eintrag wurde auf dem Server bereits gelöscht.")
+                let reason = PendingFailureReason.rejected(message: OfflineTexts.alreadyGoneOnServer)
                 if let step = mutate({ try outbox.markFailed(id: id, reason: reason) }) { return step }
                 return .continueRun
             case .rejected(let reason):
@@ -281,20 +305,13 @@ final class OfflineSyncEngine {
                 if let step = mutate({ try outbox.markTransientFailure(id: id, countAttempt: true) }) { return step }
                 return .finish(stopTransient(retryAfter: retryAfter))
             case .unauthorized:
-                if renewedOnce {
-                    _ = mutate { try outbox.markTransientFailure(id: id, countAttempt: false) }
-                    return .finish(pause(.needsReauth, sticky: true))
-                }
+                // Zweites 401 nach Renewal: wie fehlgeschlagenes Renewal behandeln (keine Schleife).
+                let paused: SyncRunOutcome?
+                if renewedOnce { paused = pause(.needsReauth) } else { paused = await renewOrPause() }
                 renewedOnce = true
-                let user = await renewSession()
-                if stopped { return .finish(.nothingToDo) }
-                guard let user else {
-                    _ = mutate { try outbox.markTransientFailure(id: id, countAttempt: false) }
-                    return .finish(pause(.needsReauth, sticky: true))
-                }
-                guard user.id == scopeUserId else {
-                    _ = mutate { try outbox.markTransientFailure(id: id, countAttempt: false) }
-                    return .finish(pause(.userMismatch))
+                if let paused {
+                    if !stopped { _ = mutate { try outbox.markTransientFailure(id: id, countAttempt: false) } }
+                    return .finish(paused)
                 }
                 // gleichen Eintrag genau einmal wiederholen (state ist inFlight -> erneut erlaubt)
                 continue
@@ -308,34 +325,30 @@ final class OfflineSyncEngine {
         case alreadyGone, rejected(PendingFailureReason), transient(TimeInterval?), unauthorized
     }
 
+    private func outcome<T>(_ r: SyncCallResult<T>, ack: (T) -> (serverId: String, object: AcknowledgedObject)) -> CreateOutcome {
+        switch r {
+        case .success(let v):
+            let a = ack(v)
+            return .success(serverId: a.serverId, object: a.object)
+        case .alreadyGone: return .alreadyGone
+        case .rejected(let reason): return .rejected(reason)
+        case .transient(let after): return .transient(after)
+        case .unauthorized: return .unauthorized
+        }
+    }
+
     private func send(_ change: PendingChange, progressTarget: (refType: String, refId: String)?) async -> CreateOutcome {
         switch change.payload {
         case .todo(let p):
-            switch await api.createTodo(p, clientToken: change.clientToken, capturedAt: change.capturedAt) {
-            case .success(let t): return .success(serverId: t.id, object: .todo(t))
-            case .alreadyGone: return .alreadyGone
-            case .rejected(let r): return .rejected(r)
-            case .transient(let r): return .transient(r)
-            case .unauthorized: return .unauthorized
-            }
+            return outcome(await api.createTodo(p, clientToken: change.clientToken, capturedAt: change.capturedAt)) { ($0.id, .todo($0)) }
         case .topic(let p):
-            switch await api.createTopic(p, clientToken: change.clientToken, capturedAt: change.capturedAt) {
-            case .success(let t): return .success(serverId: t.id, object: .topic(meetingId: p.meetingId, t))
-            case .alreadyGone: return .alreadyGone
-            case .rejected(let r): return .rejected(r)
-            case .transient(let r): return .transient(r)
-            case .unauthorized: return .unauthorized
+            return outcome(await api.createTopic(p, clientToken: change.clientToken, capturedAt: change.capturedAt)) {
+                ($0.id, .topic(meetingId: p.meetingId, $0))
             }
         case .progress(let p):
             guard let target = progressTarget else { return .rejected(.rejected(message: nil)) }
-            switch await api.addProgressEntry(refType: target.refType, refId: target.refId, bodyHTML: p.bodyHTML,
-                                              source: p.source, clientToken: change.clientToken) {
-            case .success(let e): return .success(serverId: e.id, object: .progressEntry(e))
-            case .alreadyGone: return .alreadyGone
-            case .rejected(let r): return .rejected(r)
-            case .transient(let r): return .transient(r)
-            case .unauthorized: return .unauthorized
-            }
+            return outcome(await api.addProgressEntry(refType: target.refType, refId: target.refId, bodyHTML: p.bodyHTML,
+                                                      source: p.source, clientToken: change.clientToken)) { ($0.id, .progressEntry($0)) }
         }
     }
 
@@ -385,10 +398,18 @@ final class OfflineSyncEngine {
                 if let step = mutate({ try outbox.markTransientFailure(id: id, countAttempt: true) }) { return step }
                 return .finish(stopTransient(retryAfter: retryAfter))
             case .unauthorized:
-                if renewedOnce { return .finish(pause(.needsReauth, sticky: true)) }
+                // Gleiche Entscheidung wie beim Anlegen (Eintrag bleibt quittiert, nur Versuch nicht zaehlen).
+                let paused: SyncRunOutcome?
+                if renewedOnce { paused = pause(.needsReauth) } else { paused = await renewOrPause() }
                 renewedOnce = true
-                if let outcome = await renewOrPause() { return .finish(outcome) }
+                if let paused {
+                    if !stopped { _ = mutate { try outbox.markTransientFailure(id: id, countAttempt: false) } }
+                    return .finish(paused)
+                }
             }
+        }
+        if rounds >= Self.maxFollowUpRounds {
+            Self.log.info("follow-up rounds exhausted for change \(id.uuidString)")
         }
         return .continueRun
     }
@@ -436,8 +457,8 @@ final class OfflineSyncEngine {
         return .stoppedTransient(retryAt: at)
     }
 
-    private func pause(_ reason: OfflinePauseReason, sticky: Bool = false) -> SyncRunOutcome {
-        if sticky { stickyPause = reason }
+    private func pause(_ reason: OfflinePauseReason) -> SyncRunOutcome {
+        if Self.isSticky(reason) { stickyPause = reason }
         publish(.paused(reason))
         Self.log.info("sync paused")
         return .paused(reason)

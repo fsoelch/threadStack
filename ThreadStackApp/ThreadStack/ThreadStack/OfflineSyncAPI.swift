@@ -225,10 +225,12 @@ final class OfflineSyncAPI {
         return false
     }
 
-    /// ISO-8601 mit `.withInternetDateTime` (Vertrag).
-    static func isoString(_ date: Date) -> String {
+    /// ISO-8601 mit `.withInternetDateTime` (Vertrag); Formatter einmal angelegt (Erzeugen ist teuer).
+    private static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
-        return f.string(from: date)
-    }
+        return f
+    }()
+
+    static func isoString(_ date: Date) -> String { isoFormatter.string(from: date) }
 }

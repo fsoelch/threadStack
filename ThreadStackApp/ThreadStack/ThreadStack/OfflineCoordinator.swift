@@ -23,6 +23,12 @@ struct OfflineHostOperations {
     var onPendingChanged: ([PendingChange]) -> Void
 }
 
+extension OfflineTexts {
+    // Eigene Erweiterung (OfflineUIComponents.swift wird parallel von P5 angepasst).
+    /// Outbox-Datei war nicht lesbar: sie wurde gesichert (nie still geloescht), es geht leer weiter.
+    static let outboxUnreadable = "Gespeicherte Änderungen konnten nicht gelesen werden. Die Datei wurde gesichert."
+}
+
 final class OfflineCoordinator {
     static let probeInterval: TimeInterval = 8
     static let probeTimeout: TimeInterval = 5
@@ -48,6 +54,9 @@ final class OfflineCoordinator {
     private var lastServerData: ServerDataSet?
     private var isActive = true
     private var generation = 0
+
+    /// Grund fuer "offline", wenn der Pfad selbst nichts anderes sagt: Pfad fehlt -> noNetwork, sonst Server nicht erreichbar.
+    private var currentOfflineReason: OfflineReason { connectivity.isPathSatisfied ? .serverUnreachable : .noNetwork }
 
     private var refreshTask: Task<Void, Never>?
     private var probeLoopTask: Task<Void, Never>?
@@ -95,7 +104,7 @@ final class OfflineCoordinator {
             tearDown()
             try attach(scope: scope)
         }
-        status.connection = .offline(connectivity.isPathSatisfied ? .serverUnreachable : .noNetwork)
+        status.connection = .offline(currentOfflineReason)
         startProbeLoopIfNeeded()
         guard let snapshot = snapshots.loadSnapshot(scope: scope) else { return false }
         lastServerData = snapshot.data
@@ -106,8 +115,11 @@ final class OfflineCoordinator {
         return true
     }
 
-    /// Nutzer hat sich (erneut) angemeldet. Anderes Konto/anderer Server mit ausstehenden Aenderungen:
-    /// ohne Bestaetigung `scopeMismatch`, mit Bestaetigung wird der alte Bestand komplett verworfen.
+    /// Nutzer hat sich (erneut) angemeldet. Verglichen wird nur die Nutzer-ID gegen den Marker/aktiven Scope
+    /// (die Signatur enthaelt keine Server-URL): Anderes Konto mit ausstehenden Aenderungen -> ohne Bestaetigung
+    /// `scopeMismatch`, mit Bestaetigung wird der alte Bestand komplett verworfen. Gleiche Nutzer-ID auf einem
+    /// ANDEREN Server wird hier nicht erkannt; `activate` legt dafuer einen eigenen Scope an (alter Scope bleibt
+    /// bis Logout/Purge unberuehrt, es werden nie Daten vermischt).
     func userDidAuthenticate(_ user: AppUser, discardPreviousScopeConfirmed: Bool) throws {
         guard let marker = snapshots.loadMarker() else {
             if let s = activeScope, s.userId != user.id { try discardScope(s, confirmed: discardPreviousScopeConfirmed) }
@@ -175,7 +187,7 @@ final class OfflineCoordinator {
             ob = try OfflineOutbox(scope: scope, store: files, now: now)
         } catch OfflineStorageError.corruptQuarantined {
             // Datei wurde gesichert (nie still geloescht); mit leerer Outbox weiterarbeiten, Nutzer informieren.
-            status.storageProblemMessage = "Gespeicherte Änderungen konnten nicht gelesen werden. Die Datei wurde gesichert."
+            status.storageProblemMessage = OfflineTexts.outboxUnreadable
             ob = try OfflineOutbox(scope: scope, store: files, now: now)
         } catch {
             status.storageProblemMessage = OfflineError.localStorageFailed.errorDescription
@@ -228,9 +240,11 @@ final class OfflineCoordinator {
         status.intents = intents
     }
 
+    /// Nutzeraktion (Erneut senden, Zuordnen, Als Todo uebernehmen): sofort synchronisieren. `.manual` setzt den
+    /// Backoff zurueck - der Nutzer hat den Eintrag ausdruecklich angestossen.
     private func kickSync() {
         guard isActive else { return }
-        Task { await self.refresh(.reconnect) }
+        Task { await self.refresh(.manual) }
     }
 
     private func outboxChanged() {
@@ -274,7 +288,7 @@ final class OfflineCoordinator {
         if success {
             if status.isOffline, isActive { Task { await self.refresh(.reconnect) } }
         } else if !status.isOffline {
-            setConnection(.offline(connectivity.isPathSatisfied ? .serverUnreachable : .noNetwork))
+            setConnection(.offline(currentOfflineReason))
         }
     }
 
@@ -283,10 +297,11 @@ final class OfflineCoordinator {
         let wasOffline = status.isOffline
         status.connection = new
         if new == .online {
+            // Verbindungswechsel: Backoff, Capability-Cache und technische Pause zuruecksetzen.
             engine?.resetBackoff()
             probeLoopTask?.cancel(); probeLoopTask = nil
         } else {
-            if !wasOffline { engine?.resetBackoff() }
+            if !wasOffline { engine?.resetBackoff() }   // Verbindungswechsel online -> offline
             startProbeLoopIfNeeded()
         }
         Self.log.info("connection changed, offline=\(new != .online)")
@@ -321,13 +336,16 @@ final class OfflineCoordinator {
 
     // MARK: Refresh
 
-    /// Gleichzeitige Aufrufe teilen sich eine Task.
+    /// Gleichzeitige Aufrufe teilen sich eine Task. Der Ausloeser eines zweiten Aufrufers wird verworfen:
+    /// er erhaelt das Ergebnis des laufenden Refresh (z.B. wirkt ein `.manual` waehrend eines `.auto` nicht
+    /// mehr als Backoff-Reset). Nach Logout/Kontowechsel (`tearDown`) startet ein neuer Aufruf einen frischen Lauf.
     func refresh(_ trigger: RefreshTrigger) async {
         if let running = refreshTask { await running.value; return }
         let task = Task { await self.performRefresh(trigger) }
         refreshTask = task
         await task.value
-        refreshTask = nil
+        // Nur das EIGENE Handle freigeben: ein nach tearDown gestarteter neuer Refresh bleibt teilbar.
+        if refreshTask == task { refreshTask = nil }
     }
 
     private enum ProbeResult { case offline, online, mismatch }
@@ -362,7 +380,7 @@ final class OfflineCoordinator {
             switch await probe() {
             case .offline: return
             case .mismatch:
-                status.activity = .paused(.userMismatch)
+                engine.setPaused(.userMismatch)
                 return
             case .online: break
             }
@@ -370,10 +388,10 @@ final class OfflineCoordinator {
         }
         // Nie Daten/Aenderungen eines anderen Kontos verarbeiten (Sitzung gehoert nicht zum Scope).
         if let user = host.currentUser(), user.id != scope.userId {
-            status.activity = .paused(.userMismatch)
+            engine.setPaused(.userMismatch)
             return
         }
-        if trigger == .manual { engine.resetBackoff() }
+        if trigger == .manual { engine.resetBackoff() }   // ausdrueckliche Nutzeraktion: sofort erneut versuchen
 
         // 1. Warteschlange abarbeiten
         let outcome = await engine.runOnce()
@@ -397,7 +415,7 @@ final class OfflineCoordinator {
         guard valid() else { return }
         // Sicherheitsnetz: Daten nur uebernehmen, wenn die Sitzung noch zum Scope gehoert.
         if let user = host.currentUser(), user.id != scope.userId {
-            status.activity = .paused(.userMismatch)
+            engine.setPaused(.userMismatch)
             return
         }
 
@@ -430,22 +448,20 @@ final class OfflineCoordinator {
     /// Fehler beim Abruf: Transportfehler -> offline (nichts ueberschreiben); 401 -> einmal erneuern und wiederholen.
     private func recoverFetch(after error: Error, scope: OfflineScope) async -> ServerDataSet? {
         if isTransportFailure(error) {
-            setConnection(.offline(connectivity.isPathSatisfied ? .serverUnreachable : .noNetwork))
+            setConnection(.offline(currentOfflineReason))
             return nil
         }
         if let api = error as? APIError, case .unauthorized = api {
-            guard let user = await host.renewSession() else {
-                status.activity = .paused(.needsReauth)
-                return nil
-            }
-            guard user.id == scope.userId else {
-                status.activity = .paused(.userMismatch)
+            // Pausen laufen ausschliesslich ueber den Motor (`setPaused`); gleiche Renewal-Entscheidung wie dort.
+            let user = await host.renewSession()
+            if let reason = OfflineSyncEngine.classifyRenewal(user, scopeUserId: scope.userId) {
+                engine?.setPaused(reason)
                 return nil
             }
             engine?.resume()
             do { return try await host.fetchServerData() }
             catch {
-                if isTransportFailure(error) { setConnection(.offline(connectivity.isPathSatisfied ? .serverUnreachable : .noNetwork)) }
+                if isTransportFailure(error) { setConnection(.offline(currentOfflineReason)) }
                 return nil
             }
         }
@@ -491,7 +507,7 @@ final class OfflineCoordinator {
             guard let parent = ob.changes.first(where: { $0.id == pid }) else { throw OfflineError.pendingNotSynced }
             target = (parent.kind.refType, parent.localEntityId)
         case .parentGone:
-            throw OfflineError.validation("Das Vorhaben existiert nicht mehr.")
+            throw OfflineError.validation(PendingFailureReason.refGone.userMessage)
         }
         let change = try mapStorage { try ob.enqueueProgress(p, clientToken: clientToken, capturedAt: nil) }
         guard let entry = change.localProgressEntry(resolvedRef: target) else { throw OfflineError.localStorageFailed }
