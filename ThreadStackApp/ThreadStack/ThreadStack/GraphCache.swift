@@ -3,7 +3,7 @@ import Foundation
 /// Persists the last successfully loaded graph snapshot to disk so the Graph
 /// view can show a "stale but useful" state when the device is offline.
 ///
-/// Offline-Modus (Paket P7): Der Cache liegt jetzt im geschuetzten, je Server
+/// Offline-Modus: Der Cache liegt jetzt im geschuetzten, je Server
 /// und Nutzer getrennten Offline-Bestand (`UserScopedFileStore`, Namespace
 /// "Offline", Datei `graph_cache`): `.completeFileProtection`, vom Backup
 /// ausgeschlossen, gehasht je Scope. Beim Logout loescht

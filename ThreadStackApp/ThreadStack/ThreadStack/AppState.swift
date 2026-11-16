@@ -9,7 +9,7 @@ enum APIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidURL:    return "Ungültige Server-URL. Bitte in Einstellungen prüfen."
-        case .network:       return "Keine Verbindung – dein Inhalt bleibt im Dialog erhalten. Bitte versuche es erneut, sobald du wieder online bist."
+        case .network:       return OfflineError.notAvailableOffline.errorDescription
         case .unauthorized:  return "Sitzung abgelaufen — bitte neu anmelden."
         case .server(let m): return m
         }
@@ -172,10 +172,10 @@ final class AppState: ObservableObject {
     // von der Kompositionswurzel (`ThreadStackApp.swift`).
     weak var graphStore: GraphStore?
     /// Wie `graphStore`: schwache Rueckreferenz fuer Logout-Reset und das
-    /// Nachladen nach quittierten Zwischenstaenden (Offline-Modus, P7).
+    /// Nachladen nach quittierten Zwischenstaenden (Offline-Modus).
     weak var progressStore: ProgressStore?
 
-    // MARK: Offline-Modus (Paket P7, Kompositionswurzel setzt diese Referenzen)
+    // MARK: Offline-Modus (Kompositionswurzel setzt diese Referenzen)
 
     /// Kompositionswurzel-Referenzen (`attachOffline`). `nil` in Tests/Vorschauen ohne Offline-Modus:
     /// dann verhaelt sich AppState wie vor dem Offline-Modus.
@@ -194,11 +194,11 @@ final class AppState: ObservableObject {
     /// Impuls der Kompositionswurzel: LoginView im Modus "erneute Anmeldung" als Sheet zeigen.
     @Published var reauthRequested = false
     /// Hinweis fuer LoginView/LockScreen nach einem Start ohne Netz (Story 2).
-    @Published var loginNotice: String?
+    @Published private(set) var loginNotice: String?
     /// Hinweis auf dem Lock-Screen nach einem Start ohne Netz (UX S2).
-    @Published var lockNotice: String?
+    @Published private(set) var lockNotice: String?
     /// Der Start fand den Server nicht erreichbar vor (steuert u.a. "Anmeldedaten vergessen" im Lock-Screen).
-    @Published var bootedOffline = false
+    @Published private(set) var bootedOffline = false
     /// `true`, sobald nach Anmeldung/Start die erste Datenladung erfolgt ist (ContentView laedt dann nicht erneut).
     private(set) var hasCompletedInitialLoad = false
     /// Szene aktiv (Auto-Refresh laeuft nur dann, F7).
@@ -291,14 +291,11 @@ final class AppState: ObservableObject {
         } catch let urlError as URLError where urlError.code != .cancelled {
             // Offline-Modus (S-12): Transportfehler einheitlich als `APIError.network` mit verstaendlichem
             // Text melden und den Verbindungszustand an den Coordinator weitergeben.
-            offline?.reportTransport(success: false)
+            reportTransportOutcome(response: nil, error: urlError)
             throw APIError.network
         }
-        guard let http = response as? HTTPURLResponse else {
-            offline?.reportTransport(success: false)
-            throw APIError.network
-        }
-        if http.statusCode < 500 { offline?.reportTransport(success: true) }
+        reportTransportOutcome(response: response, error: nil)
+        guard let http = response as? HTTPURLResponse else { throw APIError.network }
         if http.statusCode == 401 {
             let canRenew = allowSessionRenewal && !Self.sessionRenewalExemptPaths.contains(path)
             if canRenew, await attemptSessionRenewal() {
@@ -326,6 +323,17 @@ final class AppState: ObservableObject {
         return req
     }
 
+    /// Meldet dem Coordinator, ob ein Request den Server erreicht hat (Antwort < 500) oder am Transport
+    /// gescheitert ist. Abbrueche (`.cancelled`) und 5xx sagen nichts ueber die Verbindung.
+    func reportTransportOutcome(response: URLResponse?, error: Error?) {
+        if let error {
+            if (error as? URLError)?.code != .cancelled { offline?.reportTransport(success: false) }
+            return
+        }
+        guard let http = response as? HTTPURLResponse else { offline?.reportTransport(success: false); return }
+        if http.statusCode < 500 { offline?.reportTransport(success: true) }
+    }
+
     static func containsLocalId(path: String) -> Bool {
         let beforeQuery = path.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? path
         return beforeQuery.split(separator: "/").contains { OfflineIds.isLocal(String($0)) }
@@ -342,7 +350,7 @@ final class AppState: ObservableObject {
         return false
     }
 
-    /// Transport fuer den Sync-Motor (P3): OHNE transparentes 401-Auto-Renewal, HTTP-Fehlerstatus kommt als
+    /// Transport fuer den Sync-Motor: OHNE transparentes 401-Auto-Renewal, HTTP-Fehlerstatus kommt als
     /// normale Antwort zurueck. Pfade relativ zu `/api`. Transportfehler werden geworfen.
     func performSyncRequest(method: String, path: String, body: [String: Any]?,
                             timeout: TimeInterval) async throws -> (Data, HTTPURLResponse) {
@@ -420,38 +428,64 @@ final class AppState: ObservableObject {
 
     func checkSession() async throws {
         let user: AppUser = try await request("GET", "/me")
-        currentUser = user
-        activateOfflineSession(for: user)
+        try await adoptAuthenticatedSession(user, onMismatch: .keepHidden)
     }
 
-    /// `discardPreviousOfflineScope`: Nutzer hat die Warnung beim Kontowechsel bestaetigt (Story 10/12).
-    /// Ohne Bestaetigung wirft die Anmeldung eines ANDEREN Kontos bei ausstehenden Aenderungen
-    /// `OfflineError.scopeMismatch` - es wird dann weder `currentUser` gesetzt noch der alte Bestand angefasst.
-    func login(username: String, password: String, rememberWithBiometry: Bool = false,
-               discardPreviousOfflineScope: Bool = false) async throws {
-        let user: AppUser = try await request("POST", "/login",
-                                              body: ["username": username, "password": password])
+    /// POST /login ohne Seiteneffekte auf den Zustand; liefert den angemeldeten Nutzer.
+    private func serverLogin(username: String, password: String) async throws -> AppUser {
+        try await request("POST", "/login", body: ["username": username, "password": password])
+    }
+
+    /// Wie ein bestehender Offline-Bestand mit einem anderen Konto umgeht, das sich anmeldet.
+    enum MismatchPolicy {
+        /// Bestand des anderen Kontos bleibt unveraendert auf dem Geraet, ist aber unsichtbar (neuer Scope);
+        /// er wird beim naechsten Logout geloescht. Fuer Start/Entsperren, wo kein Dialog moeglich ist.
+        case keepHidden
+        /// Anmeldung abbrechen (`OfflineError.scopeMismatch`), damit der Nutzer erst bestaetigt. Nur fuer die
+        /// ausdrueckliche Anmeldung.
+        case reject
+    }
+
+    /// Einziger Weg, einen am Server bestaetigten Nutzer zu uebernehmen (Start, Entsperren, Anmeldung):
+    /// Kontowechsel pruefen, `currentUser` setzen, fluechtige Zugangsdaten verwerfen, Offline-Scope aktivieren.
+    /// `beforeActivation` laeuft nach der Annahme des Nutzers, aber vor der Aktivierung (Marker braucht den
+    /// aktuellen Keychain-Stand).
+    private func adoptAuthenticatedSession(_ user: AppUser, discardConfirmed: Bool = false,
+                                           onMismatch: MismatchPolicy,
+                                           beforeActivation: () -> Void = {}) async throws {
         if let offline {
             do {
-                try offline.userDidAuthenticate(user, discardPreviousScopeConfirmed: discardPreviousOfflineScope)
+                try offline.userDidAuthenticate(user, discardPreviousScopeConfirmed: discardConfirmed)
             } catch OfflineError.scopeMismatch {
-                // Die frisch angelegte Serversitzung gehoert zum fremden Konto: best-effort beenden.
-                _ = try? await requestOK("POST", "/logout")
-                throw OfflineError.scopeMismatch
+                if onMismatch == .reject {
+                    // Die frisch angelegte Serversitzung gehoert zum fremden Konto: best-effort beenden.
+                    _ = try? await requestOK("POST", "/logout")
+                    throw OfflineError.scopeMismatch
+                }
             }
         }
         currentUser = user
         offlineUnlockCredentials = nil
         loginNotice = nil
-        if rememberWithBiometry {
-            do {
-                try Keychain.save(username: username, password: password)
-                hasStoredCredentials = true
-            } catch {
-                // Speichern fehlgeschlagen ist nicht fatal — Login selbst war erfolgreich
+        beforeActivation()
+        activateOfflineSession(for: user)
+    }
+
+    /// `discardPreviousOfflineScope`: Nutzer hat die Warnung beim Kontowechsel bestaetigt (Story 10/12).
+    func login(username: String, password: String, rememberWithBiometry: Bool = false,
+               discardPreviousOfflineScope: Bool = false) async throws {
+        let user = try await serverLogin(username: username, password: password)
+        try await adoptAuthenticatedSession(user, discardConfirmed: discardPreviousOfflineScope,
+                                            onMismatch: .reject) {
+            if rememberWithBiometry {
+                do {
+                    try Keychain.save(username: username, password: password)
+                    hasStoredCredentials = true
+                } catch {
+                    // Speichern fehlgeschlagen ist nicht fatal — Login selbst war erfolgreich
+                }
             }
         }
-        activateOfflineSession(for: user)
     }
 
     func logout() async throws {
@@ -503,10 +537,7 @@ final class AppState: ObservableObject {
         switch probe {
         case .valid(let user):
             // Cookie noch gueltig - kein Re-Login noetig.
-            try? offline?.userDidAuthenticate(user, discardPreviousScopeConfirmed: false)
-            currentUser = user
-            activateOfflineSession(for: user)
-            offlineUnlockCredentials = nil
+            try await adoptAuthenticatedSession(user, onMismatch: .keepHidden)
             lockNotice = nil
             isLocked = false
             return .online
@@ -535,8 +566,7 @@ final class AppState: ObservableObject {
         }
         offlineUnlockCredentials = creds
         lockNotice = nil
-        deferredOnlineLoadsPending = true
-        hasCompletedInitialLoad = true
+        didOpenLocalState()
         isLocked = false
         return .offline
     }
@@ -563,24 +593,37 @@ final class AppState: ObservableObject {
     /// während die App läuft, siehe dort). Im Offline-Start zuerst `offlineUnlockCredentials`
     /// (kein zweiter Biometrie-Prompt direkt nach der Wiederverbindung).
     func tryServerReLogin() async -> Bool {
-        guard hasStoredCredentials || offlineUnlockCredentials != nil else { return false }
-        do {
-            let creds = try offlineUnlockCredentials
-                ?? credentialLoader("Sitzung am Server erneuern")
-            // Reine Sitzungserneuerung: Offline-Scope bleibt unberuehrt (Nutzer-ID-Pruefung macht der Sync-Motor).
-            currentUser = try await request("POST", "/login",
-                                            body: ["username": creds.username, "password": creds.password])
-            offlineUnlockCredentials = nil
-            return true
-        } catch {
-            return false
-        }
+        await renewSessionUser() != nil
     }
 
     /// Explizites Renewal fuer den Sync-Motor (Story 10): liefert den Nutzer der neuen Sitzung oder `nil`.
     func renewSessionForSync() async -> AppUser? {
-        guard await tryServerReLogin() else { return nil }
-        return currentUser
+        await renewSessionUser()
+    }
+
+    /// Reine Sitzungserneuerung: Offline-Scope bleibt unberuehrt (die Nutzer-ID-Pruefung macht der Sync-Motor).
+    /// `currentUser` wird bewusst auf den tatsaechlich angemeldeten Nutzer gesetzt - bei fremdem Konto greift
+    /// dadurch die Scope-Pruefung des Coordinators und es werden keine Daten vermischt.
+    private func renewSessionUser() async -> AppUser? {
+        guard hasStoredCredentials || offlineUnlockCredentials != nil else { return nil }
+        do {
+            let creds = try offlineUnlockCredentials ?? credentialLoader("Sitzung am Server erneuern")
+            let user = try await serverLogin(username: creds.username, password: creds.password)
+            currentUser = user
+            offlineUnlockCredentials = nil
+            return user
+        } catch {
+            return nil
+        }
+    }
+
+    /// "Anmeldedaten vergessen" im Lock-Screen. War der Start offline, oeffnet sich der (biometrisch
+    /// geschuetzte) lokale Bestand dadurch NICHT: es bleibt der Hinweis, dass die Anmeldung Netz braucht.
+    func forgetStoredCredentialsFromLockScreen() {
+        forgetStoredCredentials()
+        if bootedOffline { loginNotice = OfflineError.offlineLoginUnavailable.errorDescription }
+        lockNotice = nil
+        isLocked = false
     }
 
     func forgetStoredCredentials() {
@@ -803,49 +846,32 @@ final class AppState: ObservableObject {
                      isTodo: Bool = false, snoozedUntil: String? = nil) async throws -> Topic {
         let payload = PendingTopicPayload(meetingId: meetingId, title: title, descriptionHTML: description,
                                           isTodo: isTodo, snoozedUntil: snoozedUntil)
-        if let offline {
-            try OfflineLocalValidation.validate(payload)
-            if offlineStatus?.isOffline == true {
-                return try enqueueTopicLocally(offline, payload, clientToken: nil, capturedAt: nil)
-            }
-        }
-        let token = UUID().uuidString
-        let firstAttempt = Date()
         var body: [String: Any] = ["title": title, "description": description, "isTodo": isTodo]
         if let s = snoozedUntil { body["snoozedUntil"] = s }
-        if offline != nil { body["clientToken"] = token }
-        let path = "/meetings/\(meetingId)/topics"
-        do {
-            let (data, http) = try await performRequest("POST", path, body: body)
-            if http.statusCode >= 500 { throw APIError.network }
-            if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
-            let t = try decoder.decode(Topic.self, from: data)
-            if let i = meetings.firstIndex(where: { $0.id == meetingId }) { meetings[i].topics.append(t) }
-            return t
-        } catch let error where shouldEnqueueAfter(error) {
-            guard let offline else { throw error }
-            return try enqueueTopicLocally(offline, payload, clientToken: token, capturedAt: firstAttempt)
+        let t: Topic = try await postCreate("/meetings/\(meetingId)/topics", body: body,
+                                            validate: { try OfflineLocalValidation.validate(payload) },
+                                            enqueue: { off, token, at in
+            try self.enqueueTopicLocally(off, payload, clientToken: token, capturedAt: at)
+        })
+        if !OfflineIds.isLocal(t.id), let i = meetings.firstIndex(where: { $0.id == meetingId }) {
+            meetings[i].topics.append(t)
         }
+        return t
     }
 
     func updateTopic(meetingId: String, id: String,
                      title: String, description: String,
                      done: Bool, result: String, resultDate: String,
                      isTodo: Bool, snoozedUntil: String?) async throws {
-        var id = id
-        if OfflineIds.isLocal(id) {
-            guard let offline else { throw OfflineError.pendingNotSynced }
-            switch offline.resolveRef(refType: "topic", refId: id) {
-            case .server(_, let serverId): id = serverId
-            case .local:
-                let p = PendingTopicPayload(meetingId: meetingId, title: title, descriptionHTML: description,
-                                            isTodo: isTodo, snoozedUntil: snoozedUntil)
-                try OfflineLocalValidation.validate(p)
-                try updateLocalEntity(offline, entityId: id, payload: .topic(p))
-                rescheduleLocalNotification(id: "topic-\(meetingId)-\(id)", title: title, snoozedUntil: snoozedUntil)
-                return
-            }
+        let target = try localTarget(refType: "topic", id: id)
+        if let offline = target.local {
+            let p = PendingTopicPayload(meetingId: meetingId, title: title, descriptionHTML: description,
+                                        isTodo: isTodo, snoozedUntil: snoozedUntil)
+            try OfflineLocalValidation.validate(p)
+            try updateLocalEntity(offline, entityId: id, payload: .topic(p))
+            return
         }
+        let id = target.id
         try await requestOK("PUT", "/meetings/\(meetingId)/topics/\(id)", body: [
             "title": title, "description": description, "done": done,
             "result": result, "resultDate": resultDate,
@@ -859,17 +885,13 @@ final class AppState: ObservableObject {
     }
 
     func deleteTopic(meetingId: String, id: String) async throws {
-        var id = id
-        if OfflineIds.isLocal(id) {
-            guard let offline else { throw OfflineError.pendingNotSynced }
-            switch offline.resolveRef(refType: "topic", refId: id) {
-            case .server(_, let serverId): id = serverId
-            case .local:
-                try discardLocalEntity(offline, entityId: id)
-                NotificationScheduler.shared.cancel(id: "topic-\(meetingId)-\(id)")
-                return
-            }
+        let target = try localTarget(refType: "topic", id: id)
+        if let offline = target.local {
+            try discardLocalEntity(offline, entityId: id)
+            NotificationScheduler.shared.cancel(id: "topic-\(meetingId)-\(id)")
+            return
         }
+        let id = target.id
         try await requestOK("DELETE", "/meetings/\(meetingId)/topics/\(id)")
         let fresh: [Meeting] = try await request("GET", "/meetings")
         meetings = overlaid(meetings: fresh)
@@ -941,48 +963,30 @@ final class AppState: ObservableObject {
     func createTodoReturning(title: String, description: String, snoozedUntil: String? = nil, dueDate: String? = nil, isPrivate: Bool = false) async throws -> TodoItem {
         let payload = PendingTodoPayload(title: title, descriptionHTML: description, snoozedUntil: snoozedUntil,
                                          dueDate: dueDate, isPrivate: isPrivate)
-        if let offline {
-            try OfflineLocalValidation.validate(payload)
-            if offlineStatus?.isOffline == true {
-                return try enqueueTodoLocally(offline, payload, clientToken: nil, capturedAt: nil)
-            }
-        }
-        let token = UUID().uuidString
-        let firstAttempt = Date()
         var body: [String: Any] = ["title": title, "description": description, "isPrivate": isPrivate]
         if let s = snoozedUntil { body["snoozedUntil"] = s }
         if let d = dueDate     { body["dueDate"]     = d }
-        if offline != nil { body["clientToken"] = token }
-        do {
-            let (data, http) = try await performRequest("POST", "/todos", body: body)
-            if http.statusCode >= 500 { throw APIError.network }
-            if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
-            let t = try decoder.decode(TodoItem.self, from: data)
-            todos.append(t)
-            return t
-        } catch let error where shouldEnqueueAfter(error) {
-            guard let offline else { throw error }
-            return try enqueueTodoLocally(offline, payload, clientToken: token, capturedAt: firstAttempt)
-        }
+        let t: TodoItem = try await postCreate("/todos", body: body,
+                                               validate: { try OfflineLocalValidation.validate(payload) },
+                                               enqueue: { off, token, at in
+            try self.enqueueTodoLocally(off, payload, clientToken: token, capturedAt: at)
+        })
+        if !OfflineIds.isLocal(t.id) { todos.append(t) }
+        return t
     }
 
     func updateTodo(id: String, title: String, description: String,
                     done: Bool, result: String, resultDate: String,
                     snoozedUntil: String?, dueDate: String?, isPrivate: Bool = false) async throws {
-        var id = id
-        if OfflineIds.isLocal(id) {
-            guard let offline else { throw OfflineError.pendingNotSynced }
-            switch offline.resolveRef(refType: "todo", refId: id) {
-            case .server(_, let serverId): id = serverId
-            case .local:
-                let p = PendingTodoPayload(title: title, descriptionHTML: description, snoozedUntil: snoozedUntil,
-                                           dueDate: dueDate, isPrivate: isPrivate)
-                try OfflineLocalValidation.validate(p)
-                try updateLocalEntity(offline, entityId: id, payload: .todo(p))
-                rescheduleLocalNotification(id: "todo-\(id)", title: title, snoozedUntil: snoozedUntil, isPrivate: isPrivate)
-                return
-            }
+        let target = try localTarget(refType: "todo", id: id)
+        if let offline = target.local {
+            let p = PendingTodoPayload(title: title, descriptionHTML: description, snoozedUntil: snoozedUntil,
+                                       dueDate: dueDate, isPrivate: isPrivate)
+            try OfflineLocalValidation.validate(p)
+            try updateLocalEntity(offline, entityId: id, payload: .todo(p))
+            return
         }
+        let id = target.id
         try await requestOK("PUT", "/todos/\(id)", body: [
             "title": title, "description": description, "done": done,
             "result": result, "resultDate": resultDate,
@@ -1030,17 +1034,13 @@ final class AppState: ObservableObject {
     }
 
     func deleteTodo(id: String) async throws {
-        var id = id
-        if OfflineIds.isLocal(id) {
-            guard let offline else { throw OfflineError.pendingNotSynced }
-            switch offline.resolveRef(refType: "todo", refId: id) {
-            case .server(_, let serverId): id = serverId
-            case .local:
-                try discardLocalEntity(offline, entityId: id)
-                NotificationScheduler.shared.cancel(id: "todo-\(id)")
-                return
-            }
+        let target = try localTarget(refType: "todo", id: id)
+        if let offline = target.local {
+            try discardLocalEntity(offline, entityId: id)
+            NotificationScheduler.shared.cancel(id: "todo-\(id)")
+            return
         }
+        let id = target.id
         try await requestOK("DELETE", "/todos/\(id)")
         todos.removeAll { $0.id == id }
         NotificationScheduler.shared.cancel(id: "todo-\(id)")
@@ -1753,9 +1753,13 @@ final class AppState: ObservableObject {
                             body: ["page_token": pageToken, "length": length])
     }
 
-    // MARK: - Offline-Modus (Paket P7: Kompositionswurzel, Host-Operationen, Fassade, Boot-Ablauf)
+    // MARK: - Offline-Modus (Kompositionswurzel, Host-Operationen, Fassade, Boot-Ablauf)
 
     static let offlineLockHint = "Offline – du kannst auf deinen letzten Stand zugreifen."
+    /// Meldung bei manuellem Aktualisieren ohne Verbindung: "Keine Verbindung – Stand vom 15.11., 14:32."
+    static func offlineRefreshText(dataAsOf: Date?) -> String {
+        "Keine Verbindung – \(OfflineDataAsOfFormatter.label(for: dataAsOf))."
+    }
     static let allSyncedToast = "Alle Änderungen übertragen."
     static let offlineSavedToast = "Offline gespeichert – wird übertragen, sobald du wieder online bist."
 
@@ -1851,9 +1855,7 @@ final class AppState: ObservableObject {
         let probe = pathSatisfied() ? await probeSession(timeout: Self.bootProbeTimeout) : .unreachable
         switch probe {
         case .valid(let user):
-            try? offline?.userDidAuthenticate(user, discardPreviousScopeConfirmed: false)
-            currentUser = user
-            activateOfflineSession(for: user)
+            try? await adoptAuthenticatedSession(user, onMismatch: .keepHidden)
             await completeAuthentication(trigger: .coldStart)
             return .online
         case .noSession:
@@ -1872,8 +1874,7 @@ final class AppState: ObservableObject {
                     return .login
                 }
                 if enterOffline(marker: marker) {
-                    deferredOnlineLoadsPending = true
-                    hasCompletedInitialLoad = true
+                    didOpenLocalState()
                     return .offline
                 }
             }
@@ -1886,6 +1887,13 @@ final class AppState: ObservableObject {
             loginNotice = OfflineError.offlineLoginUnavailable.errorDescription
             return .login
         }
+    }
+
+    /// Lokaler Bestand wurde (ohne Server) geoeffnet: Erstladung gilt als erledigt, KI-Einstellungen und
+    /// Serie werden beim ersten Online-Refresh nachgeholt.
+    private func didOpenLocalState() {
+        deferredOnlineLoadsPending = true
+        hasCompletedInitialLoad = true
     }
 
     private func routeWithoutSession() -> BootRoute {
@@ -1924,7 +1932,45 @@ final class AppState: ObservableObject {
 
     // MARK: Fassade fuer lokale Neuanlagen (S-12)
 
-    /// Transportfehler, 5xx (in `createTopic/TodoReturning` zu `.network` gemacht) oder nicht decodierbare Antwort:
+    /// Ziel einer Mutation auf `id`: normale Server-ID (auch ueber einen Alias aufgeloest) oder - falls der
+    /// Eintrag noch lokal ist - der Coordinator, ueber den bearbeitet/verworfen wird. Ohne Offline-Modus
+    /// ist eine lokale ID nicht synchronisiert (`pendingNotSynced`).
+    private func localTarget(refType: String, id: String) throws -> (id: String, local: OfflineCoordinator?) {
+        guard OfflineIds.isLocal(id) else { return (id, nil) }
+        guard let offline else { throw OfflineError.pendingNotSynced }
+        switch offline.resolveRef(refType: refType, refId: id) {
+        case .server(_, let serverId): return (serverId, nil)
+        case .local: return (id, offline)
+        }
+    }
+
+    /// Gemeinsamer Neuanlage-Ablauf fuer Todo und Thema (S-12): lokale Vorabpruefung; bekannt offline ->
+    /// einreihen; sonst POST mit neuem `clientToken`. Bei Transportfehler, 5xx oder nicht decodierbarer Antwort
+    /// (Ergebnis unklar) wird mit demselben Token und der Zeit des ersten Versuchs eingereiht. Sonstige Fehler
+    /// (4xx, Sitzung) werden wie bei `request` geworfen.
+    private func postCreate<T: Decodable>(_ path: String, body: [String: Any],
+                                          validate: () throws -> Void,
+                                          enqueue: (OfflineCoordinator, _ token: String?, _ at: Date?) throws -> T) async throws -> T {
+        if let offline {
+            try validate()
+            if offlineStatus?.isOffline == true { return try enqueue(offline, nil, nil) }
+        }
+        let token = UUID().uuidString
+        let firstAttempt = Date()
+        var body = body
+        if offline != nil { body["clientToken"] = token }
+        do {
+            let (data, http) = try await performRequest("POST", path, body: body)
+            if http.statusCode >= 500 { throw APIError.network }
+            if http.statusCode >= 400 { throw mapGenericError(data: data, status: http.statusCode) }
+            return try decoder.decode(T.self, from: data)
+        } catch let error where shouldEnqueueAfter(error) {
+            guard let offline else { throw error }
+            return try enqueue(offline, token, firstAttempt)
+        }
+    }
+
+    /// Transportfehler, 5xx (in `postCreate` zu `.network` gemacht) oder nicht decodierbare Antwort:
     /// Ergebnis unklar -> mit demselben Token einreihen. 4xx und `.invalidURL`/`.unauthorized` werden geworfen.
     private func shouldEnqueueAfter(_ error: Error) -> Bool {
         if case APIError.network = error { return true }
@@ -1935,8 +1981,6 @@ final class AppState: ObservableObject {
                                     clientToken: String?, capturedAt: Date?) throws -> TodoItem {
         let item = try off.enqueueTodo(p, clientToken: clientToken, capturedAt: capturedAt)
         if !todos.contains(where: { $0.id == item.id }) { todos.append(item) }
-        rescheduleLocalNotification(id: "todo-\(item.id)", title: item.title, snoozedUntil: p.snoozedUntil,
-                                    isPrivate: p.isPrivate)
         showToast(Self.offlineSavedToast)
         return item
     }
@@ -1948,8 +1992,6 @@ final class AppState: ObservableObject {
            !meetings[i].topics.contains(where: { $0.id == topic.id }) {
             meetings[i].topics.append(topic)
         }
-        rescheduleLocalNotification(id: "topic-\(p.meetingId)-\(topic.id)", title: topic.title,
-                                    snoozedUntil: p.snoozedUntil)
         showToast(Self.offlineSavedToast)
         return topic
     }
@@ -1964,13 +2006,6 @@ final class AppState: ObservableObject {
         catch OfflineOutboxError.notFound { throw OfflineError.pendingNotSynced }
     }
 
-    /// Lokale Erinnerung (`todo-<localId>` bzw. `topic-<meetingId>-<localId>`): nur in der Zukunft, sonst storniert.
-    private func rescheduleLocalNotification(id: String, title: String, snoozedUntil: String?, isPrivate: Bool = false) {
-        var fireAt: Date?
-        if let s = snoozedUntil, s.count > 10, let d = parseFlexDate(s), d > Date() { fireAt = d }
-        NotificationScheduler.shared.reschedule(id: id, title: title, fireAt: fireAt, isPrivate: isPrivate)
-    }
-
     // MARK: Overlay
 
     private func overlaid(meetings fresh: [Meeting]) -> [Meeting] {
@@ -1979,6 +2014,12 @@ final class AppState: ObservableObject {
 
     /// Outbox hat sich geaendert: lokale Eintraege neu ueber den aktuellen Serverstand legen.
     private func reapplyOverlay(_ changes: [PendingChange]) {
+        // Thema wurde zum Todo uebernommen (gleiche lokale ID, anderer Typ): alte Themen-Erinnerung stornieren.
+        for old in offlineChanges {
+            guard case .topic(let tp) = old.payload,
+                  let now = changes.first(where: { $0.id == old.id }), case .todo = now.payload else { continue }
+            NotificationScheduler.shared.cancel(id: "topic-\(tp.meetingId)-\(old.localEntityId)")
+        }
         offlineChanges = changes
         let baseTodos = todos.filter { !OfflineIds.isLocal($0.id) }
         var baseMeetings = meetings
@@ -1995,12 +2036,15 @@ final class AppState: ObservableObject {
         syncedSomethingSinceLastRefresh = true
         switch object {
         case .todo(let t):
+            // Einreihen/Bearbeiten plant das Formular (unter der lokalen ID); hier lokal -> Server-ID umziehen.
             NotificationScheduler.shared.cancel(id: "todo-\(localId)")
-            rescheduleLocalNotification(id: "todo-\(t.id)", title: t.title, snoozedUntil: t.snoozedUntil,
-                                        isPrivate: t.isPrivate)
+            NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: t.title,
+                                                    fireAt: Self.snoozeFireDate(t.snoozedUntil), isPrivate: t.isPrivate,
+                                                    notificationTitle: "ThreadStack — Erinnerung")
         case .topic(let meetingId, let t):
             NotificationScheduler.shared.cancel(id: "topic-\(meetingId)-\(localId)")
-            rescheduleLocalNotification(id: "topic-\(meetingId)-\(t.id)", title: t.title, snoozedUntil: t.snoozedUntil)
+            NotificationScheduler.shared.reschedule(id: "topic-\(meetingId)-\(t.id)", title: t.title,
+                                                    fireAt: Self.snoozeFireDate(t.snoozedUntil))
         case .progressEntry(let e):
             if let store = progressStore, store.state(refType: e.refType, refId: e.refId) != .idle {
                 Task { await store.load(refType: e.refType, refId: e.refId) }
@@ -2031,7 +2075,7 @@ final class AppState: ObservableObject {
         if let offline {
             await offline.refresh(showSpinner ? .manual : .auto)
             if showSpinner, let status = offlineStatus, status.isOffline {
-                showToast("Keine Verbindung – \(OfflineDataAsOfFormatter.label(for: status.dataAsOf)).")
+                showToast(Self.offlineRefreshText(dataAsOf: status.dataAsOf))
             }
         } else {
             do { try await loadAll() } catch { /* still */ }
@@ -2048,15 +2092,21 @@ final class AppState: ObservableObject {
     /// Neuinstallation, anderem Gerät oder verpassten Terminen bei App-Start.
     private func resyncSnoozeNotifications() {
         for t in todos {
-            guard let s = t.snoozedUntil, s.count > 10, let d = parseFlexDate(s), d > Date() else { continue }
+            guard let d = Self.snoozeFireDate(t.snoozedUntil) else { continue }
             NotificationScheduler.shared.reschedule(id: "todo-\(t.id)", title: t.title, fireAt: d, isPrivate: t.isPrivate)
         }
         for m in meetings {
             for t in m.topics {
-                guard let s = t.snoozedUntil, s.count > 10, let d = parseFlexDate(s), d > Date() else { continue }
+                guard let d = Self.snoozeFireDate(t.snoozedUntil) else { continue }
                 NotificationScheduler.shared.reschedule(id: "topic-\(m.id)-\(t.id)", title: t.title, fireAt: d)
             }
         }
+    }
+
+    /// Zeitbasierte Schlafen-bis-Angabe (mit Uhrzeit) in der Zukunft, sonst `nil`.
+    private static func snoozeFireDate(_ snoozedUntil: String?) -> Date? {
+        guard let s = snoozedUntil, s.count > 10, let d = parseFlexDate(s), d > Date() else { return nil }
+        return d
     }
 
     /// Startet einen wiederkehrenden Auto-Refresh. Idempotent — vorhandener Timer wird ersetzt.

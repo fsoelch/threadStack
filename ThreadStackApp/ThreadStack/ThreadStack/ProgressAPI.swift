@@ -191,14 +191,11 @@ extension AppState {
         do {
             (data, response) = try await ProgressAPISession.session(for: self).data(for: req)
         } catch {
-            if (error as? URLError)?.code != .cancelled { offline?.reportTransport(success: false) }
+            reportTransportOutcome(response: nil, error: error)
             throw ProgressError.offline
         }
-        guard let http = response as? HTTPURLResponse else {
-            offline?.reportTransport(success: false)
-            throw ProgressError.offline
-        }
-        if http.statusCode < 500 { offline?.reportTransport(success: true) }
+        reportTransportOutcome(response: response, error: nil)
+        guard let http = response as? HTTPURLResponse else { throw ProgressError.offline }
         if http.statusCode == 401 { throw APIError.unauthorized }
         if http.statusCode >= 400 {
             let errorBody = try? JSONDecoder().decode(ProgressErrorBody.self, from: data)

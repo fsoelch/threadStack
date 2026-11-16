@@ -342,8 +342,8 @@ final class ProgressStore: ObservableObject {
 
     private func updateLocalEntry(refType: String, refId: String, entryId: String, bodyHTML: String) throws -> ProgressEntry {
         guard let off = appState.offline, let status = appState.offlineStatus,
-              let uuid = UUID(uuidString: String(entryId.dropFirst(OfflineIds.localPrefix.count))),
-              case .progress(let existing)? = status.intents.payload(uuid) else { throw ProgressError.entryGone }
+              let summaryId = status.summary(forEntityId: entryId)?.id,
+              case .progress(let existing)? = status.intents.payload(summaryId) else { throw ProgressError.entryGone }
         do {
             try OfflineLocalValidation.validateProgress(bodyHTML: bodyHTML)
             let updated = PendingProgressPayload(ref: existing.ref, bodyHTML: bodyHTML, source: existing.source)
@@ -364,25 +364,14 @@ final class ProgressStore: ObservableObject {
     /// Ausstehende (noch nicht uebertragene) Zwischenstaende dieses Vorhabens als lokale `ProgressEntry`
     /// (`id` = `local-…`), neueste zuerst. Quelle: Spiegel der Outbox in `AppState`.
     func pendingEntries(refType: String, refId: String) -> [ProgressEntry] {
-        let changes = appState.offlineChanges
-        let byId = Dictionary(changes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        var result: [(Int64, ProgressEntry)] = []
-        for c in changes where !c.isTombstone {
-            if case .acknowledged = c.state { continue }
-            guard case .progress(let p) = c.payload else { continue }
-            let target: (refType: String, refId: String)
-            switch p.ref {
-            case .server(let t, let id): target = (t, id)
-            case .local(let parentId):
-                guard let parent = byId[parentId] else { continue }
-                if case .acknowledged(let serverId, _) = parent.state { target = (parent.kind.refType, serverId) }
-                else { target = (parent.kind.refType, parent.localEntityId) }
-            }
-            guard target.refType == refType, target.refId == refId,
-                  let entry = c.localProgressEntry(resolvedRef: target) else { continue }
-            result.append((c.seq, entry))
+        guard let status = appState.offlineStatus else { return [] }
+        let changes = Dictionary(appState.offlineChanges.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        // Zuordnung (Alias, wartendes/fehlgeschlagenes Eltern-Vorhaben) liefert der Status (`makeSummaries`);
+        // hier wird sie nicht nachgebaut.
+        return status.pendingProgress(refType: refType, refId: refId).reversed().compactMap { summary in
+            guard let change = changes[summary.id] else { return nil }
+            return change.localProgressEntry(resolvedRef: (refType, refId))
         }
-        return result.sorted { $0.0 > $1.0 }.map(\.1)
     }
 
     /// Logout: In-Memory-Zustand des vorherigen Nutzers verwerfen.

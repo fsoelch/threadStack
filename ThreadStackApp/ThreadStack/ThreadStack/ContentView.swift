@@ -3,7 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject var state: AppState
     @EnvironmentObject var graphStore: GraphStore
-    // Offline-Modus (P7): Status fuer Logout-Warnung und Offline-Sperren der Menueeintraege.
+    // Offline-Modus: Status fuer Logout-Warnung und Offline-Sperren der Menueeintraege.
     @EnvironmentObject var offline: OfflineStatusStore
     @State private var selectedMeetingId: String? = nil
     @State private var selectedView: SidebarItem = .meetings
@@ -11,7 +11,7 @@ struct ContentView: View {
     @State private var showSettings = false
     @State private var showAdmin = false
     @State private var showAiSettings = false
-    // Offline-Modus (P7): gemeinsamer Abmelde-Impuls fuer BEIDE Logout-Stellen (macOS-Menue, iOS-Menue),
+    // Offline-Modus: gemeinsamer Abmelde-Impuls fuer BEIDE Logout-Stellen (macOS-Menue, iOS-Menue),
     // "Aenderungen ansehen" aus der Logout-Warnung.
     @State private var logoutRequested = false
     @State private var showPendingChanges = false
@@ -297,7 +297,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Offline-Integration (P7)
+// MARK: - Offline-Integration
 
 private extension View {
     /// Gemeinsame Offline-Bausteine beider Layouts: Abmelde-Bestaetigung (an beiden Menues ueber EINE Funktion),

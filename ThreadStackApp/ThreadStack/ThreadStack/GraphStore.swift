@@ -39,7 +39,7 @@ final class GraphStore: ObservableObject {
     @Published var isLoading = false
     /// Set when the last load failed but a cached snapshot could be shown instead.
     @Published private(set) var isShowingCache = false
-    /// Offline-Modus (P7): einzige Wahrheitsquelle ist der globale Offline-Status; zusaetzlich gilt
+    /// Offline-Modus: einzige Wahrheitsquelle ist der globale Offline-Status; zusaetzlich gilt
     /// "Cache wird angezeigt" (ein einzelner Graph-Request kann scheitern, ohne dass der globale Status kippt).
     var isOffline: Bool { isShowingCache || (offlineStatus?.isOffline ?? false) }
     /// User-facing error text when neither a live load nor a cache was available.

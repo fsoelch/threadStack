@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import ThreadStack
 
-//  Paket P7: Logout-Purge (Story 12), Graph-Cache im geschuetzten Scope, abgeleitetes GraphStore.isOffline,
+//  Logout-Purge (Story 12), Graph-Cache im geschuetzten Scope, abgeleitetes GraphStore.isOffline,
 //  In-Memory-Zustand nach dem Abmelden.
 
 private func sampleGraph() throws -> GraphResponse {
@@ -18,8 +18,8 @@ private func sampleGraph() throws -> GraphResponse {
 struct OfflineLogoutTests {
     typealias T = OfflineTestSupport
 
-    private func readyRig(pending: Bool) async throws -> P7Rig {
-        let r = try P7Rig()
+    private func readyRig(pending: Bool) async throws -> OfflineAppRig {
+        let r = try OfflineAppRig()
         r.serverTodos = [T.serverTodo("s1")]
         await r.coordinator.refresh(.manual)
         if pending {
@@ -116,7 +116,7 @@ struct OfflineLogoutTests {
         cfg.protocolClasses = [OfflineRigURLProtocol.self]
         let state = AppState(session: URLSession(configuration: cfg))
         state.serverURL = "https://\(host)"
-        state.currentUser = P7Rig.user
+        state.currentUser = OfflineAppRig.user
         try await state.logout()
         #expect(state.currentUser == nil)
     }
@@ -156,7 +156,7 @@ struct OfflineLogoutTests {
     }
 
     @Test func graphStoreIsOfflineFollowsGlobalStatusAndCache() async throws {
-        let r = try P7Rig()
+        let r = try OfflineAppRig()
         let graph = GraphStore(appState: r.state)
         graph.bindOfflineStatus(r.status)
         #expect(!graph.isOffline)
@@ -167,7 +167,7 @@ struct OfflineLogoutTests {
     }
 
     @Test func graphLoadFallsBackToScopedCacheWhenRequestFails() async throws {
-        let r = try P7Rig()
+        let r = try OfflineAppRig()
         // Eigener Scope-Eintrag im produktiven Offline-Namespace (GraphStore nutzt `GraphCache.defaultStore`).
         guard GraphCache.defaultStore != nil else { return }
         GraphCache.save(try sampleGraph(), scope: r.scope)
@@ -182,7 +182,7 @@ struct OfflineLogoutTests {
     }
 
     @Test func graphLoadWithoutCacheReportsTheErrorInsteadOfEmptyState() async throws {
-        let r = try P7Rig()
+        let r = try OfflineAppRig()
         let graph = GraphStore(appState: r.state)
         GraphCache.clear(scope: r.scope)
         r.failTransport = true

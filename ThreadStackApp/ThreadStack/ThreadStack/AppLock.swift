@@ -77,12 +77,7 @@ struct LockScreenView: View {
         .sheet(isPresented: $showSettings) { SettingsURLView() }
         .alert("Anmeldedaten verwerfen?", isPresented: $showForgetConfirm) {
             Button("Verwerfen", role: .destructive) {
-                state.forgetStoredCredentials()
-                // War der lokale Bestand biometrisch geschuetzt, oeffnet er sich ohne Biometrie nicht:
-                // offline bleibt nur der Hinweis (Sicherheitskonzept), kein Zugang ueber "vergessen".
-                if state.bootedOffline { state.loginNotice = OfflineError.offlineLoginUnavailable.errorDescription }
-                state.lockNotice = nil
-                state.isLocked = false
+                state.forgetStoredCredentialsFromLockScreen()
             }
             Button("Abbrechen", role: .cancel) {}
         } message: {

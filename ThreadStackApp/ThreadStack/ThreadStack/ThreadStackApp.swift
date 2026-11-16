@@ -17,7 +17,7 @@ struct ThreadStackApp: App {
     // Arbeit zur Lesbarkeit/Wartbarkeit: Graph-Zustand analog zu
     // ProgressStore/SummaryStore ausgelagert (siehe GraphStore.swift).
     @StateObject private var graphStore: GraphStore
-    // Offline-Modus (Paket P7, Kompositionswurzel): gemeinsamer Status fuer alle Views (Banner,
+    // Offline-Modus (Kompositionswurzel): gemeinsamer Status fuer alle Views (Banner,
     // Badges, Sperren) und der Coordinator, der Verbindung, Outbox, Sync-Motor und Snapshot steuert.
     // Der Status wird als EnvironmentObject injiziert; alle Sheets erben die Environment-Hierarchie
     // dieser einzigen WindowGroup (es gibt keine weitere Scene / kein eigenes Hosting-Fenster).

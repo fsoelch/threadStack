@@ -10,7 +10,8 @@ enum LoginOfflineTexts {
 
     /// "N Änderungen warten auf die Übertragung." (Singular: "1 Änderung wartet auf die Übertragung.")
     static func pendingText(_ n: Int) -> String {
-        n == 1 ? "1 Änderung wartet auf die Übertragung." : "\(n) Änderungen warten auf die Übertragung."
+        n == 1 ? "\(OfflineCountText.changes(n)) wartet auf die Übertragung."
+               : "\(OfflineCountText.changes(n)) warten auf die Übertragung."
     }
 
     /// Anmeldung ohne Netz: Transportfehler -> Hinweistext statt technischer Meldung.
