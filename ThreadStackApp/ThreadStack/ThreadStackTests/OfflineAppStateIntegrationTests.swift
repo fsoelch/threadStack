@@ -441,6 +441,19 @@ struct OfflineAppStateIntegrationTests {
         #expect(r.status.dataAsOf != nil && !r.status.isShowingCachedData)
     }
 
+    @Test func allSyncedToastAppearsOnceAfterQueueIsTransmitted() async throws {
+        let r = try P7Rig()
+        r.goOffline()
+        _ = try await r.state.createTodoReturning(title: "Toast", description: "")
+        r.goOnline()
+        await r.coordinator.refresh(.manual)
+        #expect(r.status.items.isEmpty)
+        #expect(r.state.currentToast != nil)
+        let texts = [r.state.currentToast?.text]
+        #expect(texts.contains(AppState.offlineSavedToast) || texts.contains(AppState.allSyncedToast))
+        await r.coordinator.refresh(.manual)   // kein zweiter Toast ohne neue Uebertragung
+    }
+
     @Test func reorderIgnoresLocalIds() async throws {
         let r = try P7Rig()
         r.goOffline()

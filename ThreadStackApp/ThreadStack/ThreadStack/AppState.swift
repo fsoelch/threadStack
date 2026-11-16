@@ -205,6 +205,8 @@ final class AppState: ObservableObject {
     var isSceneActive = true
     /// Nach einem Start ohne Netz fehlen KI-Einstellungen/Serie noch: beim ersten Online-Refresh nachladen.
     private var deferredOnlineLoadsPending = false
+    /// Waehrend des laufenden Syncs wurde mindestens ein Eintrag uebertragen (steuert den Abschluss-Toast).
+    private var syncedSomethingSinceLastRefresh = false
 
     var aiIsActive: Bool { aiSettings?.isActive ?? false }
     func aiFeatureEnabled(_ keyPath: KeyPath<AIFeatures, Bool>) -> Bool {
@@ -1754,6 +1756,7 @@ final class AppState: ObservableObject {
     // MARK: - Offline-Modus (Paket P7: Kompositionswurzel, Host-Operationen, Fassade, Boot-Ablauf)
 
     static let offlineLockHint = "Offline – du kannst auf deinen letzten Stand zugreifen."
+    static let allSyncedToast = "Alle Änderungen übertragen."
     static let offlineSavedToast = "Offline gespeichert – wird übertragen, sobald du wieder online bist."
 
     /// Kompositionswurzel: verbindet Coordinator, Status, Snapshot-Speicher und Pfadzustand mit AppState.
@@ -1824,6 +1827,10 @@ final class AppState: ObservableObject {
     }
 
     private func afterOfflineDataApplied() async {
+        if syncedSomethingSinceLastRefresh {
+            syncedSomethingSinceLastRefresh = false
+            if offlineStatus?.items.isEmpty == true { showToast(Self.allSyncedToast) }
+        }
         await aiLoadDrift()
         resyncSnoozeNotifications()
         if deferredOnlineLoadsPending {
@@ -1985,6 +1992,7 @@ final class AppState: ObservableObject {
     /// (Der Austausch lokal -> Server im Bestand erfolgt ueber `reapplyOverlay`.)
     private func offlineChangeAcknowledged(_ change: PendingChange, _ object: AcknowledgedObject) {
         let localId = change.localEntityId
+        syncedSomethingSinceLastRefresh = true
         switch object {
         case .todo(let t):
             NotificationScheduler.shared.cancel(id: "todo-\(localId)")
