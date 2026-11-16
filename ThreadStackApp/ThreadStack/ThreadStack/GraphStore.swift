@@ -86,7 +86,7 @@ final class GraphStore: ObservableObject {
             }
     }
 
-    private var cacheScope: OfflineScope? { appState.offline?.activeScope }
+    private var cacheScope: OfflineScope? { appState.writableOfflineScope }
 
     /// Loads the full graph in a single round trip. Falls back to the last
     /// cached snapshot (see `GraphCache`) if the request fails, so the view

@@ -227,7 +227,10 @@ final class OfflineOutbox {
         try mutate { s in
             let i = try index(of: id, in: s)
             switch s.changes[i].state {
-            case .failed: s.changes[i].state = .pending
+            case .failed(let reason):
+                // L-2: bei Token-Konflikt wuerde derselbe Token erneut kollidieren -> neues Token.
+                if case .tokenConflict = reason { s.changes[i].clientToken = UUID().uuidString }
+                s.changes[i].state = .pending
             case .pending: break
             default: throw OfflineOutboxError.invalidState
             }

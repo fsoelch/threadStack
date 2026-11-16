@@ -50,6 +50,53 @@ struct OfflineLogoutTests {
         #expect(r.server.count(method: "POST", pathPrefix: "/logout") == 1)
     }
 
+    private func plantCookie(_ host: String) {
+        let c = HTTPCookie(properties: [.name: "connect.sid", .value: "secret", .domain: host, .path: "/",
+                                        .secure: "TRUE"])!
+        HTTPCookieStorage.shared.setCookie(c)
+    }
+    private func cookies(_ host: String) -> [HTTPCookie] {
+        HTTPCookieStorage.shared.cookies(for: URL(string: "https://\(host)/api/me")!) ?? []
+    }
+
+    @Test func logoutOfflineClearsSessionCookiesForTheServerURL() async throws {
+        let r = try await readyRig(pending: false)
+        plantCookie(r.host)
+        #expect(!cookies(r.host).isEmpty)
+        r.goOffline()
+        try await r.state.logout()
+        #expect(cookies(r.host).isEmpty)
+    }
+
+    @Test func logoutWithFailedServerCallStillClearsCookies() async throws {
+        let r = try await readyRig(pending: false)
+        plantCookie(r.host)
+        r.override = { req in req.url?.path.hasSuffix("/logout") == true ? .json(500, ["error": "x"]) : nil }
+        try await r.state.logout()
+        #expect(cookies(r.host).isEmpty)
+    }
+
+    @Test func renewalWithForeignAccountFailsClosed() async throws {
+        let r = try await readyRig(pending: false)
+        plantCookie(r.host)
+        r.loggedInUser = AppUser(id: "u2", username: "bob", role: "user")
+        r.state.offlineUnlockCredentials = StoredCredentials(username: "bob", password: "pw")
+        let user = await r.state.renewSessionForSync()
+        #expect(user == nil)
+        #expect(r.state.currentUser?.id == "u1")
+        #expect(cookies(r.host).isEmpty)
+        #expect(r.server.count(method: "POST", pathPrefix: "/logout") == 1)
+    }
+
+    @Test func writableScopeOnlyForMatchingUser() async throws {
+        let r = try await readyRig(pending: false)
+        #expect(r.state.writableOfflineScope == r.scope)
+        r.state.currentUser = AppUser(id: "u2", username: "bob", role: "user")
+        #expect(r.state.writableOfflineScope == nil)
+        r.state.currentUser = nil
+        #expect(r.state.writableOfflineScope == nil)
+    }
+
     @Test func logoutWithPendingChangesDropsThemAfterConfirmation() async throws {
         let r = try await readyRig(pending: true)
         #expect(r.status.unsyncedCount == 1)

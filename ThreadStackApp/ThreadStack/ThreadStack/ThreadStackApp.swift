@@ -25,6 +25,10 @@ struct ThreadStackApp: App {
     private let offlineCoordinator: OfflineCoordinator?
     private let connectivity: ConnectivityMonitor
     @Environment(\.scenePhase) private var scenePhase
+    /// L-3: `.inactive` tritt auch bei System-Prompts (Face ID) auf und darf die Offline-Entsperr-
+    /// Zugangsdaten daher NICHT sofort verwerfen; stattdessen Verwerfen nach 30 min Inaktivitaet.
+    @State private var inactiveDiscardTask: Task<Void, Never>?
+    private static let inactiveDiscardDelay: UInt64 = 30 * 60 * 1_000_000_000
 
     init() {
         // Clear stale NSToolbar configuration from UserDefaults.
@@ -79,6 +83,15 @@ struct ThreadStackApp: App {
                     let active = phase == .active
                     state.isSceneActive = active
                     if phase == .background { state.offlineUnlockCredentials = nil }
+                    inactiveDiscardTask?.cancel()
+                    inactiveDiscardTask = nil
+                    if phase == .inactive {
+                        let appState = state
+                        inactiveDiscardTask = Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: Self.inactiveDiscardDelay)
+                            if !Task.isCancelled { appState.offlineUnlockCredentials = nil }
+                        }
+                    }
                     offlineCoordinator?.scenePhaseChanged(isActive: active)
                 }
         }

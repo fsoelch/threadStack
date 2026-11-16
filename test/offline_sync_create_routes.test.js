@@ -196,3 +196,53 @@ test('Fehlgeschlagene Validierung hinterlaesst kein Mapping', async (t) => {
   assert.equal(r.status, 400);
   assert.equal(count(db, 'client_create_tokens'), 0);
 });
+
+// ── Security-Nachbesserung: Rate-Limit, PK-Race ──
+
+test('Rate-Limit: POST /todos und Topics -> 429 mit Retry-After nach 120 Anfragen', async (t) => {
+  const { agent, db, meetingId } = await boot(t);
+  for (let i = 0; i < 120; i++) {
+    const r = await agent.post('/api/todos').send({ title: `T${i}` });
+    assert.equal(r.status, 201);
+  }
+  const over = await agent.post('/api/todos').send({ title: 'zu viel' });
+  assert.equal(over.status, 429);
+  assert.equal(over.body.code, 'RATE_LIMITED');
+  assert.equal(typeof over.body.error, 'string');
+  assert.ok(Number(over.headers['retry-after']) >= 1);
+  // Topics teilen sich das Limit pro Nutzer
+  const topic = await agent.post(`/api/meetings/${meetingId}/topics`).send({ title: 'x' });
+  assert.equal(topic.status, 429);
+  assert.equal(count(db, 'todos'), 120);
+});
+
+test('Rate-Limit: Nutzer sind unabhaengig voneinander', async (t) => {
+  const { app, db, agent } = await boot(t);
+  const hash = bcrypt.hashSync('pw-other-123', 10);
+  db.prepare('INSERT INTO users(id,username,password_hash,role,created_at) VALUES (?,?,?,?,?)').run('u-other', 'other', hash, 'user', new Date().toISOString());
+  for (let i = 0; i < 120; i++) await agent.post('/api/todos').send({ title: `T${i}` });
+  assert.equal((await agent.post('/api/todos').send({ title: 'x' })).status, 429);
+  const other = await login(request, app, 'other', 'pw-other-123');
+  assert.equal((await other.post('/api/todos').send({ title: 'x' })).status, 201);
+});
+
+test('PK-Konflikt beim parallelen Erst-Request -> Replay (200) statt 500, kein Duplikat', async (t) => {
+  const { agent, db, meetingId } = await boot(t);
+  const clientIdem = require('../lib/client-idempotency');
+  for (const [url, table, tok] of [['/api/todos', 'todos', 'race-todo'], [`/api/meetings/${meetingId}/topics`, 'topics', 'race-topic']]) {
+    const first = await agent.post(url).send({ title: 'A', clientToken: tok });
+    assert.equal(first.status, 201);
+    const before = count(db, table);
+    // Simuliert den Wettlauf: der Vorab-Lookup sieht das Token (noch) nicht, der INSERT kollidiert.
+    const orig = clientIdem.lookupClientToken;
+    let calls = 0;
+    clientIdem.lookupClientToken = (...a) => (calls++ === 0 ? undefined : orig(...a));
+    try {
+      const r = await agent.post(url).send({ title: 'B', clientToken: tok });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.id, first.body.id);
+      assert.equal(r.body.idempotent, true);
+    } finally { clientIdem.lookupClientToken = orig; }
+    assert.equal(count(db, table), before);
+  }
+});

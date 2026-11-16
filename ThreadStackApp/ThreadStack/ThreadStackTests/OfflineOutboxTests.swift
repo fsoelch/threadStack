@@ -261,6 +261,26 @@ struct OfflineOutboxTests {
         #expect(ob.changes[0].state == .pending)
     }
 
+    @Test func retryAfterTokenConflictAssignsNewToken() throws {
+        let (ob, store) = try make(); defer { store.removeAll() }
+        let c = try ob.enqueueTodo(T.todo())
+        let old = ob.changes[0].clientToken
+        _ = try ob.markInFlight(id: c.id)
+        try ob.markFailed(id: c.id, reason: .tokenConflict)
+        try ob.retry(id: c.id)
+        #expect(ob.changes[0].clientToken != old && UUID(uuidString: ob.changes[0].clientToken) != nil)
+    }
+
+    @Test func retryAfterOtherFailureKeepsToken() throws {
+        let (ob, store) = try make(); defer { store.removeAll() }
+        let c = try ob.enqueueTodo(T.todo())
+        let old = ob.changes[0].clientToken
+        _ = try ob.markInFlight(id: c.id)
+        try ob.markFailed(id: c.id, reason: .meetingGone)
+        try ob.retry(id: c.id)
+        #expect(ob.changes[0].clientToken == old)
+    }
+
     @Test func reassignTopicWorksInPendingAndFailed() throws {
         let (ob, store) = try make(); defer { store.removeAll() }
         let c = try ob.enqueueTopic(T.topic())

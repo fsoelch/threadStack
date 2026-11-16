@@ -460,6 +460,7 @@ final class AppState: ObservableObject {
                 if onMismatch == .reject {
                     // Die frisch angelegte Serversitzung gehoert zum fremden Konto: best-effort beenden.
                     _ = try? await requestOK("POST", "/logout")
+                    clearLocalSessionCookies()
                     throw OfflineError.scopeMismatch
                 }
             }
@@ -488,6 +489,25 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Zentrale lokale Sitzungsbereinigung: loescht alle Cookies fuer die Server-URL (Session-Storage UND
+    /// `HTTPCookieStorage.shared`, das ProgressAPI/SummaryAPI nutzen) und leert den URLCache der Session.
+    func clearLocalSessionCookies() {
+        var storages: [HTTPCookieStorage] = [HTTPCookieStorage.shared]
+        if let own = session.configuration.httpCookieStorage, own !== HTTPCookieStorage.shared { storages.append(own) }
+        if let url = try? url("") {
+            for st in storages { for c in st.cookies(for: url) ?? [] { st.deleteCookie(c) } }
+        }
+        session.configuration.urlCache?.removeAllCachedResponses()
+        URLCache.shared.removeAllCachedResponses()
+    }
+
+    /// Einziger Accessor fuer schreibende Cache-Zugriffe (Graph, Progress, ...): liefert den Offline-Scope
+    /// nur, wenn er zum angemeldeten Nutzer gehoert (M-1) - sonst `nil` (nichts schreiben).
+    var writableOfflineScope: OfflineScope? {
+        guard let scope = offline?.activeScope, let user = currentUser, user.id == scope.userId else { return nil }
+        return scope
+    }
+
     func logout() async throws {
         stopAutoRefresh()
         offlineUnlockCredentials = nil
@@ -498,6 +518,9 @@ final class AppState: ObservableObject {
         if !(offlineStatus?.isOffline ?? false) {
             _ = try? await performRequest("POST", "/logout", timeout: 5)
         }
+        // Security (H-1): Das Session-Cookie MUSS lokal verschwinden, auch wenn der Server-Logout nicht
+        // ankam (offline/Fehler) - sonst uebernaehme bootstrap() die Sitzung ohne Passwort/Biometrie.
+        clearLocalSessionCookies()
         currentUser = nil; meetings = []; todos = []; themes = []; knowledgePages = []; contacts = []
         contactCategories = []
         stackFrames = []; stackDepth = 0
@@ -609,6 +632,13 @@ final class AppState: ObservableObject {
         do {
             let creds = try offlineUnlockCredentials ?? credentialLoader("Sitzung am Server erneuern")
             let user = try await serverLogin(username: creds.username, password: creds.password)
+            // Security (M-1): fail-closed bei fremdem Konto (Keychain eines anderen Nutzers) - Sitzung
+            // verwerfen, currentUser unveraendert, damit needsReauth/Re-Auth-Sheet greift.
+            if let current = currentUser, current.id != user.id {
+                _ = try? await performRequest("POST", "/logout", timeout: 5)
+                clearLocalSessionCookies()
+                return nil
+            }
             currentUser = user
             offlineUnlockCredentials = nil
             return user

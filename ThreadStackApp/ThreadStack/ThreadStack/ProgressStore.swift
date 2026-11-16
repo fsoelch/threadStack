@@ -169,12 +169,12 @@ final class ProgressStore: ObservableObject {
     }
 
     private func cacheDetail(_ detail: ProgressDetail, refType: String, refId: String) {
-        guard let snapshots = appState.offlineSnapshots, let scope = appState.offline?.activeScope else { return }
+        guard let snapshots = appState.offlineSnapshots, let scope = appState.writableOfflineScope else { return }
         snapshots.saveProgressDetail(detail, refType: refType, refId: refId, scope: scope)
     }
 
     private func cachedDetail(refType: String, refId: String) -> ProgressDetail? {
-        guard let snapshots = appState.offlineSnapshots, let scope = appState.offline?.activeScope else { return nil }
+        guard let snapshots = appState.offlineSnapshots, let scope = appState.writableOfflineScope else { return nil }
         return snapshots.loadProgressDetail(refType: refType, refId: refId, scope: scope)
     }
 

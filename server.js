@@ -21,6 +21,7 @@ const assignments = require('./lib/contacts/assignments');
 const momentum = require('./lib/momentum');
 const backup = require('./lib/backup');
 const clientIdem = require('./lib/client-idempotency');
+const { createRateLimiter } = require('./lib/rate-limit');
 const { runCoreMigrations, rebuildSearchIndex } = require('./db/schema');
 let summaryScheduler; // wird nach dem Laden von ai/index.js weiter unten gesetzt
 
@@ -211,6 +212,17 @@ function momentumUtcOffsetMinutes(raw) {
   const n = Number(raw);
   return Number.isInteger(n) && n >= -1440 && n <= 1440 ? n : 0;
 }
+
+// Rate-Limit fuer Offline-Outbox-Neuanlagen (POST /todos, POST /meetings/:id/topics).
+// 120 pro 10 min und Nutzer: eine Outbox nach einem Offline-Tag (typisch < 100 Eintraege) laeuft
+// durch, ein Skript/Fehlverhalten kann die DB aber nicht fluten. 429 + Retry-After; der Client
+// klassifiziert 429 als "spaeter erneut" (OfflineSyncAPI.classify).
+const createLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 120,
+  message: 'Zu viele Anfragen. Bitte später erneut versuchen.',
+  code: 'RATE_LIMITED',
+});
 
 const MAX_TITLE = 300;
 const MAX_DESC  = 500_000;
@@ -594,7 +606,7 @@ function archivedFlagsForTopics(topicIds) {
   return result;
 }
 
-app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
+app.post(`${A}/meetings/:id/topics`, requireAuth, createLimiter, (req, res) => {
   const body = req.body || {};
   const tok = clientIdem.parseClientToken(body.clientToken);
   if (!tok.ok) return fail(res, 400, 'INVALID_CLIENT_TOKEN', 'Ungültiges Client-Token.');
@@ -613,16 +625,21 @@ app.post(`${A}/meetings/:id/topics`, requireAuth, (req, res) => {
   const cleanDesc = stripUnsafeHtml(description);
   const id = uid();
   const nowIso = new Date().toISOString();
-  // Parallele Erst-Requests mit demselben Token: der zweite scheitert am PK
-  // (user_id, client_token), die Transaktion rollt komplett zurueck (kein
-  // Duplikat) und der globale Handler antwortet 500. Der Client-Retry trifft
-  // dann den Replay-Pfad oben (200).
-  db.transaction(() => {
+  // Parallele Erst-Requests mit demselben Token (z.B. zweiter Prozess): der zweite scheitert am PK
+  // (user_id, client_token), die Transaktion rollt komplett zurueck (kein Duplikat). Statt 500
+  // wird der Replay-Pfad ausgefuehrt (200 mit dem bereits angelegten Eintrag).
+  try { db.transaction(() => {
     const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM topics WHERE meeting_id=?').get(req.params.id).m;
     db.prepare(`INSERT INTO topics(id,meeting_id,title,description,done,result,result_date,is_todo,snoozed_until,created_at,sort_order) VALUES (?,?,?,?,0,'','',?,?,?,?)`)
       .run(id, req.params.id, title.trim(), cleanDesc, isTodo ? 1 : 0, snoozedUntil || '', cap.iso || nowIso, maxOrder + 1);
     if (tok.token) clientIdem.recordClientToken(db, { userId: req.session.uid, token: tok.token, refType: 'topic', refId: id, nowIso });
-  })();
+  })(); } catch (e) {
+    if (tok.token && e && e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY'
+      && handleClientTokenReplay(res, req.session.uid, tok.token, 'topic',
+        (rid) => db.prepare('SELECT t.* FROM topics t JOIN meetings m ON m.id=t.meeting_id WHERE t.id=? AND m.user_id=?').get(rid, req.session.uid),
+        (row) => ({ ...parseTopic(row), contacts: [] }))) return;
+    throw e;
+  }
   // Neuanlage: noch keine Zuständigkeiten möglich -> immer leeres Array
   // (konsistent mit der contactsForRefs()-Anreicherung in GET /meetings).
   res.status(201).json({ ...parseTopic(db.prepare('SELECT * FROM topics WHERE id=?').get(id)), contacts: [] });
@@ -870,7 +887,7 @@ app.get(`${A}/todos`, requireAuth, (req, res) => {
   }));
 });
 
-app.post(`${A}/todos`, requireAuth, (req, res) => {
+app.post(`${A}/todos`, requireAuth, createLimiter, (req, res) => {
   const body = req.body || {};
   const tok = clientIdem.parseClientToken(body.clientToken);
   if (!tok.ok) return fail(res, 400, 'INVALID_CLIENT_TOKEN', 'Ungültiges Client-Token.');
@@ -887,15 +904,20 @@ app.post(`${A}/todos`, requireAuth, (req, res) => {
   if (!cap.ok) return fail(res, 400, 'INVALID_CAPTURED_AT', 'Ungültiger Erfassungszeitpunkt.');
   const id = uid();
   const nowIso = new Date().toISOString();
-  // Parallele Erst-Requests mit demselben Token: der zweite scheitert am PK
-  // (user_id, client_token), die Transaktion rollt komplett zurueck (kein
-  // Duplikat) und der globale Handler antwortet 500. Der Client-Retry trifft
-  // dann den Replay-Pfad oben (200).
-  db.transaction(() => {
+  // Parallele Erst-Requests mit demselben Token (z.B. zweiter Prozess): der zweite scheitert am PK
+  // (user_id, client_token), die Transaktion rollt komplett zurueck (kein Duplikat). Statt 500
+  // wird der Replay-Pfad ausgefuehrt (200 mit dem bereits angelegten Eintrag).
+  try { db.transaction(() => {
     const mx = db.prepare('SELECT COALESCE(MAX(sort_order),-1) as m FROM todos WHERE user_id=?').get(req.session.uid).m;
     db.prepare('INSERT INTO todos(id,user_id,title,description,due_date,is_private,snoozed_until,sort_order,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id, req.session.uid, title.trim(), stripUnsafeHtml(description), dueDate || '', isPrivate ? 1 : 0, snoozedUntil || '', mx+1, cap.iso || nowIso);
     if (tok.token) clientIdem.recordClientToken(db, { userId: req.session.uid, token: tok.token, refType: 'todo', refId: id, nowIso });
-  })();
+  })(); } catch (e) {
+    if (tok.token && e && e.code === 'SQLITE_CONSTRAINT_PRIMARYKEY'
+      && handleClientTokenReplay(res, req.session.uid, tok.token, 'todo',
+        (rid) => db.prepare('SELECT * FROM todos WHERE id=? AND user_id=?').get(rid, req.session.uid),
+        (row) => ({ ...parseTodo(row), aiSummary: { pending: false }, contacts: [] }))) return;
+    throw e;
+  }
   let pendingSummary = false;
   try {
     const r = summaries.onDescriptionChanged({ userId: req.session.uid, refType: 'todo', refId: id, reason: 'created' });
@@ -2711,6 +2733,13 @@ if (require.main === module) {
   } catch (e) {
     console.error('[ai/jobs] start failed:', e.message || e);
   }
+  // L-4: abgelaufene Client-Tokens taeglich bereinigen (zusaetzlich zum Purge beim Start).
+  const tokenPurge = setInterval(() => {
+    try { clientIdem.purgeExpiredClientTokens(db); } catch (e) {
+      console.error('[client-idempotency] purge failed:', e.message || e);
+    }
+  }, 24 * 60 * 60 * 1000);
+  if (tokenPurge.unref) tokenPurge.unref();
   // Arbeitspaket B2: schlanker In-Prozess-Scheduler für automatische Backups
   // (Muster wie ai/jobs.js oben) - läuft nur im echten Serverprozess, nicht
   // in Tests (die server.js per require() ohne require.main===module laden).
