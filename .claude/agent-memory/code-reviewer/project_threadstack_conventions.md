@@ -94,5 +94,16 @@ greppen:
   Wahrheit. Eleganter und driftfrei: ein No-Op-`UPDATE tabelle SET spalte = spalte`
   — der AFTER-UPDATE-Trigger reindexiert dann selbst. Ausserdem pruefen, ob der
   Reindex pro Aufruf mehrfach laeuft (Backfill-UPDATE feuert die Trigger bereits).
+- **Client-Token-Idempotenz gibt es in zwei Auspraegungen.** `lib/client-idempotency`
+  (Mapping-Tabelle `client_create_tokens`, `parseClientToken` lehnt Nicht-Strings ab)
+  fuer Todos/Themen; `lib/progress` (Spalte `progress_entries.client_token`, eigenes
+  Parsing in routes.js mit `String(raw)`-Koerzierung, Fehlercode klein geschrieben
+  `invalid_client_token`) fuer Zwischenstaende. Seit Paket P1 teilen sie nur
+  `CLIENT_TOKEN_RE`. Wer eine dritte Stelle mit Client-Token baut oder progress
+  anfasst: auf `parseClientToken` vereinheitlichen, nicht eine dritte Variante bauen.
+- **Kommentarbloecke in server.js gehoeren zum direkt folgenden Statement.** Neue
+  Mounts/Migrationen werden gern zwischen einen bestehenden `// ── X ──`-Block und
+  dessen Statement eingeschoben (z.B. `${A}/sync` unter den Archiv-Kommentar). Bei
+  jedem server.js-Diff die Einfuegestelle mit Kontext lesen.
 
 Siehe auch [[threadstack-testmuster]] und [[threadstack-sqlite-table-rebuild]].

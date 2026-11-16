@@ -23,6 +23,30 @@ fehlerfrei kompilieren und trotzdem zur Laufzeit tot sind.
   `KnowledgeTopicPickerSheet` (Mehrfachauswahl-Vorbild), `errorAlert(_:)`,
   `stripHTML` (Extensions.swift), `KnowledgeMockURLProtocol` (Test-Netzmock).
   Netzwerk laeuft AUSSCHLIESSLICH ueber `AppState.request/requestOK/performRequest`.
+  Offline-Modus (ab Paket P2, 2026-11): `UserScopedFileStore` (EINZIGE Stelle fuer
+  gehashte Nutzer-/Scope-Verzeichnisse, Dateischutz, Backup-Ausschluss,
+  `isSafeFileStem`; KnowledgeDraftStore laeuft darauf), `OfflineOutbox`,
+  `OfflineOverlay`, `OfflineSnapshotStore`, `OfflineStatusStore`,
+  `OfflineLocalValidation.plainText(fromHTML:)`, `PendingSyncBadge`,
+  `OfflineUnavailableView`, `.disabledWhenOffline`. Capsule-Badges (dueBadge,
+  ProgressBadgeView, PendingSyncBadge) sind dreifach kopiert — vierte Kopie melden.
+  Wiederkehrend: das Mapping `PendingChangeKind` -> refType "todo"/"topic" wird
+  pro Aufrufer neu als `switch` geschrieben; auf eine zentrale Property pruefen.
+  Weitere Bestandsloesungen, die Offline-Pakete gern nachbauen: Zwischenablage
+  "lokal + 5-min-Ablauf" (`KnowledgeEditorView.copyContentToClipboard`, ab P4 als
+  `PendingClipboard` kopiert -> generischer Helper faellig), Einzelauswahl-Meetingliste
+  (`MoveItemSheet` in HelperViews.swift: Farbpunkt + Checkmark), `state.showToast`,
+  `.errorAlert`. Praedikat "status ist .failed" existiert mehrfach inline — auf
+  `PendingItemStatus.isFailed` draengen.
+
+- **"Eintrag verschwunden"-Beobachter (`onChange(of: item == nil)`) plus Flag**
+  (`didRetry`) fuer einen Erfolgs-Toast: das Flag wird nie zurueckgesetzt, und das
+  Verschwinden hat mehrere Ursachen (Sync-Erfolg, Verwerfen, Konvertieren) ->
+  falscher Toast. Ursache am Aktionsort entscheiden, nicht am Beobachter.
+
+- **`confirmationDialog` mit abgeleitetem `isPresented`-Binding (`get: flag && bedingung`)**:
+  kippt die Bedingung, waehrend der Dialog offen ist, bleibt das Quell-Flag `true`
+  haengen und der naechste Ausloeser (`flag = true`) feuert kein `onChange` mehr.
 
 - **`.onMove` ist die haeufigste tote Feature-Behauptung.** Es funktioniert nur,
   wenn das `ForEach` DIREKTES Kind einer `Section`/`List` ist UND ein `EditButton()`
@@ -75,6 +99,10 @@ fehlerfrei kompilieren und trotzdem zur Laufzeit tot sind.
   Build bleibt gruen, Swift 6 waere gebrochen. Nach `grep "warning:"` im Build-Log
   suchen und pruefen, ob die `Equatable`-Conformance ueberhaupt genutzt wird —
   meist ist sie ueberfluessiges Beiwerk.
+  Im TESTtarget gilt die Default-Isolation NICHT: neue `async`-Suites ohne
+  `@MainActor` erzeugen dutzende Swift-6-Warnungen ("main actor-isolated
+  initializer ... cannot be called from outside of the actor"). Vorbestehend in
+  vielen Altsuites, bei neuen Suites aber als Niedrig-Fund melden.
 
 - **Formulare/Sheets: Projektkonvention ist `.onAppear { populate() }`**
   (TodoFormView/TopicFormView). Das ist kein Fund. Ein Fund ist dagegen, wenn
@@ -89,6 +117,13 @@ fehlerfrei kompilieren und trotzdem zur Laufzeit tot sind.
   associated test or suite" aus `SummaryStoreTests.swift:276` — vorbestehend,
   nicht neuen Paketen anlasten. Echte Zaehlungen nur ueber
   `xcrun xcresulttool get test-results summary|tests --path <...>.xcresult`.
+  Stand 2026-11-15 (Simulator jetzt "iPhone 18 Pro", "iPhone 17 Pro" fehlt):
+  `SummaryAPITests/regenerateSummaryBuildsExpectedPathWithConfirmTrue` schlaegt
+  DETERMINISTISCH auch isoliert auf der Basis fehl (dieselbe Zeile 276, Exit 65).
+  `GraphPositionSyncTests` (retries.../mergesRepeated...) sind isoliert gruen und
+  fallen nur im Volllauf unter Last (Polling `waitUntil` mit 3-s-Timeout) — Flake.
+  Gegenprobe: temporaeren Worktree der Basis im Scratchpad + `-only-testing:` mit
+  eigenem `-derivedDataPath` (erster Build ~6 min).
 
 - **`#expect` innerhalb eines `KnowledgeMockURLProtocol`-Handler-Closures ist
   wertlos, wenn der Handler nicht aufgerufen wird** — die Erwartung laeuft dann
@@ -120,5 +155,18 @@ fehlerfrei kompilieren und trotzdem zur Laufzeit tot sind.
   `PBXFileReference`-Eintraege im ganzen File, keiner fuer `AppState.swift`).
   Neue Swift-Dateien brauchen daher KEINE pbxproj-Aenderung — diese
   Entwickler-Behauptung ist korrekt und kein Vorwand.
+
+- **Parallel gebaute Feature-View-Pakete (Offline P5/P6, 2026-11) erzeugen je ein
+  eigenes `OfflineFeatureXLogic`-Enum am Ende einer beliebigen View-Datei**
+  (TodosView.swift, StackViews.swift) mit ueberlappenden Gating-Regeln,
+  Text-Kopien ("Offline nicht verfügbar", notAvailableOffline-Wortlaut) und
+  Doppel-Gating geteilter Komponenten (AISummaryCardView aussen UND innen
+  deaktiviert). Bei jedem Paar paralleler View-Pakete gezielt nach `enum *Logic`
+  am Dateiende, String-Literalen statt `OfflineTexts`/`OfflineError` und nach
+  Modifiern auf geteilten Komponenten an der Aufrufstelle greppen. Ursache fuer
+  selbstgebaute Hinweis-Captions: P2s `DisabledWhenOfflineModifier` zeigt immer
+  den festen Text statt `hint` -> Pakete umgehen ihn. Fix gehoert in den
+  geteilten Modifier, nicht in jede View. `PendingChange.localProgressEntry`
+  wurde als `pendingProgressEntry` nachgebaut (Excerpt-280-Logik) — darauf achten.
 
 Siehe auch [[threadstack-review-konventionen]] und [[threadstack-testmuster]].

@@ -118,4 +118,13 @@ gelaufen sind. Konsequenz fuer Reviews: nie nur auf pass/fail schauen, sondern p
 `grep -o "ok [0-9]* - <Testname>"` gezielt nachweisen, dass die Tests des geprueften
 Arbeitspakets in JEDEM Lauf tatsaechlich ausgefuehrt wurden.
 
+**Worktree-Branches liegen oft auf einer AELTEREN Basis als im Auftrag genannt**
+(2026-11-15: Auftrag nannte main dfc5aab, Branch lag auf 46a1abd). Der vorgegebene
+`git diff <basis>..<commit>` zeigt dann scheinbare Reverts fremder main-Commits
+(Momentum-Fix, Sidebar etc.). Vor dem Review immer `git merge-base` pruefen, den
+eigentlichen Paket-Diff ueber `git diff <commit>^..<commit>` lesen, die
+Konfliktfreiheit mit `git merge-tree --write-tree <main> <commit>` messen und die
+Suite zusaetzlich auf `main + cherry-pick -n` laufen lassen (temporaere Worktrees im
+Scratchpad mit Symlink auf das node_modules im Repo-Root, danach `worktree remove`).
+
 Siehe auch [[threadstack-review-konventionen]].

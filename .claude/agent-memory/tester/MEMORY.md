@@ -104,3 +104,14 @@
   desselben Storage-Keys innerhalb einer Session wird automatisiert
   geprueft. Kein Bug, inhärente Grenze des Testansatzes bei aehnlichen
   ts.*-localStorage-Flags im Projekt.
+
+## Offline-Modus iOS + Sync-Server (2026-11-16)
+- Ad-hoc-Server-E2E: `DATA_DIR=<tmp> PORT=.. BASE_PATH=/ node server.js` druckt das
+  Admin-Initialpasswort in den Log (nicht in Berichte uebernehmen); curl mit
+  `-b cj -H 'Content-Type: application/json'` in einer Funktion kapseln (unquotierte
+  $J-Variablen lieferten leere Antworten). Rate-Limit-Test: 120/10min je Nutzer
+  fuer POST /todos + /topics, 429 traegt Retry-After + code rate_limited.
+- Offline-Swift-Tests (~890 Testfaelle) laufen ~9 Min im iOS-Volllauf; Zaehler stockt
+  zwischendurch, ist kein Hang. Nur SummaryAPITests-Baseline-Fehler trat auf.
+- Lokale Snooze-Erinnerung fuer Offline-Todos (NotificationScheduler-Singleton) ist
+  nicht unit-getestet - nur Code-Review/manuell pruefbar.
