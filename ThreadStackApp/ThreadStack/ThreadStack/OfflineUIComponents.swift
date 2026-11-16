@@ -12,6 +12,12 @@ enum OfflineTexts {
     static let unavailableTitle = "Offline nicht verfügbar"
     static let notLoadedYet = "Dieser Inhalt wurde noch nicht geladen. Er ist verfügbar, sobald du wieder online bist."
     static let retry = "Erneut versuchen"
+    /// Hinweis im Kopf eines Formulars fuer einen lokalen, noch nicht uebertragenen Eintrag.
+    static let pendingNote = "Dieser Eintrag ist noch nicht übertragen."
+    static let discardTitle = "Eintrag verwerfen?"
+    static let discardButton = "Verwerfen"
+    static let relationsSkippedToast = "Topics und Ansprechpartner können erst nach der Übertragung zugeordnet werden."
+    static let composerOfflineHint = "Offline – dein Zwischenstand wird eingereiht und später übertragen."
 }
 
 // MARK: - Badge
@@ -148,7 +154,8 @@ struct DisabledWhenOfflineModifier: ViewModifier {
                 content
                     .disabled(true)
                     .accessibilityHint(hint)
-                Text(OfflineTexts.unavailableTitle)
+                // Der uebergebene Hinweis wird sichtbar angezeigt (Default: "Offline nicht verfuegbar").
+                Text(hint)
                     .scaledFont(.caption2)
                     .foregroundStyle(.secondary)
                     .accessibilityHidden(true)
@@ -176,7 +183,7 @@ struct DisabledWhenOfflineCompactModifier: ViewModifier {
 
 extension View {
     /// Fuer Buttons/Zeilen in Form/List: deaktiviert offline und zeigt den
-    /// sichtbaren Zusatz "Offline nicht verfügbar" (Pflicht laut UX) samt
+    /// sichtbaren Zusatz (`hint`, Default "Offline nicht verfügbar", Pflicht laut UX) samt
     /// accessibilityHint. Online bleibt der Inhalt unveraendert.
     /// NICHT in Toolbar, Menu oder Swipe-Aktionen verwenden (dort ist keine
     /// Zusatzzeile moeglich) - dort `.disabledWhenOfflineCompact(_:hint:)`.

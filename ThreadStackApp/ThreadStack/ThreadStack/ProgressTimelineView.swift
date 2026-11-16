@@ -184,6 +184,8 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     }
 
     var body: some View {
+        // Ausstehende Zwischenstände einmal pro Rendering berechnen.
+        let pending = pendingEntries
         VStack(alignment: .leading, spacing: 12) {
             // (1) Composer — immer sichtbar, unabhängig vom Ladezustand.
             composerContent()
@@ -194,15 +196,20 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             // Ladezustand des restlichen Bereichs abhängig.
             reentryContent()
             // (5) Trenner — nur wenn der Verlaufsbereich Inhalt hat.
-            if historyAreaHasVisibleContent || !pendingEntries.isEmpty {
+            if historyAreaHasVisibleContent(pending: pending) || !pending.isEmpty {
                 Divider()
             }
-            // (5b) P5: noch nicht übertragene (offline erfasste) Zwischenstände, neueste zuerst.
-            pendingSection
+            // (5b) Noch nicht übertragene (offline erfasste) Zwischenstände, neueste zuerst.
+            pendingSection(pending)
             // (6) Verlauf — Lade-/Fehleranzeige oder Einträge, je nach Zustand.
-            historySection
+            historySection(pending: pending)
         }
         .task { await loadIfNeeded() }
+        .reloadWhenBackOnline(hasContent: store.detail(refType: refType, refId: refId) != nil) {
+            guard OfflineGating.shouldLoadHistory(refId: refId),
+                  case .failed = store.state(refType: refType, refId: refId) else { return }
+            Task { await store.retry(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize) }
+        }
         .sheet(isPresented: $showNextStepEditor) {
             NextStepEditSheet(
                 refType: refType, refId: refId, store: store,
@@ -231,7 +238,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
         .errorAlert($deleteErrorText)
     }
 
-    // MARK: - Offline (P5)
+    // MARK: - Offline
 
     private var isLocalRef: Bool { OfflineIds.isLocal(refId) }
 
@@ -245,19 +252,18 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
 
     private var pendingEntries: [PendingRow] {
         let serverIds = Set(store.entries(refType: refType, refId: refId).map(\.id))
-        let items = OfflineFeatureALogic.pendingEntriesNewestFirst(
+        let items = OfflineGating.pendingEntriesNewestFirst(
             offline.pendingProgress(refType: refType, refId: refId), excludingIds: serverIds)
         return items.compactMap { summary in
-            OfflineFeatureALogic.pendingProgressEntry(
-                summary: summary, payload: summary.entityId == nil ? nil : offline.intents.payload(summary.id),
+            OfflineGating.pendingProgressEntry(
+                summary: summary, payload: offline.intents.payload(summary.id),
                 refType: refType, refId: refId
             ).map { PendingRow(entry: $0, status: summary.status) }
         }
     }
 
     @ViewBuilder
-    private var pendingSection: some View {
-        let pending = pendingEntries
+    private func pendingSection(_ pending: [PendingRow]) -> some View {
         if !pending.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Noch nicht übertragen").scaledFont(.headline)
@@ -277,7 +283,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     }
 
     private func loadIfNeeded() async {
-        guard OfflineFeatureALogic.shouldLoadHistory(refId: refId) else { return }
+        guard OfflineGating.shouldLoadHistory(refId: refId) else { return }
         if store.state(refType: refType, refId: refId) == .idle {
             await store.load(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize)
         }
@@ -292,8 +298,8 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     /// gehalten, damit ein künftiger, wirklich inhaltsloser Zwischenzustand
     /// (aktuell nicht Teil des Vertrags) den Trenner sauber ausblenden könnte,
     /// ohne die Aufrufstelle im `body` anzufassen.
-    private var historyAreaHasVisibleContent: Bool {
-        if isLocalRef { return pendingEntries.isEmpty }
+    private func historyAreaHasVisibleContent(pending: [PendingRow]) -> Bool {
+        if isLocalRef { return pending.isEmpty }
         switch store.state(refType: refType, refId: refId) {
         case .idle, .loading, .failed, .loaded: return true
         }
@@ -309,10 +315,10 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
     }
 
     @ViewBuilder
-    private var historySection: some View {
+    private func historySection(pending: [PendingRow]) -> some View {
         if isLocalRef {
             // Lokales Vorhaben: es gibt noch keinen Server-Verlauf, nur ausstehende Einträge.
-            if pendingEntries.isEmpty { emptyState }
+            if pending.isEmpty { emptyState }
         } else {
             serverHistorySection
         }
@@ -324,7 +330,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
         case .idle, .loading:
             loadingState
         case .failed(let error):
-            if OfflineFeatureALogic.showsOfflineUnavailable(for: error) {
+            if OfflineGating.showsOfflineUnavailable(for: error) {
                 // Nie geladener Verlauf offline (UX Screen 8).
                 OfflineUnavailableView(reason: .notLoadedYet) {
                     Task { await store.retry(refType: refType, refId: refId, limit: ProgressTimelineConfig.embeddedPageSize) }
@@ -381,7 +387,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
                 Image(systemName: "pencil")
             }
             .buttonStyle(.plain)
-            .offlineGated(OfflineFeatureALogic.serverActionDisabledReason(id: refId, isOffline: offline.isOffline))
+            .offlineGated(OfflineGating.serverActionDisabledReason(id: refId, isOffline: offline.isOffline))
             .accessibilityLabel("Nächsten Schritt bearbeiten")
         }
     }
@@ -435,9 +441,9 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 2) {
                     if let pendingStatus {
-                        // P5: Kennzeichnung pro Zwischenstand-Zeile (UX Screen 6).
+                        // Kennzeichnung pro Zwischenstand-Zeile (UX Screen 6).
                         PendingSyncBadge(status: pendingStatus, accessibilityItem: "Zwischenstand")
-                        if let message = OfflineFeatureALogic.statusMessage(for: pendingStatus) {
+                        if let message = OfflineGating.statusMessage(for: pendingStatus) {
                             Text(message).scaledFont(.caption2).foregroundStyle(.secondary)
                         }
                     }
@@ -461,7 +467,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
                         Image(systemName: "pencil")
                     }
                     .buttonStyle(.plain)
-                    .offlineGated(OfflineFeatureALogic.editDisabledReason(id: entry.id, isOffline: offline.isOffline))
+                    .offlineGated(OfflineEntryGate(id: entry.id, isOffline: offline.isOffline).editReason)
                     .accessibilityLabel("Zwischenstand bearbeiten")
 
                     Button {
@@ -470,7 +476,7 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
                         Image(systemName: "trash")
                     }
                     .buttonStyle(.plain)
-                    .offlineGated(deleteDisabledReason(entry))
+                    .offlineGated(OfflineEntryGate(id: entry.id, isOffline: offline.isOffline).deleteDisabledReason)
                     .accessibilityLabel(OfflineIds.isLocal(entry.id) ? "Zwischenstand verwerfen" : "Zwischenstand löschen")
                 }
             }
@@ -487,23 +493,14 @@ struct ProgressTimelineView<Composer: View, Reentry: View>: View {
         )
     }
 
-    private func deleteDisabledReason(_ entry: ProgressEntry) -> String? {
-        if case .disabled(let reason) = OfflineFeatureALogic.deleteMode(id: entry.id, isOffline: offline.isOffline) {
-            return reason
-        }
-        return nil
-    }
-
     private func requestDelete(_ entry: ProgressEntry) {
-        switch OfflineFeatureALogic.deleteMode(id: entry.id, isOffline: offline.isOffline) {
+        switch OfflineGating.deleteMode(id: entry.id, isOffline: offline.isOffline) {
         case .server:
             deleteCandidate = entry
         case .discardLocal:
             let excerpt = entry.excerpt.isEmpty ? stripHTML(entry.bodyHtml) : entry.excerpt
             let short = excerpt.count > 40 ? String(excerpt.prefix(40)) + "…" : excerpt
-            var request = offline.discardRequest(forEntityId: entry.id, title: short)
-            request.showsDependentsHint = false
-            discardRequest = request
+            discardRequest = offline.discardRequest(forEntityId: entry.id, title: short, showsDependentsHint: false)
         case .disabled:
             break
         }

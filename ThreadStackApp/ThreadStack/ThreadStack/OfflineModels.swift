@@ -188,11 +188,19 @@ struct PendingChange: Codable, Equatable, Identifiable {
     /// `resolvedRef`: Typ/ID des Vorhabens (bei lokalem Vorhaben dessen `local-…`-ID).
     func localProgressEntry(resolvedRef: (refType: String, refId: String)) -> ProgressEntry? {
         guard case .progress(let p) = payload else { return nil }
-        let plain = OfflineLocalValidation.plainText(fromHTML: p.bodyHTML)
+        return p.makeEntry(id: localEntityId, refType: resolvedRef.refType, refId: resolvedRef.refId,
+                           capturedAt: capturedAt)
+    }
+}
+
+extension PendingProgressPayload {
+    /// Lokaler `ProgressEntry` (editierbar, ohne Ruhephasen-Marker) zu einem ausstehenden Zwischenstand.
+    func makeEntry(id: String, refType: String, refId: String, capturedAt: Date) -> ProgressEntry {
+        let plain = OfflineLocalValidation.plainText(fromHTML: bodyHTML)
         let excerpt = plain.count > 280 ? String(plain.prefix(280)) + "…" : plain
-        return ProgressEntry(id: localEntityId, refType: resolvedRef.refType, refId: resolvedRef.refId,
-                             kind: "note", source: p.source, bodyHtml: p.bodyHTML, excerpt: excerpt,
-                             createdAt: capturedAtISO, editedAt: nil, gapDaysBefore: 0,
+        return ProgressEntry(id: id, refType: refType, refId: refId,
+                             kind: "note", source: source, bodyHtml: bodyHTML, excerpt: excerpt,
+                             createdAt: OfflineDateText.iso(capturedAt), editedAt: nil, gapDaysBefore: 0,
                              showDormancyMarker: false, editable: true)
     }
 }

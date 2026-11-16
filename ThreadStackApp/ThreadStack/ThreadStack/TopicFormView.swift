@@ -106,34 +106,18 @@ struct TopicFormView: View {
         return "Weitere Details"
     }
 
-    // MARK: Offline-Modus (P5) — siehe `TodoFormView` (identisches Verhalten)
+    // MARK: Offline-Modus — siehe `TodoFormView` (identisches Verhalten)
 
-    private var isLocalEntry: Bool { topic.map { OfflineFeatureALogic.isLocal($0.id) } ?? false }
+    private var isLocalEntry: Bool { topic.map { OfflineGating.isLocal($0.id) } ?? false }
     private var editBlockedReason: String? {
         guard let topic else { return nil }
-        return OfflineFeatureALogic.editDisabledReason(id: topic.id, isOffline: offline.isOffline)
+        return OfflineGating.editDisabledReason(id: topic.id, isOffline: offline.isOffline)
     }
     private var relationsDisabled: Bool {
-        OfflineFeatureALogic.relationFieldsDisabled(isOffline: offline.isOffline, entryId: topic?.id)
+        OfflineGating.relationFieldsDisabled(isOffline: offline.isOffline, entryId: topic?.id)
     }
     private var relationsHint: String? {
-        relationsDisabled ? OfflineFeatureALogic.relationFieldsHint(isOffline: offline.isOffline) : nil
-    }
-
-    @ViewBuilder
-    private func offlineEntryHeader(_ topic: Topic) -> some View {
-        let summary = offline.summary(forEntityId: topic.id)
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                PendingSyncBadge(status: summary?.status ?? .pending, accessibilityItem: "Thema '\(topic.title)'")
-                Text(OfflineFeatureALogic.pendingNote)
-                    .scaledFont(.footnote).foregroundStyle(.secondary)
-                if let summary, let message = OfflineFeatureALogic.statusMessage(for: summary.status) {
-                    Text(message).scaledFont(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            .accessibilityElement(children: .combine)
-        }
+        OfflineGating.relationFieldsHintIfDisabled(isOffline: offline.isOffline, entryId: topic?.id)
     }
 
     private func discardLocalTopic(_ request: OfflineDiscardRequest) {
@@ -150,13 +134,10 @@ struct TopicFormView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let topic, isLocalEntry { offlineEntryHeader(topic) }
-                if let editBlockedReason {
-                    Section {
-                        Label(editBlockedReason, systemImage: "wifi.slash")
-                            .scaledFont(.footnote).foregroundStyle(.secondary)
-                    }
+                if let topic, isLocalEntry {
+                    OfflineEntryFormHeader(entityId: topic.id, title: topic.title, accessibilityPrefix: "Thema")
                 }
+                if let editBlockedReason { OfflineFormNotice(text: editBlockedReason) }
                 Section("Titel") {
                     TextField("Thema eingeben", text: $title)
                 }
@@ -196,7 +177,7 @@ struct TopicFormView: View {
                 if let topic, isLocalEntry {
                     // Lokales, nicht synchronisiertes Thema verwerfen (UX Screen 7).
                     Section {
-                        Button(OfflineFeatureALogic.discardButton, role: .destructive) {
+                        Button(OfflineTexts.discardButton, role: .destructive) {
                             discardRequest = offline.discardRequest(forEntityId: topic.id, title: title.isEmpty ? topic.title : title)
                         }
                     }
@@ -217,9 +198,8 @@ struct TopicFormView: View {
                 }
             }
             .onAppear { populate() }
-            .onChange(of: relationsDisabled) { _, disabled in
-                if !disabled, topic != nil, !assignmentsLoaded { Task { await loadContactAssignments() } }
-            }
+            // Verbindung zurück: bestehende Zuordnung nachladen (war offline übersprungen).
+            .reloadWhenBackOnline(hasContent: assignmentsLoaded) { Task { await loadContactAssignments() } }
             .offlineDiscardDialog($discardRequest) { discardLocalTopic($0) }
             .interactiveDismissDisabled(progressComposer.isDirty)
             .confirmationDialog(
@@ -430,11 +410,11 @@ struct TopicFormView: View {
                 // werden.
                 var assignmentErrorText: String?
                 // Lokale (offline eingereihte) Themen: Zuordnung erst nach der Übertragung möglich.
-                if let savedId, !OfflineFeatureALogic.shouldCommitRelations(savedId: savedId), !contactIds.isEmpty {
-                    state.showToast(OfflineFeatureALogic.relationsSkippedToast)
+                if let savedId, !OfflineGating.shouldCommitRelations(savedId: savedId), !contactIds.isEmpty {
+                    state.showToast(OfflineTexts.relationsSkippedToast)
                 }
                 if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId,
-                   OfflineFeatureALogic.shouldCommitRelations(savedId: savedId) {
+                   OfflineGating.shouldCommitRelations(savedId: savedId) {
                     do { try await state.setAssignments(refType: "topic", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

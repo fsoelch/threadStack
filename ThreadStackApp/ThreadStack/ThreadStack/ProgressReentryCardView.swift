@@ -165,7 +165,7 @@ struct ProgressReentryCardView: View {
                     .buttonStyle(.bordered).controlSize(.small)
                     .disabled(aiLoading)
                     // KI ist offline nicht verfügbar (UX S11).
-                    .offlineGated(offline.isOffline ? OfflineTexts.unavailableTitle : nil)
+                    .offlineGated(OfflineGating.onlineOnlyReason(isOffline: offline.isOffline))
                     .accessibilityLabel("KI-Zusammenfassung anfordern")
                 }
                 if let onRequestCompose {

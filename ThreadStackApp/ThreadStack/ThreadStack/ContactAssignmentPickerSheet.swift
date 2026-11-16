@@ -342,7 +342,7 @@ struct ContactAssignmentSection: View {
     /// (`TodoFormView`/`TopicFormView`) übergeben diesen ohnehin immer
     /// (Niedrig-Fund, Code-Review: kein optionaler Default mehr nötig).
     let onRetryLoad: () -> Void
-    /// Offline-Modus (P5, Konsistenzentscheidung 8): Auswahl ist deaktiviert
+    /// Offline-Modus (Konsistenzentscheidung 8): Auswahl ist deaktiviert
     /// (Zuordnung braucht den Server), solange `disabledHint != nil` — z.B.
     /// "Offline nicht verfügbar" oder, für lokale (noch nicht synchronisierte)
     /// Einträge, der Hinweis `pendingNotSynced`. Default `nil` = unverändert.
@@ -378,9 +378,7 @@ struct ContactAssignmentSection: View {
             .accessibilityHint(disabledHint ?? "Öffnet die Ansprechpartner-Auswahl.")
             if let disabledHint {
                 // Pflicht laut UX: sichtbarer Zusatz statt stummem, deaktiviertem Button.
-                Text(disabledHint)
-                    .scaledFont(.caption2).foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+                OfflineUnavailableHint(disabledHint)
             } else if let loadError {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(loadError).scaledFont(.footnote).foregroundStyle(.secondary)

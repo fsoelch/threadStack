@@ -186,7 +186,7 @@ final class ProgressEntryComposer: ObservableObject {
 struct ProgressEntryComposerView: View {
     @ObservedObject var composer: ProgressEntryComposer
     var isFocused: FocusState<Bool>.Binding
-    /// P5: `true` nur für Vorhaben (Todo/Thema), deren Zwischenstände offline
+    /// `true` nur für Vorhaben (Todo/Thema), deren Zwischenstände offline
     /// eingereiht werden — dann erscheint offline der Hinweis "wird eingereiht".
     /// Default `false`: andere Aufrufer (z.B. Kontakte) bleiben unverändert.
     var showsOfflineQueueHint: Bool = false
@@ -219,7 +219,7 @@ struct ProgressEntryComposerView: View {
             }
 
             if showsOfflineQueueHint && offline.isOffline {
-                Label(OfflineFeatureALogic.composerOfflineHint, systemImage: "wifi.slash")
+                Label(OfflineTexts.composerOfflineHint, systemImage: "wifi.slash")
                     .scaledFont(.caption2).foregroundStyle(.secondary)
             }
 

@@ -147,37 +147,21 @@ struct TodoFormView: View {
         return "Weitere Details"
     }
 
-    // MARK: Offline-Modus (P5)
+    // MARK: Offline-Modus
 
     /// Das bearbeitete Todo ist lokal (noch nicht synchronisiert) -> "Offline-Eintrag".
-    private var isLocalEntry: Bool { todo.map { OfflineFeatureALogic.isLocal($0.id) } ?? false }
+    private var isLocalEntry: Bool { todo.map { OfflineGating.isLocal($0.id) } ?? false }
     /// Bestehendes, synchronisiertes Todo bei fehlender Verbindung: Speichern gesperrt.
     private var editBlockedReason: String? {
         guard let todo else { return nil }
-        return OfflineFeatureALogic.editDisabledReason(id: todo.id, isOffline: offline.isOffline)
+        return OfflineGating.editDisabledReason(id: todo.id, isOffline: offline.isOffline)
     }
     /// Topic-/Ansprechpartner-Zuordnung braucht den Server (Konsistenzentscheidung 8).
     private var relationsDisabled: Bool {
-        OfflineFeatureALogic.relationFieldsDisabled(isOffline: offline.isOffline, entryId: todo?.id)
+        OfflineGating.relationFieldsDisabled(isOffline: offline.isOffline, entryId: todo?.id)
     }
     private var relationsHint: String? {
-        relationsDisabled ? OfflineFeatureALogic.relationFieldsHint(isOffline: offline.isOffline) : nil
-    }
-
-    @ViewBuilder
-    private func offlineEntryHeader(_ todo: TodoItem) -> some View {
-        let summary = offline.summary(forEntityId: todo.id)
-        Section {
-            VStack(alignment: .leading, spacing: 6) {
-                PendingSyncBadge(status: summary?.status ?? .pending, accessibilityItem: "Todo '\(todo.title)'")
-                Text(OfflineFeatureALogic.pendingNote)
-                    .scaledFont(.footnote).foregroundStyle(.secondary)
-                if let summary, let message = OfflineFeatureALogic.statusMessage(for: summary.status) {
-                    Text(message).scaledFont(.footnote).foregroundStyle(.secondary)
-                }
-            }
-            .accessibilityElement(children: .combine)
-        }
+        OfflineGating.relationFieldsHintIfDisabled(isOffline: offline.isOffline, entryId: todo?.id)
     }
 
     private func discardLocalTodo(_ request: OfflineDiscardRequest) {
@@ -194,13 +178,10 @@ struct TodoFormView: View {
     var body: some View {
         NavigationStack {
             Form {
-                if let todo, isLocalEntry { offlineEntryHeader(todo) }
-                if let editBlockedReason {
-                    Section {
-                        Label(editBlockedReason, systemImage: "wifi.slash")
-                            .scaledFont(.footnote).foregroundStyle(.secondary)
-                    }
+                if let todo, isLocalEntry {
+                    OfflineEntryFormHeader(entityId: todo.id, title: todo.title, accessibilityPrefix: "Todo")
                 }
+                if let editBlockedReason { OfflineFormNotice(text: editBlockedReason) }
                 Section("Titel") {
                     TextField("Todo eingeben", text: $title)
                 }
@@ -237,7 +218,7 @@ struct TodoFormView: View {
                 if let todo, isLocalEntry {
                     // Lokalen, nicht synchronisierten Eintrag verwerfen (UX Screen 7).
                     Section {
-                        Button(OfflineFeatureALogic.discardButton, role: .destructive) {
+                        Button(OfflineTexts.discardButton, role: .destructive) {
                             discardRequest = offline.discardRequest(forEntityId: todo.id, title: title.isEmpty ? todo.title : title)
                         }
                     }
@@ -258,10 +239,8 @@ struct TodoFormView: View {
                 }
             }
             .onAppear { populate() }
-            .onChange(of: relationsDisabled) { _, disabled in
-                // Verbindung zurück: bestehende Zuordnung nachladen (war offline übersprungen).
-                if !disabled, todo != nil, !assignmentsLoaded { Task { await loadContactAssignments() } }
-            }
+            // Verbindung zurück: bestehende Zuordnung nachladen (war offline übersprungen).
+            .reloadWhenBackOnline(hasContent: assignmentsLoaded) { Task { await loadContactAssignments() } }
             .offlineDiscardDialog($discardRequest) { discardLocalTodo($0) }
             .interactiveDismissDisabled(progressComposer.isDirty)
             .confirmationDialog(
@@ -319,7 +298,7 @@ struct TodoFormView: View {
     private var topicsSection: some View {
         topicsButton
         if let relationsHint {
-            Text(relationsHint).scaledFont(.caption2).foregroundStyle(.secondary).accessibilityHidden(true)
+            OfflineUnavailableHint(relationsHint)
         }
     }
 
@@ -522,7 +501,7 @@ struct TodoFormView: View {
                 // möglich — kein Request (sonst pendingNotSynced), dafür ein Hinweis.
                 var relationsSkipped = false
                 if let savedId {
-                    if OfflineFeatureALogic.shouldCommitRelations(savedId: savedId) {
+                    if OfflineGating.shouldCommitRelations(savedId: savedId) {
                         _ = try? await state.setTodoThemes(id: savedId, themeIds: Array(themeIds))
                     } else if !themeIds.isEmpty || !contactIds.isEmpty {
                         relationsSkipped = true
@@ -554,9 +533,9 @@ struct TodoFormView: View {
                 // einfach übersprungen, bestehende Zuordnungen bleiben
                 // serverseitig unangetastet.
                 var assignmentErrorText: String?
-                if relationsSkipped { state.showToast(OfflineFeatureALogic.relationsSkippedToast) }
+                if relationsSkipped { state.showToast(OfflineTexts.relationsSkippedToast) }
                 if ContactAssignmentPickerLogic.shouldCommitAssignments(assignmentsLoaded: assignmentsLoaded), let savedId,
-                   OfflineFeatureALogic.shouldCommitRelations(savedId: savedId) {
+                   OfflineGating.shouldCommitRelations(savedId: savedId) {
                     do { try await state.setAssignments(refType: "todo", refId: savedId, contactIds: Array(contactIds)) }
                     catch { assignmentErrorText = friendlyAssignmentErrorMessage(error) }
                 }

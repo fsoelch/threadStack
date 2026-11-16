@@ -2,12 +2,12 @@ import Testing
 import Foundation
 @testable import ThreadStack
 
-//  Paket P5: Offline-Entscheidungslogik der Feature-Views A
+//  Offline-Entscheidungslogik (OfflineGating)
 //  (Todos, Themen, Formulare, Zwischenstaende). Reine Logik, kein View-Rendering.
 
 @MainActor @Suite(.serialized)
-struct OfflineFeatureALogicTests {
-    typealias L = OfflineFeatureALogic
+struct OfflineGatingTests {
+    typealias L = OfflineGating
     let local = "local-3f2a9c1e-0000-4000-8000-000000000001"
     let server = "abc123"
 
@@ -155,9 +155,9 @@ struct OfflineFeatureALogicTests {
     }
 
     @Test func uxTexts() {
-        #expect(L.pendingNote == "Dieser Eintrag ist noch nicht übertragen.")
-        #expect(L.discardTitle == "Eintrag verwerfen?")
-        #expect(L.composerOfflineHint.contains("eingereiht"))
+        #expect(OfflineTexts.pendingNote == "Dieser Eintrag ist noch nicht übertragen.")
+        #expect(OfflineTexts.discardTitle == "Eintrag verwerfen?")
+        #expect(OfflineTexts.composerOfflineHint.contains("eingereiht"))
     }
 
     // MARK: Status-Store-Anbindung (Badge-Quelle)
@@ -176,5 +176,68 @@ struct OfflineFeatureALogicTests {
                                           capturedAt: Date(), status: .pending, entityId: "local-2",
                                           refType: "topic", refId: "r1", fullText: "o")]
         #expect(store.pendingProgress(refType: "todo", refId: "r1").map(\.entityId) == ["local-1"])
+    }
+
+    // MARK: Zentrale Helfer (OfflineGating / OfflineEntryGate)
+
+    @Test func onlineOnlyReason() {
+        #expect(L.onlineOnlyReason(isOffline: true) == "Offline nicht verfügbar")
+        #expect(L.onlineOnlyReason(isOffline: false) == nil)
+    }
+
+    @Test func deleteModeAccessors() {
+        #expect(L.deleteMode(id: server, isOffline: true).disabledReason == "Offline nicht verfügbar")
+        #expect(L.deleteMode(id: server, isOffline: true).isDisabled)
+        #expect(!L.deleteMode(id: server, isOffline: false).isDisabled)
+        #expect(L.deleteMode(id: local, isOffline: true).disabledReason == nil)
+    }
+
+    @Test func entryGateBundlesDecisions() {
+        let s = OfflineEntryGate(id: server, isOffline: true)
+        #expect(!s.isLocal && s.serverActionReason != nil && s.editReason != nil && s.isDeleteDisabled)
+        #expect(s.deleteLabel == "Löschen")
+        let l = OfflineEntryGate(id: local, isOffline: true)
+        #expect(l.isLocal && l.editReason == nil && !l.isDeleteDisabled)
+        #expect(l.serverActionReason?.contains("noch nicht synchronisiert") == true)
+        #expect(l.deleteLabel == "Verwerfen")
+        #expect(OfflineEntryGate(id: server, isOffline: false).serverActionReason == nil)
+    }
+
+    @Test func relationHintIfDisabled() {
+        #expect(L.relationFieldsHintIfDisabled(isOffline: false, entryId: server) == nil)
+        #expect(L.relationFieldsHintIfDisabled(isOffline: true, entryId: nil) == "Offline nicht verfügbar")
+        #expect(L.relationFieldsHintIfDisabled(isOffline: false, entryId: local)?.contains("noch nicht synchronisiert") == true)
+    }
+
+    @Test func unavailablePlaceholderSemantics() {
+        #expect(L.showsUnavailable(isOffline: true, hasContent: false))
+        #expect(!L.showsUnavailable(isOffline: true, hasContent: true))
+        #expect(!L.showsUnavailable(isOffline: false, hasContent: false))
+        #expect(L.showsUnavailable(isOffline: false, hasContent: false, loadFailedOffline: true))
+        #expect(!L.showsUnavailable(isOffline: false, hasContent: true, loadFailedOffline: true))
+        #expect(L.showsUnavailableForList(isOffline: true, isEmpty: true, dataAsOf: nil))
+        #expect(!L.showsUnavailableForList(isOffline: true, isEmpty: true, dataAsOf: Date()))
+        #expect(!L.showsUnavailableForList(isOffline: true, isEmpty: false, dataAsOf: nil))
+        #expect(!L.showsUnavailableForList(isOffline: false, isEmpty: true, dataAsOf: nil))
+    }
+
+    @Test func errorMessageMapping() {
+        #expect(L.message(for: URLError(.notConnectedToInternet), fallback: "x") == OfflineError.notAvailableOffline.errorDescription)
+        #expect(L.message(for: APIError.network, fallback: "x") == OfflineError.notAvailableOffline.errorDescription)
+        #expect(L.message(for: OfflineError.pendingNotSynced, fallback: "x") == OfflineError.pendingNotSynced.errorDescription)
+        #expect(L.message(for: ProgressError.empty, fallback: "Fallback") == "Fallback")
+    }
+
+    @Test func sharedTexts() {
+        #expect(OfflineTexts.discardButton == "Verwerfen")
+        #expect(OfflineTexts.relationsSkippedToast.contains("Übertragung"))
+    }
+
+    @Test func makeEntryDelegation() {
+        let p = PendingProgressPayload(ref: .server(refType: "todo", refId: "r1"),
+                                       bodyHTML: "<p>" + String(repeating: "a", count: 300) + "</p>", source: "manual")
+        let e = p.makeEntry(id: "local-1", refType: "todo", refId: "r1", capturedAt: Date(timeIntervalSince1970: 0))
+        #expect(e.excerpt.count == 281 && e.excerpt.hasSuffix("…"))
+        #expect(e.id == "local-1" && e.editable && e.kind == "note")
     }
 }

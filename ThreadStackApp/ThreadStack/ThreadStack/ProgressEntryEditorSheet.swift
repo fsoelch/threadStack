@@ -131,10 +131,10 @@ struct ProgressEntryEditorSheet: View {
         return candidate.excerpt
     }
 
-    /// P5: bestehende (synchronisierte) Zwischenstände sind offline nicht bearbeitbar;
+    /// Bestehende (synchronisierte) Zwischenstände sind offline nicht bearbeitbar;
     /// lokale (`local-…`) Einträge schon (Outbox-Update über die Fassade).
     private var offlineBlockedReason: String? {
-        OfflineFeatureALogic.editDisabledReason(id: entry.id, isOffline: offline.isOffline)
+        OfflineGating.editDisabledReason(id: entry.id, isOffline: offline.isOffline)
     }
 
     private var saveDisabled: Bool {
@@ -146,17 +146,10 @@ struct ProgressEntryEditorSheet: View {
         NavigationStack {
             Form {
                 if OfflineIds.isLocal(entry.id) {
-                    Section {
-                        Text(OfflineFeatureALogic.pendingNote)
-                            .scaledFont(.footnote).foregroundStyle(.secondary)
-                    }
+                    OfflineEntryFormHeader(entityId: entry.id, title: descriptionExcerpt ?? entry.excerpt,
+                                           accessibilityPrefix: "Zwischenstand")
                 }
-                if let offlineBlockedReason {
-                    Section {
-                        Label(offlineBlockedReason, systemImage: "wifi.slash")
-                            .scaledFont(.footnote).foregroundStyle(.secondary)
-                    }
-                }
+                if let offlineBlockedReason { OfflineFormNotice(text: offlineBlockedReason) }
                 if descriptionExcerpt != nil || previousEntryExcerpt != nil {
                     Section("Kontext") {
                         if let descriptionExcerpt {
