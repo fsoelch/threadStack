@@ -78,7 +78,9 @@ enum OfflineGating {
     static func shouldCommitRelations(savedId: String) -> Bool { !isLocal(savedId) }
 
     static func discardMessage(title: String, dependents: Int, showsDependentsHint: Bool = true) -> String {
-        var text = "'\(title)' wird nicht übertragen und gelöscht."
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty ? "Der Eintrag" : "'\(trimmed)'"
+        var text = "\(name) wird nicht übertragen und gelöscht."
         if !showsDependentsHint { return text }
         text += " "
         if dependents > 0 {

@@ -179,10 +179,28 @@ private func item(kind: PendingChangeKind = .createTodo, title: String = "Titel"
         #expect(PendingChangesLogic.tapTarget(for: .syncing) == .editForm)
     }
 
-    @Test func discardMessage() {
-        #expect(PendingChangesLogic.discardMessage(title: "Budget")
+    @Test func discardMessageViaSharedGating() {
+        #expect(OfflineGating.discardMessage(title: "Budget", dependents: 0)
                 == "'Budget' wird nicht übertragen und gelöscht. Zugehörige ausstehende Zwischenstände werden ebenfalls verworfen.")
-        #expect(PendingChangesLogic.discardMessage(title: " ").hasPrefix("Der Eintrag wird"))
+        #expect(OfflineGating.discardMessage(title: " ", dependents: 0).hasPrefix("Der Eintrag wird"))
+        #expect(PendingDetailLogic.discardTitle == OfflineTexts.discardButton)
+        #expect(PendingDetailLogic.pendingReason == OfflineTexts.pendingNote)
+    }
+
+    @Test func discardRequestResolution() {
+        let a = PendingItemSummary(id: UUID(), kind: .createTodo, title: "T", contextText: nil,
+                                   capturedAt: Date(timeIntervalSince1970: 0), status: .pending,
+                                   entityId: "local-1", refType: nil, refId: nil, fullText: "T")
+        let b = PendingItemSummary(id: UUID(), kind: .createProgressEntry, title: "Z", contextText: nil,
+                                   capturedAt: Date(timeIntervalSince1970: 1), status: .pending,
+                                   entityId: nil, refType: "todo", refId: "r", fullText: "Z")
+        let store = OfflineStatusStore()
+        let rb = PendingChangesLogic.discardRequest(for: b, offline: store)
+        #expect(!rb.showsDependentsHint)
+        #expect(PendingChangesLogic.item(for: rb, in: [a, b])?.id == b.id)
+        let ra = PendingChangesLogic.discardRequest(for: a, offline: store)
+        #expect(ra.showsDependentsHint && ra.id == "local-1")
+        #expect(PendingChangesLogic.item(for: ra, in: [a, b])?.id == a.id)
     }
 
     @Test func errorMessageDoesNotLeakInternals() {

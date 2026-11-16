@@ -30,11 +30,11 @@ enum PendingDetailLogic {
     static let reassignTitle = "Anderem Meeting zuordnen"
     static let convertTitle = "Als Todo übernehmen"
     static let copyTitle = "Inhalt kopieren"
-    static let discardTitle = "Verwerfen"
+    static let discardTitle = OfflineTexts.discardButton
     static let copiedToast = "Kopiert"
     static let convertedToast = "Als Todo übernommen."
     static let sentToast = "Übertragen."
-    static let pendingReason = "Dieser Eintrag ist noch nicht übertragen."
+    static let pendingReason = OfflineTexts.pendingNote
     static let syncingReason = "Wird synchronisiert …"
 
     static func actionTitle(_ a: PendingDetailAction) -> String {
@@ -108,7 +108,7 @@ struct PendingChangeDetailView: View {
     @State private var isSending = false
     @State private var editTarget: PendingEditTarget?
     @State private var showPicker = false
-    @State private var discardCandidate: PendingItemSummary?
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var errorText: String?
 
     private var item: PendingItemSummary? { offline.items.first { $0.id == itemId } }
@@ -135,7 +135,8 @@ struct PendingChangeDetailView: View {
         .sheet(isPresented: $showPicker) {
             PendingMeetingPickerSheet(currentMeetingId: currentMeetingId) { newId in reassign(to: newId) }
         }
-        .pendingDiscardConfirmation(item: $discardCandidate) { it in
+        .offlineDiscardDialog($discardRequest) { request in
+            guard let it = PendingChangesLogic.item(for: request, in: offline.items) else { return }
             do { try offline.intents.discard(it.id) } catch { errorText = PendingChangesLogic.errorMessage(for: error) }
         }
         .errorAlert($errorText)
@@ -192,7 +193,7 @@ struct PendingChangeDetailView: View {
         let label = Label(PendingDetailLogic.actionTitle(action), systemImage: PendingDetailLogic.actionIcon(action))
         switch action {
         case .discard:
-            Button(role: .destructive) { discardCandidate = item } label: { label }
+            Button(role: .destructive) { discardRequest = PendingChangesLogic.discardRequest(for: item, offline: offline) } label: { label }
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(isSending)
         case .reassign, .convertToTodo, .retry, .edit, .copy:
@@ -222,7 +223,7 @@ struct PendingChangeDetailView: View {
                 state.showToast(PendingDetailLogic.convertedToast)
             } catch { errorText = PendingChangesLogic.errorMessage(for: error) }
         case .discard:
-            discardCandidate = item
+            discardRequest = PendingChangesLogic.discardRequest(for: item, offline: offline)
         }
     }
 

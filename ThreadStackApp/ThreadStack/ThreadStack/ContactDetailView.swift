@@ -493,9 +493,7 @@ struct ContactDetailView: View {
                 infoBlocks.removeAll { $0.id == block.id }
                 await state.reloadContact(id: contactId)
             } catch {
-                infoBlocksError = isTransportFailure(error)
-                    ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                    : "Löschen fehlgeschlagen. Bitte erneut versuchen."
+                infoBlocksError = OfflineGating.message(for: error, fallback: "Löschen fehlgeschlagen. Bitte erneut versuchen.")
             }
         }
     }
@@ -521,9 +519,7 @@ struct ContactDetailView: View {
             try await state.reorderContactInfoBlocks(contactId: contactId, categoryId: categoryId, orderedIds: orderedIds)
         } catch {
             infoBlocks = previous
-            infoBlocksError = isTransportFailure(error)
-                ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                : "Sortieren fehlgeschlagen. Bitte erneut versuchen."
+            infoBlocksError = OfflineGating.message(for: error, fallback: "Sortieren fehlgeschlagen. Bitte erneut versuchen.")
         }
     }
 
@@ -640,9 +636,7 @@ struct ContactDetailView: View {
                 try await state.removeContactAssignment(contactId: contactId, refType: target.refType, refId: target.refId)
                 assignmentTargets.removeAll { $0.id == target.id }
             } catch {
-                assignmentsError = isTransportFailure(error)
-                    ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                    : "Entfernen fehlgeschlagen. Bitte erneut versuchen."
+                assignmentsError = OfflineGating.message(for: error, fallback: "Entfernen fehlgeschlagen. Bitte erneut versuchen.")
             }
         }
     }

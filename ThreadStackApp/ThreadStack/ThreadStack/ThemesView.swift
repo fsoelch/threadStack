@@ -312,7 +312,7 @@ struct ThemeDetailScreen: View {
 
             Section {
                 if listsUnavailable {
-                    Text(OfflineTexts.unavailableTitle).foregroundStyle(.secondary).font(.footnote)
+                    OfflineUnavailableHint()
                 } else if loading {
                     ProgressView()
                 } else if todosScoped.isEmpty {

@@ -16,7 +16,6 @@ enum PendingChangesLogic {
     static let pendingSectionTitle = "Ausstehend"
     static let syncNowTitle = "Jetzt synchronisieren"
     static let offlineSyncHint = "Keine Verbindung"
-    static let discardTitle = "Eintrag verwerfen?"
     static let genericError = "Die Aktion konnte nicht ausgeführt werden."
 
     static func isFailed(_ s: PendingItemStatus) -> Bool { if case .failed = s { return true } else { return false } }
@@ -88,11 +87,22 @@ enum PendingChangesLogic {
         }
     }
 
-    /// "'<Titel>' wird nicht übertragen und gelöscht. Zugehörige ausstehende Zwischenstände werden ebenfalls verworfen."
-    static func discardMessage(title: String) -> String {
-        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let name = t.isEmpty ? "Der Eintrag" : "'\(t)'"
-        return "\(name) wird nicht übertragen und gelöscht. Zugehörige ausstehende Zwischenstände werden ebenfalls verworfen."
+    /// Anfrage fuer den gemeinsamen Verwerfen-Dialog (`offlineDiscardDialog`). Der Hinweis auf
+    /// abhaengige Zwischenstaende entfaellt fuer Zwischenstaende selbst.
+    @MainActor
+    static func discardRequest(for item: PendingItemSummary, offline: OfflineStatusStore) -> OfflineDiscardRequest {
+        let hint = item.kind != .createProgressEntry
+        if let entityId = item.entityId {
+            return offline.discardRequest(forEntityId: entityId, title: item.title, showsDependentsHint: hint)
+        }
+        return OfflineDiscardRequest(id: item.id.uuidString, title: item.title,
+                                     dependents: offline.intents.dependentsCount(item.id),
+                                     showsDependentsHint: hint)
+    }
+
+    /// Loest die Anfrage wieder auf den Eintrag auf (Entity-ID oder, ohne Entity-ID, UUID).
+    static func item(for request: OfflineDiscardRequest, in items: [PendingItemSummary]) -> PendingItemSummary? {
+        items.first { $0.entityId == request.id || $0.id.uuidString == request.id }
     }
 
     /// Fehlertext fuer Nutzer; interne Fehler leaken keine Details.
@@ -140,24 +150,6 @@ enum PendingEditTarget: Identifiable {
     }
 }
 
-// MARK: - Verwerfen-Bestaetigung (gemeinsam fuer Liste und Detail)
-
-extension View {
-    /// Bestaetigung "Eintrag verwerfen?" mit "Abbrechen" (Standard) und "Verwerfen" (destructive).
-    func pendingDiscardConfirmation(item: Binding<PendingItemSummary?>, onConfirm: @escaping (PendingItemSummary) -> Void) -> some View {
-        confirmationDialog(PendingChangesLogic.discardTitle,
-                           isPresented: Binding(get: { item.wrappedValue != nil },
-                                                set: { if !$0 { item.wrappedValue = nil } }),
-                           titleVisibility: .visible,
-                           presenting: item.wrappedValue) { it in
-            Button(PendingDetailLogic.discardTitle, role: .destructive) { onConfirm(it) }
-            Button("Abbrechen", role: .cancel) {}
-        } message: { it in
-            Text(PendingChangesLogic.discardMessage(title: it.title))
-        }
-    }
-}
-
 // MARK: - Sheet
 
 struct PendingChangesSheet: View {
@@ -166,7 +158,7 @@ struct PendingChangesSheet: View {
 
     @State private var detailItem: PendingItemSummary?
     @State private var editTarget: PendingEditTarget?
-    @State private var discardCandidate: PendingItemSummary?
+    @State private var discardRequest: OfflineDiscardRequest?
     @State private var errorText: String?
 
     var body: some View {
@@ -199,7 +191,8 @@ struct PendingChangesSheet: View {
         .sheet(item: $editTarget) { target in
             PendingEditForm(target: target)
         }
-        .pendingDiscardConfirmation(item: $discardCandidate) { item in
+        .offlineDiscardDialog($discardRequest) { request in
+            guard let item = PendingChangesLogic.item(for: request, in: offline.items) else { return }
             do { try offline.intents.discard(item.id) } catch { errorText = PendingChangesLogic.errorMessage(for: error) }
         }
         .errorAlert($errorText)
@@ -260,10 +253,10 @@ struct PendingChangesSheet: View {
         .accessibilityLabel(PendingChangesLogic.rowAccessibilityLabel(item))
         .accessibilityAddTraits(.isButton)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) { discardCandidate = item } label: { Label(PendingDetailLogic.discardTitle, systemImage: "trash") }
+            Button(role: .destructive) { discardRequest = PendingChangesLogic.discardRequest(for: item, offline: offline) } label: { Label(OfflineTexts.discardButton, systemImage: "trash") }
         }
         .contextMenu {
-            Button(role: .destructive) { discardCandidate = item } label: { Label(PendingDetailLogic.discardTitle, systemImage: "trash") }
+            Button(role: .destructive) { discardRequest = PendingChangesLogic.discardRequest(for: item, offline: offline) } label: { Label(OfflineTexts.discardButton, systemImage: "trash") }
         }
     }
 
