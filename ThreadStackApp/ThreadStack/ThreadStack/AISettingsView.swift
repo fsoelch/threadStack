@@ -40,145 +40,141 @@ struct AISettingsView: View {
     var body: some View {
         NavigationStack {
             Group {
-            if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
-                                                     hasContent: state.aiSettings != nil,
-                                                     loadFailedWithTransport: false) {
-                OfflineUnavailableView(reason: OfflineFeatureBLogic.aiUnavailableReason)
-            } else {
-            Form {
-                if offline.isOffline {
-                    Section {
-                        Label(OfflineFeatureBLogic.blockedToast, systemImage: "wifi.slash")
-                            .scaledFont(.footnote).foregroundStyle(.secondary)
-                    }
+                if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
+                                                  hasContent: state.aiSettings != nil,
+                                                  loadFailedOffline: false) {
+                    OfflineUnavailableView(reason: OfflineUnavailableReason.aiFeatures)
+                } else {
+                    settingsForm
                 }
-                Section("Provider & Modell") {
-                    Picker("Provider", selection: $provider) {
-                        ForEach(providers, id: \.value) { p in Text(p.label).tag(p.value) }
-                    }
-                    TextField("Modell", text: $model)
-                        .autocorrectionDisabled().noAutocapitalize()
-                    if let opts = modelDefaults[provider], !opts.isEmpty {
-                        Text("Übliche Modelle: " + opts.joined(separator: ", "))
-                            .font(.caption2).foregroundStyle(.secondary)
-                    }
-                    if provider == "azure" {
-                        TextField("Azure Endpoint", text: $azureEndpoint)
-                            .autocorrectionDisabled().noAutocapitalize()
-                        TextField("API-Version", text: $azureApiVersion)
-                            .autocorrectionDisabled().noAutocapitalize()
-                    }
-                }
-
-                Section("API-Key") {
-                    if let last4 = state.aiSettings?.api_key_last4, !last4.isEmpty {
-                        Text("Gespeichert: ••••\(last4)").font(.footnote).foregroundStyle(.secondary)
-                    }
-                    SecureField("Neuen Key hier eintragen", text: $apiKey)
-                    HStack {
-                        Button("Verbindung testen") { Task { await testConnection() } }
-                            .buttonStyle(.bordered)
-                        Button("Key entfernen", role: .destructive) { Task { await removeKey() } }
-                            .buttonStyle(.bordered)
-                    }
-                    if let testResult { Text(testResult).font(.caption).foregroundStyle(.secondary) }
-                }
-
-                Section("Features") {
-                    Toggle("Pre-Meeting-Briefing", isOn: $features.brief)
-                    Toggle("Notizen-Erfassung",    isOn: $features.capture)
-                    Toggle("Ergebnis-Vorschlag",   isOn: $features.result_draft)
-                    Toggle("Re-Entry-Briefing",    isOn: $features.reentry)
-                    Toggle("Auto-Theme-Tagging",   isOn: $features.theme_tagging)
-                    Toggle("Wochen-Digest",        isOn: $features.digest)
-                    Toggle("Cross-Meeting-Insight",isOn: $features.cross_meeting)
-                    Toggle("Drift-Detection",      isOn: $features.drift)
-                    Toggle("Link-Zusammenfassung",  isOn: Binding(
-                        get: { features.linkSummaryOn },
-                        set: { features.link_summary = $0 }
-                    ))
-                    Toggle("Fortschritts-Zusammenfassung", isOn: Binding(
-                        get: { features.progressSummaryOn },
-                        set: { features.progress_summary = $0 }
-                    ))
-                    Toggle("Beschreibungs-Zusammenfassung", isOn: Binding(
-                        get: { features.descriptionSummaryOn },
-                        set: { features.description_summary = $0 }
-                    ))
-                }
-
-                Section("Budget & Bestätigung") {
-                    HStack { Text("Monats-Budget (Cent)"); Spacer()
-                        TextField("0", value: $budgetCents, format: .number)
-                            .multilineTextAlignment(.trailing).numberKeyboard()
-                    }
-                    HStack { Text("Bestätigungs-Schwelle (Cent)"); Spacer()
-                        TextField("10", value: $thresholdCents, format: .number)
-                            .multilineTextAlignment(.trailing).numberKeyboard()
-                    }
-                    Toggle("AI komplett deaktivieren", isOn: $globallyDisabled)
-                }
-
-                Section("Übergreifende Analysen") {
-                    HStack { Text("Drift-Schwelle (Tage)"); Spacer()
-                        TextField("21", value: $driftDays, format: .number)
-                            .multilineTextAlignment(.trailing).numberKeyboard()
-                    }
-                    HStack { Text("Theme-Tag-Schwelle"); Spacer()
-                        TextField("0.7", value: $themeThreshold, format: .number.precision(.fractionLength(2)))
-                            .multilineTextAlignment(.trailing).numberKeyboard()
-                    }
-                    Toggle("Wochen-Digest automatisch", isOn: $digestEnabled)
-                    Picker("Wochentag", selection: $digestDow) {
-                        Text("Sonntag").tag(0); Text("Montag").tag(1); Text("Dienstag").tag(2)
-                        Text("Mittwoch").tag(3); Text("Donnerstag").tag(4); Text("Freitag").tag(5)
-                        Text("Samstag").tag(6)
-                    }
-                    HStack { Text("Stunde (0–23)"); Spacer()
-                        TextField("18", value: $digestHour, format: .number)
-                            .multilineTextAlignment(.trailing).numberKeyboard()
-                    }
-                }
-
-                if let u = usage {
-                    Section("Verbrauch (\(u.period))") {
-                        HStack { Text("Gesamt:"); Spacer(); Text("\(u.total_cost_cents) Cent").fontWeight(.semibold) }
-                        ForEach(u.entries) { e in
-                            HStack {
-                                Text(e.feature).font(.caption)
-                                Spacer()
-                                Text("\(e.calls)× · \(e.cost_cents) Cent").font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-
-                if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
-            }
-            .disabledWhenOfflineCompact(offline.isOffline)
-            }
             }
             .navigationTitle("AI-Einstellungen")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { Task { await save() } }
-                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: true, isBusy: loading))
+                        .disabled(loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
-            .onChange(of: offline.isOffline) { was, now in
-                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                    wasOffline: was, isOffline: now, hasContent: state.aiSettings != nil) {
-                    Task { await loadInitial() }
-                }
-            }
+            .reloadWhenBackOnline(hasContent: state.aiSettings != nil) { Task { await loadInitial() } }
             .task { await loadInitial() }
         }
     }
 
+    private var settingsForm: some View {
+        Form {
+            if offline.isOffline {
+                OfflineFormNotice(text: OfflineTexts.unavailableTitle)
+            }
+            Section("Provider & Modell") {
+                Picker("Provider", selection: $provider) {
+                    ForEach(providers, id: \.value) { p in Text(p.label).tag(p.value) }
+                }
+                TextField("Modell", text: $model)
+                    .autocorrectionDisabled().noAutocapitalize()
+                if let opts = modelDefaults[provider], !opts.isEmpty {
+                    Text("Übliche Modelle: " + opts.joined(separator: ", "))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                if provider == "azure" {
+                    TextField("Azure Endpoint", text: $azureEndpoint)
+                        .autocorrectionDisabled().noAutocapitalize()
+                    TextField("API-Version", text: $azureApiVersion)
+                        .autocorrectionDisabled().noAutocapitalize()
+                }
+            }
+
+            Section("API-Key") {
+                if let last4 = state.aiSettings?.api_key_last4, !last4.isEmpty {
+                    Text("Gespeichert: ••••\(last4)").font(.footnote).foregroundStyle(.secondary)
+                }
+                SecureField("Neuen Key hier eintragen", text: $apiKey)
+                HStack {
+                    Button("Verbindung testen") { Task { await testConnection() } }
+                        .buttonStyle(.bordered)
+                    Button("Key entfernen", role: .destructive) { Task { await removeKey() } }
+                        .buttonStyle(.bordered)
+                }
+                if let testResult { Text(testResult).font(.caption).foregroundStyle(.secondary) }
+            }
+
+            Section("Features") {
+                Toggle("Pre-Meeting-Briefing", isOn: $features.brief)
+                Toggle("Notizen-Erfassung",    isOn: $features.capture)
+                Toggle("Ergebnis-Vorschlag",   isOn: $features.result_draft)
+                Toggle("Re-Entry-Briefing",    isOn: $features.reentry)
+                Toggle("Auto-Theme-Tagging",   isOn: $features.theme_tagging)
+                Toggle("Wochen-Digest",        isOn: $features.digest)
+                Toggle("Cross-Meeting-Insight",isOn: $features.cross_meeting)
+                Toggle("Drift-Detection",      isOn: $features.drift)
+                Toggle("Link-Zusammenfassung",  isOn: Binding(
+                    get: { features.linkSummaryOn },
+                    set: { features.link_summary = $0 }
+                ))
+                Toggle("Fortschritts-Zusammenfassung", isOn: Binding(
+                    get: { features.progressSummaryOn },
+                    set: { features.progress_summary = $0 }
+                ))
+                Toggle("Beschreibungs-Zusammenfassung", isOn: Binding(
+                    get: { features.descriptionSummaryOn },
+                    set: { features.description_summary = $0 }
+                ))
+            }
+
+            Section("Budget & Bestätigung") {
+                HStack { Text("Monats-Budget (Cent)"); Spacer()
+                    TextField("0", value: $budgetCents, format: .number)
+                        .multilineTextAlignment(.trailing).numberKeyboard()
+                }
+                HStack { Text("Bestätigungs-Schwelle (Cent)"); Spacer()
+                    TextField("10", value: $thresholdCents, format: .number)
+                        .multilineTextAlignment(.trailing).numberKeyboard()
+                }
+                Toggle("AI komplett deaktivieren", isOn: $globallyDisabled)
+            }
+
+            Section("Übergreifende Analysen") {
+                HStack { Text("Drift-Schwelle (Tage)"); Spacer()
+                    TextField("21", value: $driftDays, format: .number)
+                        .multilineTextAlignment(.trailing).numberKeyboard()
+                }
+                HStack { Text("Theme-Tag-Schwelle"); Spacer()
+                    TextField("0.7", value: $themeThreshold, format: .number.precision(.fractionLength(2)))
+                        .multilineTextAlignment(.trailing).numberKeyboard()
+                }
+                Toggle("Wochen-Digest automatisch", isOn: $digestEnabled)
+                Picker("Wochentag", selection: $digestDow) {
+                    Text("Sonntag").tag(0); Text("Montag").tag(1); Text("Dienstag").tag(2)
+                    Text("Mittwoch").tag(3); Text("Donnerstag").tag(4); Text("Freitag").tag(5)
+                    Text("Samstag").tag(6)
+                }
+                HStack { Text("Stunde (0–23)"); Spacer()
+                    TextField("18", value: $digestHour, format: .number)
+                        .multilineTextAlignment(.trailing).numberKeyboard()
+                }
+            }
+
+            if let u = usage {
+                Section("Verbrauch (\(u.period))") {
+                    HStack { Text("Gesamt:"); Spacer(); Text("\(u.total_cost_cents) Cent").fontWeight(.semibold) }
+                    ForEach(u.entries) { e in
+                        HStack {
+                            Text(e.feature).font(.caption)
+                            Spacer()
+                            Text("\(e.calls)× · \(e.cost_cents) Cent").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
+        }
+        .disabledWhenOfflineCompact(offline.isOffline)
+    }
+
     private func loadInitial() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         await state.loadAiSettings()
         guard let s = state.aiSettings else { return }
         provider = s.provider; model = s.model
@@ -196,7 +192,7 @@ struct AISettingsView: View {
     }
 
     private func save() async {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         var body: [String: Any] = [
             "provider": provider, "model": model,
@@ -225,12 +221,12 @@ struct AISettingsView: View {
         ]
         if !apiKey.isEmpty { body["api_key"] = apiKey }
         do { _ = try await state.saveAiSettings(body); apiKey = "" }
-        catch { self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription) }
+        catch { self.error = OfflineGating.message(for: error, fallback: error.localizedDescription) }
         loading = false
     }
 
     private func testConnection() async {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         testResult = "teste …"
         await save()
         do {
@@ -240,7 +236,7 @@ struct AISettingsView: View {
     }
 
     private func removeKey() async {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         do { try await state.removeAiKey(); apiKey = "" }
         catch { self.error = error.localizedDescription }
     }

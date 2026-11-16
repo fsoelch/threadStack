@@ -58,6 +58,7 @@ struct ContactInfoBlockSheet: View {
     }
 
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) private var dismiss
     @StateObject private var controller = KnowledgeEditorController()
 
@@ -67,7 +68,8 @@ struct ContactInfoBlockSheet: View {
     @State private var contentLoaded = false
     @State private var loading = false
     @State private var errorText: String?
-    @State private var isOffline = false
+    /// Letzter Speicherversuch scheiterte am Transport (Wiederholen sinnvoll, solange online).
+    @State private var lastSaveFailedTransport = false
     @State private var showNewCategoryPrompt = false
     @State private var newCategoryName = ""
     @State private var conflict: ContactInfoBlockConflictError?
@@ -78,6 +80,9 @@ struct ContactInfoBlockSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                if offline.isOffline {
+                    OfflineFormNotice(text: OfflineTexts.unavailableTitle)
+                }
                 Section("Rubrik") {
                     categoryMenu
                 }
@@ -92,9 +97,10 @@ struct ContactInfoBlockSheet: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(errorText).scaledFont(.footnote).foregroundStyle(.red)
                                 .accessibilityLabel(errorText)
-                            if isOffline {
+                            if lastSaveFailedTransport {
                                 Button("Erneut versuchen") { performSave() }
                                     .buttonStyle(.bordered)
+                                    .disabledWhenOffline(offline.isOffline)
                             }
                         }
                     }
@@ -111,6 +117,7 @@ struct ContactInfoBlockSheet: View {
                         if loading { ProgressView() } else { Text("Speichern") }
                     }
                     .disabled(ContactInfoBlockSaveLogic.isSaveDisabled(categoryId: categoryId, loading: loading))
+                    .disabledWhenOfflineCompact(offline.isOffline)
                     .accessibilityLabel("Speichern")
                 }
             }
@@ -206,23 +213,23 @@ struct ContactInfoBlockSheet: View {
         let label = newCategoryName.trimmingCharacters(in: .whitespacesAndNewlines)
         newCategoryName = ""
         guard !label.isEmpty else { return }
+        guard !offline.isOffline else { errorText = OfflineGating.notAvailableMessage; return }
         Task {
             do {
                 let created = try await state.createContactCategory(label: label)
                 categoryId = created.id
                 categoryLabel = created.label
             } catch {
-                errorText = isTransportFailure(error)
-                    ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                    : error.localizedDescription
+                errorText = OfflineGating.message(for: error, fallback: error.localizedDescription)
             }
         }
     }
 
     private func performSave() {
         guard !loading else { return }
+        guard !offline.isOffline else { errorText = OfflineGating.notAvailableMessage; return }
         errorText = nil
-        isOffline = false
+        lastSaveFailedTransport = false
         loading = true
         Task { await doSave() }
     }
@@ -263,12 +270,8 @@ struct ContactInfoBlockSheet: View {
     }
 
     private func handleSaveFailure(_ error: Error) {
-        if isTransportFailure(error) {
-            isOffline = true
-            errorText = "Keine Verbindung — deine Eingabe bleibt erhalten. Bitte erneut versuchen, sobald du wieder online bist."
-        } else {
-            errorText = error.localizedDescription
-        }
+        lastSaveFailedTransport = isTransportFailure(error)
+        errorText = OfflineGating.message(for: error, fallback: error.localizedDescription)
     }
 
     private func forceSaveOverConflict(_ conflict: ContactInfoBlockConflictError) async {

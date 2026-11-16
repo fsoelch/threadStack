@@ -104,7 +104,7 @@ struct ThemesView: View {
     }
 
     private var showsUnavailable: Bool {
-        OfflineFeatureBLogic.showsUnavailableForList(isOffline: offline.isOffline,
+        OfflineGating.showsUnavailableForList(isOffline: offline.isOffline,
                                                      isEmpty: state.themes.isEmpty,
                                                      dataAsOf: offline.dataAsOf)
     }
@@ -211,9 +211,9 @@ struct ThemeDetailScreen: View {
     private var children: [Theme] { state.themeChildren(of: themeId) }
     /// Wissen/Todos des Topics kommen aus Server-Calls und werden nicht zwischengespeichert.
     private var listsUnavailable: Bool {
-        OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+        OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                               hasContent: hasLoaded,
-                                              loadFailedWithTransport: loadFailedOffline)
+                                              loadFailedOffline: loadFailedOffline)
     }
     private var linkedMeetingTopics: [(type: String, title: String, meetingId: String?)] {
         state.themeLinksForTheme(themeId: themeId).filter { $0.type == "topic" }
@@ -228,13 +228,7 @@ struct ThemeDetailScreen: View {
             }
         }
         .task(id: "\(themeId)-\(includeDescendants)") { await load() }
-        .onChange(of: offline.isOffline) { was, now in
-            // Verbindung zurueck: Detail-Listen ohne Neustart nachladen.
-            if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                wasOffline: was, isOffline: now, hasContent: hasLoaded) {
-                Task { await load() }
-            }
-        }
+        .reloadWhenBackOnline(hasContent: hasLoaded) { Task { await load() } }
         // `todosScoped` ist eine lokale Momentaufnahme (Server liefert
         // zusaetzlich originThemeTitle/Vererbung, siehe `state.themeTodos`);
         // Aktionen aus der wiederverwendeten `TodoRowView` (Erledigt/Loeschen/
@@ -383,7 +377,7 @@ struct ThemeDetailScreen: View {
 
     private func load() async {
         // Offline gar nicht erst anfragen (UX S1: kein Fehler-Alert pro Ansicht).
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         loading = true
         loadFailedOffline = false
         do {
@@ -426,7 +420,7 @@ struct ThemeDetailScreen: View {
     }
 
     private func confirmDelete(_ theme: Theme) {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         Task {
             let preview = await state.themeDeletePreview(id: theme.id)
             if preview.subTopicCount == 0 {
@@ -488,7 +482,7 @@ struct ThemeMoveView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Verschieben") { save() }
-                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: true, isBusy: loading))
+                        .disabled(loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
@@ -497,11 +491,12 @@ struct ThemeMoveView: View {
     }
 
     private func save() {
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true
         Task {
             do { try await state.moveTheme(id: themeId, parentId: selectedParent); dismiss() }
             catch {
-                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
                 loading = false
             }
         }
@@ -586,7 +581,7 @@ struct KnowledgeDetailView: View {
     }
 
     private func performDelete() {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         Task {
             do {
                 try await state.deleteKnowledgePage(id: page.id)
@@ -631,7 +626,7 @@ struct ThemeFormView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { save() }
-                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: !title.isEmpty, isBusy: loading))
+                        .disabled(title.isEmpty || loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
@@ -642,6 +637,7 @@ struct ThemeFormView: View {
     }
 
     private func save() {
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true
         Task {
             do {
@@ -653,7 +649,7 @@ struct ThemeFormView: View {
                 }
                 dismiss()
             } catch {
-                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
                 loading = false
             }
         }

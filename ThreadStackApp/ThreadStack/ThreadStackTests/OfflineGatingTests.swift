@@ -240,4 +240,30 @@ struct OfflineGatingTests {
         #expect(e.excerpt.count == 281 && e.excerpt.hasSuffix("…"))
         #expect(e.id == "local-1" && e.editable && e.kind == "note")
     }
+
+    // MARK: Feature-Views B (P6)
+
+    @Test func notAvailableMessageUsesUxAbortWording() {
+        #expect(L.notAvailableMessage ==
+                "Keine Verbindung – dein Inhalt bleibt im Dialog erhalten. Bitte versuche es erneut, sobald du wieder online bist.")
+        #expect(L.notAvailableMessage == OfflineError.notAvailableOffline.errorDescription)
+    }
+
+    @Test func unavailablePlaceholderOfflineWithoutContent() {
+        #expect(L.showsUnavailable(isOffline: true, hasContent: false))
+        #expect(!L.showsUnavailable(isOffline: false, hasContent: false))        // echte leere Online-Daten
+        #expect(!L.showsUnavailable(isOffline: true, hasContent: true))
+        #expect(L.showsUnavailable(isOffline: false, hasContent: false, loadFailedOffline: true))
+        #expect(!L.showsUnavailable(isOffline: false, hasContent: true, loadFailedOffline: true))
+    }
+
+    @Test func aiPlaceholderReasonMentionsAiFeatures() {
+        #expect(OfflineUnavailableReason.aiFeatures.explanation.contains("KI-Funktionen"))
+    }
+
+    @Test func summaryRegenerateGateCoversLocalRefsAndOffline() {
+        #expect(L.serverActionDisabledReason(id: local, isOffline: false) == OfflineError.pendingNotSynced.errorDescription)
+        #expect(L.serverActionDisabledReason(id: server, isOffline: true) == OfflineTexts.unavailableTitle)
+        #expect(L.serverActionDisabledReason(id: server, isOffline: false) == nil)
+    }
 }

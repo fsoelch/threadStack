@@ -47,6 +47,7 @@ func knowledgeRelatedPickerAnnotate<Hit: Identifiable>(
 
 struct KnowledgeRelatedPickerSheet: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
 
     /// Aktuelle Seite selbst — wird aus der Trefferliste ausgeschlossen.
@@ -72,6 +73,10 @@ struct KnowledgeRelatedPickerSheet: View {
             Group {
                 if currentPageId == nil {
                     unsavedPageHint
+                } else if offline.isOffline {
+                    // Serversuche: offline nicht verfuegbar (nie zwischengespeichert).
+                    OfflineUnavailableView(reason: .custom(
+                        "Die Wissenssuche braucht eine Verbindung zum Server. Sie ist verfügbar, sobald du wieder online bist."))
                 } else {
                     searchContent
                 }
@@ -166,6 +171,7 @@ struct KnowledgeRelatedPickerSheet: View {
     private func triggerSearch(_ q: String) {
         searchTask?.cancel()
         errorText = nil
+        guard !offline.isOffline else { results = []; loading = false; return }
         guard knowledgeRelatedPickerShouldSearch(q) else {
             results = []
             loading = false
@@ -185,7 +191,7 @@ struct KnowledgeRelatedPickerSheet: View {
             } catch {
                 if Task.isCancelled { return }
                 results = []
-                errorText = "Suche fehlgeschlagen. Bitte erneut versuchen."
+                errorText = OfflineGating.message(for: error, fallback: "Suche fehlgeschlagen. Bitte erneut versuchen.")
             }
         }
     }

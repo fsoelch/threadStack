@@ -176,13 +176,7 @@ struct ContactDetailView: View {
                 Section("Ist zuständig für") { assignmentsSection }
                 if let basicsError {
                     Section {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(basicsError).scaledFont(.footnote).foregroundStyle(.red)
-                            if offline.isOffline {
-                                Button("Erneut versuchen") { saveBasics() }.buttonStyle(.bordered)
-                                    .disabledWhenOffline(true)
-                            }
-                        }
+                        Text(basicsError).scaledFont(.footnote).foregroundStyle(.red)
                     }
                 }
             }
@@ -204,27 +198,16 @@ struct ContactDetailView: View {
                     } label: {
                         if savingBasics { ProgressView() } else { Text("Speichern") }
                     }
-                    .disabled(!OfflineFeatureBLogic.canSave(
-                        isOffline: offline.isOffline,
-                        inputValid: !name.trimmingCharacters(in: .whitespaces).isEmpty,
-                        isBusy: savingBasics))
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || savingBasics)
                     .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
             .onAppear { populateBasics() }
             .task { await loadInfoBlocks() }
             .task { await loadAssignments() }
-            .onChange(of: offline.isOffline) { was, now in
-                // Verbindung zurueck: nie geladene Bereiche ohne Neustart nachladen.
-                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                    wasOffline: was, isOffline: now, hasContent: infoBlocksLoaded) {
-                    Task { await loadInfoBlocks() }
-                }
-                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                    wasOffline: was, isOffline: now, hasContent: assignmentsLoaded) {
-                    Task { await loadAssignments() }
-                }
-            }
+            // Verbindung zurueck: nie geladene Bereiche ohne Neustart nachladen.
+            .reloadWhenBackOnline(hasContent: infoBlocksLoaded) { Task { await loadInfoBlocks() } }
+            .reloadWhenBackOnline(hasContent: assignmentsLoaded) { Task { await loadAssignments() } }
             .sheet(isPresented: $showDescriptionEditor) {
                 DescriptionEditorSheet(initialHTML: description, title: "Beschreibung bearbeiten") { newHTML in
                     description = newHTML
@@ -258,7 +241,7 @@ struct ContactDetailView: View {
     private var stammdatenSection: some View {
         Group {
             if offline.isOffline {
-                Text(OfflineTexts.unavailableTitle).scaledFont(.caption2).foregroundStyle(.secondary)
+                OfflineUnavailableHint()
             }
             Group {
                 TextField("Name", text: $name).autocorrectionDisabled()
@@ -288,7 +271,7 @@ struct ContactDetailView: View {
     }
 
     private func saveBasics() {
-        guard !offline.isOffline else { basicsError = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { basicsError = OfflineGating.notAvailableMessage; return }
         savingBasics = true
         basicsError = nil
         let cleanName  = name.trimmingCharacters(in: .whitespaces)
@@ -301,7 +284,7 @@ struct ContactDetailView: View {
                 dismiss()
             } catch {
                 if isTransportFailure(error) {
-                    basicsError = OfflineFeatureBLogic.blockedDialogMessage
+                    basicsError = OfflineGating.notAvailableMessage
                 } else {
                     basicsError = error.localizedDescription
                 }
@@ -346,9 +329,9 @@ struct ContactDetailView: View {
     /// verschachtelt in einem `VStack` innerhalb dieser Section).
     @ViewBuilder
     private var infoBlocksStatusSection: some View {
-        if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+        if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                                  hasContent: infoBlocksLoaded,
-                                                 loadFailedWithTransport: infoBlocksFailedOffline) {
+                                                 loadFailedOffline: infoBlocksFailedOffline) {
             // Infoblöcke werden nicht zwischengespeichert (UX S1, Screen 8).
             OfflineUnavailableView(reason: .notLoadedYet) { Task { await loadInfoBlocks() } }
                 .frame(minHeight: 200)
@@ -442,11 +425,13 @@ struct ContactDetailView: View {
                         Button {
                             moveBlock(block, in: blocks, direction: -1, categoryId: categoryId)
                         } label: { Label("Nach oben", systemImage: "arrow.up") }
-                        .disabled(blocks.first?.id == block.id || offline.isOffline)
+                        .disabled(blocks.first?.id == block.id)
+                        .disabledWhenOfflineCompact(offline.isOffline)
                         Button {
                             moveBlock(block, in: blocks, direction: 1, categoryId: categoryId)
                         } label: { Label("Nach unten", systemImage: "arrow.down") }
-                        .disabled(blocks.last?.id == block.id || offline.isOffline)
+                        .disabled(blocks.last?.id == block.id)
+                        .disabledWhenOfflineCompact(offline.isOffline)
                     }
                     Button(role: .destructive) { deleteBlock(block) } label: { Label("Löschen", systemImage: "trash") }
                         .disabledWhenOfflineCompact(offline.isOffline)
@@ -480,7 +465,7 @@ struct ContactDetailView: View {
     }
 
     private func loadInfoBlocks() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         infoBlocksLoading = true
         infoBlocksError = nil
         infoBlocksFailedOffline = false
@@ -501,7 +486,7 @@ struct ContactDetailView: View {
     }
 
     private func deleteBlock(_ block: ContactInfoBlock) {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         Task {
             do {
                 try await state.deleteContactInfoBlock(contactId: contactId, blockId: block.id)
@@ -529,7 +514,7 @@ struct ContactDetailView: View {
     /// Fehler wird der vorherige Stand wiederhergestellt (kein stiller
     /// Datenverlust der Sortierung).
     private func persistReorder(categoryId: String, orderedIds: [String]) async {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         let previous = infoBlocks
         infoBlocks = ContactDetailLogic.applyReorder(infoBlocks: infoBlocks, categoryId: categoryId, orderedIds: orderedIds)
         do {
@@ -581,9 +566,9 @@ struct ContactDetailView: View {
 
     @ViewBuilder
     private var assignmentsSection: some View {
-        if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+        if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                                  hasContent: assignmentsLoaded,
-                                                 loadFailedWithTransport: assignmentsFailedOffline) {
+                                                 loadFailedOffline: assignmentsFailedOffline) {
             OfflineUnavailableView(reason: .notLoadedYet) { Task { await loadAssignments() } }
                 .frame(minHeight: 200)
         } else if assignmentsLoading {
@@ -633,7 +618,7 @@ struct ContactDetailView: View {
     }
 
     private func loadAssignments() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         assignmentsLoading = true
         assignmentsError = nil
         assignmentsFailedOffline = false
@@ -649,7 +634,7 @@ struct ContactDetailView: View {
     }
 
     private func removeAssignment(_ target: AssignmentTarget) {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         Task {
             do {
                 try await state.removeContactAssignment(contactId: contactId, refType: target.refType, refId: target.refId)

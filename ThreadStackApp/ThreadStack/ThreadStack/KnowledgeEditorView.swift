@@ -126,7 +126,7 @@ struct KnowledgeEditorView: View {
     /// Offline nie speichern (Wissensseiten werden nicht in die Outbox gestellt);
     /// der Entwurfsmechanismus (KnowledgeDraftStore) bleibt unveraendert aktiv.
     private var saveDisabled: Bool {
-        !OfflineFeatureBLogic.canSave(isOffline: offline.isOffline, inputValid: !trimmedTitle.isEmpty, isBusy: isSaving)
+        trimmedTitle.isEmpty || isSaving
     }
 
     private var draftLookupPageId: String? {
@@ -142,10 +142,7 @@ struct KnowledgeEditorView: View {
         NavigationStack {
             Form {
                 if offline.isOffline {
-                    Section {
-                        Label(OfflineFeatureBLogic.blockedDialogMessage, systemImage: "wifi.slash")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }
+                    OfflineFormNotice(text: OfflineTexts.unavailableTitle)
                 }
                 if showDraftBanner {
                     draftBannerSection
@@ -385,7 +382,8 @@ struct KnowledgeEditorView: View {
                 .foregroundStyle(.orange)
                 .accessibilityLabel(banner.message)
             Button("Erneut versuchen") { performSave() }
-                .disabled(isSaving || offline.isOffline)
+                .disabled(isSaving)
+                .disabledWhenOfflineCompact(offline.isOffline)
         }
     }
 
@@ -484,7 +482,10 @@ struct KnowledgeEditorView: View {
 
     private func performSave() {
         guard !isSaving else { return }
-        guard !offline.isOffline else { return }
+        guard !offline.isOffline else {
+            errorBanner = .custom(OfflineGating.notAvailableMessage)
+            return
+        }
         guard !trimmedTitle.isEmpty else {
             titleErrorText = "Überschrift erforderlich"
             return
@@ -632,17 +633,7 @@ struct KnowledgeEditorView: View {
         // verwendet, statt gar nichts zu kopieren.
         let liveContent = try? await controller.content()
         let plainText = title + "\n\n" + stripHTML(liveContent ?? contentToLoad)
-        #if os(macOS)
-        // .currentHostOnly haelt den Wissensinhalt vom geraeteuebergreifenden
-        // Universal-Clipboard fern (analog .localOnly auf iOS).
-        NSPasteboard.general.prepareForNewContents(with: .currentHostOnly)
-        NSPasteboard.general.setString(plainText, forType: .string)
-        #else
-        UIPasteboard.general.setItems(
-            [[UTType.utf8PlainText.identifier: plainText]],
-            options: [.localOnly: true, .expirationDate: Date().addingTimeInterval(300)]
-        )
-        #endif
+        LocalClipboard.copyPlainText(plainText)
     }
 
     private func convertToNewPage() {

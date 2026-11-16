@@ -193,8 +193,8 @@ struct AISummaryCardView: View {
             .buttonStyle(.plain)
             .scaledFont(.caption)
             .foregroundStyle(DS.accentDark)
-            .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: isRegenerating))
-            .disabledWhenOfflineCompact(offline.isOffline)
+            .disabled(isRegenerating)
+            .offlineGated(regenerateDisabledReason)
             .accessibilityLabel(requiresConfirmation
                 ? "\(kind.badgeLabel) trotz Kosten-Limit jetzt erstellen"
                 : "\(kind.badgeLabel) erneut versuchen")
@@ -208,16 +208,25 @@ struct AISummaryCardView: View {
             .foregroundStyle(DS.accentDark)
     }
 
+    /// Server-Aktion: offline und fuer lokale (noch nicht uebertragene) Vorhaben gesperrt.
+    private var regenerateDisabledReason: String? {
+        OfflineGating.serverActionDisabledReason(id: refId, isOffline: offline.isOffline)
+    }
+
     private func regenerate(confirmed: Bool = false) async {
-        guard !offline.isOffline else { regenerateError = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard regenerateDisabledReason == nil else {
+            regenerateError = regenerateDisabledReason
+            return
+        }
         isRegenerating = true
         regenerateError = nil
         do {
             try await store.regenerate(kind: kind.apiValue, refType: refType, refId: refId, confirmed: confirmed)
         } catch {
-            regenerateError = isTransportFailure(error) ? OfflineFeatureBLogic.blockedDialogMessage
-                : (error as? ProgressError)?.errorDescription
-                ?? "Erneut versuchen fehlgeschlagen. Bitte später erneut versuchen."
+            regenerateError = OfflineGating.message(
+                for: error,
+                fallback: (error as? ProgressError)?.errorDescription
+                    ?? "Erneut versuchen fehlgeschlagen. Bitte später erneut versuchen.")
         }
         isRegenerating = false
     }

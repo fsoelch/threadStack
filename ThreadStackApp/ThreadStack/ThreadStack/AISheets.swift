@@ -1,5 +1,11 @@
 import SwiftUI
 
+extension OfflineUnavailableReason {
+    /// Platzhaltertext fuer KI-Funktionen (nie zwischengespeichert).
+    static let aiFeatures = OfflineUnavailableReason.custom(
+        "KI-Funktionen brauchen eine Verbindung zum Server. Sie sind verfügbar, sobald du wieder online bist.")
+}
+
 // MARK: - Brief Sheet
 
 struct AIBriefSheet: View {
@@ -15,10 +21,10 @@ struct AIBriefSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                    if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                                              hasContent: content != nil,
-                                                             loadFailedWithTransport: false) {
-                        OfflineUnavailableView(reason: OfflineFeatureBLogic.aiUnavailableReason)
+                                                             loadFailedOffline: false) {
+                        OfflineUnavailableView(reason: OfflineUnavailableReason.aiFeatures)
                             .frame(minHeight: 260)
                     } else if loading {
                         ProgressView("Erzeuge Briefing …").frame(maxWidth: .infinity)
@@ -43,16 +49,11 @@ struct AIBriefSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Schließen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Neu") { Task { await load() } }
-                        .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: loading))
+                        .disabled(loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
-            .onChange(of: offline.isOffline) { was, now in
-                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                    wasOffline: was, isOffline: now, hasContent: content != nil) {
-                    Task { await load() }
-                }
-            }
+            .reloadWhenBackOnline(hasContent: content != nil) { Task { await load() } }
             .task { await load() }
         }
     }
@@ -68,7 +69,7 @@ struct AIBriefSheet: View {
         }
     }
     private func load() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         loading = true; error = nil
         do {
             let r = try await state.aiBrief(meetingId: meetingId)
@@ -77,9 +78,9 @@ struct AIBriefSheet: View {
             do {
                 let r = try await state.aiBrief(meetingId: meetingId, confirm: true)
                 content = r.content
-            } catch { self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription) }
+            } catch { self.error = OfflineGating.message(for: error, fallback: error.localizedDescription) }
         } catch {
-            self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+            self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
         }
         loading = false
     }
@@ -109,10 +110,7 @@ struct AICaptureSheet: View {
                 if suggestions == nil {
                     Section {
                         Button("🤖 Vorschläge erzeugen") { Task { await process() } }
-                            .disabled(!OfflineFeatureBLogic.canSave(
-                                isOffline: offline.isOffline,
-                                inputValid: !notes.trimmingCharacters(in: .whitespaces).isEmpty,
-                                isBusy: loading))
+                            .disabled(notes.trimmingCharacters(in: .whitespaces).isEmpty || loading)
                             .disabledWhenOffline(offline.isOffline)
                     }
                 } else {
@@ -127,10 +125,7 @@ struct AICaptureSheet: View {
                 ToolbarItem(placement: .confirmationAction) {
                     if suggestions != nil {
                         Button("Übernehmen") { Task { await apply() } }
-                            .disabled(!OfflineFeatureBLogic.canSave(
-                                isOffline: offline.isOffline,
-                                inputValid: !(pickedTopics.isEmpty && pickedResults.isEmpty && pickedTodos.isEmpty),
-                                isBusy: loading))
+                            .disabled((pickedTopics.isEmpty && pickedResults.isEmpty && pickedTodos.isEmpty) || loading)
                             .disabledWhenOfflineCompact(offline.isOffline)
                     }
                 }
@@ -197,7 +192,7 @@ struct AICaptureSheet: View {
     }
 
     private func process() async {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         do {
             let r = try await state.aiCapture(meetingId: meetingId, notes: notes)
@@ -209,16 +204,16 @@ struct AICaptureSheet: View {
             do {
                 let r = try await state.aiCapture(meetingId: meetingId, notes: notes, confirm: true)
                 suggestions = r.suggestions
-            } catch { self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription) }
+            } catch { self.error = OfflineGating.message(for: error, fallback: error.localizedDescription) }
         } catch {
-            self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+            self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
         }
         loading = false
     }
 
     private func apply() async {
         guard let s = suggestions else { return }
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         let picked = CaptureSuggestions(
             new_topics:    s.new_topics.filter    { pickedTopics.contains($0.id) },
             topic_results: s.topic_results.filter { pickedResults.contains($0.id) },
@@ -226,7 +221,7 @@ struct AICaptureSheet: View {
             theme_links:   []
         )
         do { try await state.aiCaptureApply(meetingId: meetingId, suggestions: picked); dismiss() }
-        catch { self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription) }
+        catch { self.error = OfflineGating.message(for: error, fallback: error.localizedDescription) }
     }
 }
 
@@ -247,10 +242,10 @@ struct AIResultDraftSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
                 if loading { ProgressView("Erzeuge Vorschlag …") }
-                else if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                else if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                                               hasContent: !draft.isEmpty,
-                                                              loadFailedWithTransport: false) {
-                    OfflineUnavailableView(reason: OfflineFeatureBLogic.aiUnavailableReason)
+                                                              loadFailedOffline: false) {
+                    OfflineUnavailableView(reason: OfflineUnavailableReason.aiFeatures)
                 } else {
                     TextEditor(text: $draft)
                         .frame(minHeight: 120)
@@ -269,17 +264,12 @@ struct AIResultDraftSheet: View {
                         .disabled(loading || draft.isEmpty)
                 }
             }
-            .onChange(of: offline.isOffline) { was, now in
-                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                    wasOffline: was, isOffline: now, hasContent: !draft.isEmpty) {
-                    Task { await load() }
-                }
-            }
+            .reloadWhenBackOnline(hasContent: !draft.isEmpty) { Task { await load() } }
             .task { await load() }
         }
     }
     private func load() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         loading = true
         do {
             let r = try await state.aiResultDraft(refType: refType, refId: refId)
@@ -288,9 +278,9 @@ struct AIResultDraftSheet: View {
             do {
                 let r = try await state.aiResultDraft(refType: refType, refId: refId, confirm: true)
                 draft = r.draft
-            } catch { self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription) }
+            } catch { self.error = OfflineGating.message(for: error, fallback: error.localizedDescription) }
         } catch {
-            self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+            self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
         }
         loading = false
     }

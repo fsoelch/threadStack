@@ -39,7 +39,7 @@ struct ContactsView: View {
             }
             #endif
 
-            if OfflineFeatureBLogic.showsUnavailableForList(isOffline: offline.isOffline,
+            if OfflineGating.showsUnavailableForList(isOffline: offline.isOffline,
                                                             isEmpty: state.contacts.isEmpty,
                                                             dataAsOf: offline.dataAsOf) {
                 OfflineUnavailableView(reason: .notLoadedYet)
@@ -183,10 +183,7 @@ struct ContactFormView: View {
         NavigationStack {
             Form {
                 if offline.isOffline {
-                    Section {
-                        Text(OfflineFeatureBLogic.blockedDialogMessage)
-                            .foregroundStyle(.secondary).font(.footnote)
-                    }
+                    OfflineFormNotice(text: OfflineTexts.unavailableTitle)
                 }
                 Section("Name") {
                     TextField("z. B. Anna Müller", text: $name)
@@ -208,13 +205,7 @@ struct ContactFormView: View {
                 }
                 if let error {
                     Section {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(error).foregroundStyle(.red).font(.footnote)
-                            if offline.isOffline {
-                                Button("Erneut versuchen") { save() }.buttonStyle(.bordered)
-                                    .disabledWhenOffline(true)
-                            }
-                        }
+                        Text(error).foregroundStyle(.red).font(.footnote)
                     }
                 }
             }
@@ -224,10 +215,7 @@ struct ContactFormView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { save() }
-                        .disabled(!OfflineFeatureBLogic.canSave(
-                            isOffline: offline.isOffline,
-                            inputValid: !name.trimmingCharacters(in: .whitespaces).isEmpty,
-                            isBusy: loading))
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty || loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
@@ -242,7 +230,7 @@ struct ContactFormView: View {
     }
 
     private func save() {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         let cleanName  = name.trimmingCharacters(in: .whitespaces)
         let cleanRole  = role.trimmingCharacters(in: .whitespaces)
@@ -260,7 +248,7 @@ struct ContactFormView: View {
                 // Meldung mit erneutem Versuch statt eines stillen Verwurfs
                 // (Story 14, explizit gefordertes Offline-/Fehlerverhalten).
                 if isTransportFailure(error) {
-                    self.error = OfflineFeatureBLogic.blockedDialogMessage
+                    self.error = OfflineGating.notAvailableMessage
                 } else {
                     self.error = error.localizedDescription
                 }

@@ -14,9 +14,9 @@ struct DigestView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                                          hasContent: current != nil,
-                                                         loadFailedWithTransport: loadFailedOffline) {
+                                                         loadFailedOffline: loadFailedOffline) {
                     OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
                         .frame(minHeight: 300)
                 } else if loading && current == nil {
@@ -35,12 +35,7 @@ struct DigestView: View {
             .padding()
         }
         .navigationTitle("Wochen-Digest")
-        .onChange(of: offline.isOffline) { was, now in
-            if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                wasOffline: was, isOffline: now, hasContent: current != nil) {
-                Task { await reload() }
-            }
-        }
+        .reloadWhenBackOnline(hasContent: current != nil) { Task { await reload() } }
         .task { await reload() }
     }
 
@@ -55,7 +50,7 @@ struct DigestView: View {
                     Label("Neu erzeugen", systemImage: "sparkles")
                 }
                 .buttonStyle(.borderedProminent).controlSize(.small)
-                .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: loading))
+                .disabled(loading)
                 .disabledWhenOfflineCompact(offline.isOffline)
                 if archive.count > 1 {
                     Picker("Woche", selection: $selected) {
@@ -126,7 +121,7 @@ struct DigestView: View {
     }
 
     private func reload() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         loading = true; error = nil; loadFailedOffline = false
         do {
             current = try await state.aiDigestCurrent()
@@ -142,8 +137,8 @@ struct DigestView: View {
     }
 
     private func regenerate() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else {
-            state.showToast(OfflineFeatureBLogic.blockedToast); return
+        guard !offline.isOffline else {
+            state.showToast(OfflineTexts.unavailableTitle); return
         }
         loading = true; error = nil
         do {

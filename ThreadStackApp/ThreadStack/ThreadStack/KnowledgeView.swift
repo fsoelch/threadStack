@@ -97,7 +97,7 @@ struct KnowledgeTopicTreeView: View {
     }
 
     private var showsUnavailable: Bool {
-        OfflineFeatureBLogic.showsUnavailableForList(
+        OfflineGating.showsUnavailableForList(
             isOffline: offline.isOffline,
             isEmpty: state.themes.isEmpty && state.knowledgePages.isEmpty,
             dataAsOf: offline.dataAsOf)
@@ -291,7 +291,7 @@ struct KnowledgeTopicScopedListView: View {
     private func performDelete() {
         guard let candidate = deleteCandidate else { return }
         deleteCandidate = nil
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         Task {
             do {
                 try await state.deleteKnowledgePage(id: candidate.id)
@@ -346,7 +346,7 @@ struct KnowledgeAllListView: View {
             }
             #endif
 
-            if OfflineFeatureBLogic.showsUnavailableForList(isOffline: offline.isOffline,
+            if OfflineGating.showsUnavailableForList(isOffline: offline.isOffline,
                                                             isEmpty: state.knowledgePages.isEmpty,
                                                             dataAsOf: offline.dataAsOf) {
                 OfflineUnavailableView(reason: .notLoadedYet)
@@ -410,7 +410,7 @@ struct KnowledgeAllListView: View {
     private func performDelete() {
         guard let candidate = deleteCandidate else { return }
         deleteCandidate = nil
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         Task {
             do {
                 try await state.deleteKnowledgePage(id: candidate.id)

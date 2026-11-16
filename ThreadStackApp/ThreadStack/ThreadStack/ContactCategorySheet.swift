@@ -29,12 +29,14 @@ import SwiftUI
 
 struct ContactCategorySheet: View {
     @EnvironmentObject var state: AppState
+    @EnvironmentObject var offline: OfflineStatusStore
     @Environment(\.dismiss) var dismiss
 
     @State private var newLabel = ""
     @State private var creating = false
     @State private var error: String?
-    @State private var isOffline = false
+    /// Letztes Anlegen scheiterte am Transport (Wiederholen sinnvoll, solange online).
+    @State private var lastCreateFailedTransport = false
 
     @State private var renamingCategory: ContactCategory?
     @State private var renameText = ""
@@ -51,12 +53,16 @@ struct ContactCategorySheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if offline.isOffline {
+                    OfflineFormNotice(text: OfflineTexts.unavailableTitle)
+                }
                 Section("Neue Rubrik") {
                     HStack {
                         TextField("z. B. Interessen", text: $newLabel)
                             .autocorrectionDisabled()
                         Button("Anlegen") { createCategory() }
                             .disabled(newLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || creating)
+                            .disabledWhenOfflineCompact(offline.isOffline)
                     }
                 }
                 Section(header: rubrikenHeader) {
@@ -73,8 +79,9 @@ struct ContactCategorySheet: View {
                     Section {
                         VStack(alignment: .leading, spacing: 6) {
                             Text(error).foregroundStyle(.red).font(.footnote)
-                            if isOffline {
+                            if lastCreateFailedTransport {
                                 Button("Erneut versuchen") { createCategory() }.buttonStyle(.bordered)
+                                    .disabledWhenOffline(offline.isOffline)
                             }
                         }
                     }
@@ -172,6 +179,7 @@ struct ContactCategorySheet: View {
             }
             .buttonStyle(.plain).foregroundStyle(.secondary)
             .disabled(renaming || deleting)
+            .disabledWhenOfflineCompact(offline.isOffline)
             .accessibilityLabel("\(cat.label) umbenennen")
 
             // Fund Feature-Parität (2026-09-06): Löschen-Button für ALLE
@@ -186,6 +194,7 @@ struct ContactCategorySheet: View {
             }
             .buttonStyle(.plain)
             .disabled(renaming || deleting)
+            .disabledWhenOfflineCompact(offline.isOffline)
             .accessibilityLabel("\(cat.label) löschen")
         }
     }
@@ -193,20 +202,17 @@ struct ContactCategorySheet: View {
     private func createCategory() {
         let label = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty else { return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         creating = true
         error = nil
-        isOffline = false
+        lastCreateFailedTransport = false
         Task {
             do {
                 _ = try await state.createContactCategory(label: label)
                 newLabel = ""
             } catch {
-                if isTransportFailure(error) {
-                    isOffline = true
-                    self.error = "Keine Verbindung — deine Eingabe bleibt erhalten. Bitte erneut versuchen, sobald du wieder online bist."
-                } else {
-                    self.error = error.localizedDescription
-                }
+                lastCreateFailedTransport = isTransportFailure(error)
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
             }
             creating = false
         }
@@ -217,21 +223,20 @@ struct ContactCategorySheet: View {
         let label = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
         renamingCategory = nil
         guard !label.isEmpty, label != cat.label else { return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         renaming = true
         error = nil
-        // Code-Review Fund 7: `isOffline` steuert den "Erneut versuchen"-
+        // Code-Review Fund 7: `lastCreateFailedTransport` steuert den "Erneut versuchen"-
         // Button im `error`-Abschnitt, der IMMER `createCategory()` erneut
         // aufruft (siehe unten) — muss daher hier zurückgesetzt werden,
         // sonst würde ein späterer Umbenennen-Fehler fälschlich den
         // "Erneut versuchen"-Button für das (ggf. gar nicht mehr aktuelle)
         // Anlegen-Formular anzeigen.
-        isOffline = false
+        lastCreateFailedTransport = false
         Task {
             do { _ = try await state.updateContactCategory(id: cat.id, label: label) }
             catch {
-                self.error = isTransportFailure(error)
-                    ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                    : error.localizedDescription
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
             }
             renaming = false
         }
@@ -263,13 +268,14 @@ struct ContactCategorySheet: View {
     }
 
     private func attemptDelete(_ cat: ContactCategory, confirm: Bool) {
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         deleting = true
         error = nil
         // Siehe Kommentar in `commitRename()` (Code-Review Fund 7): verhindert,
-        // dass ein stehen gebliebenes `isOffline == true` aus einem früheren
+        // dass ein stehen gebliebenes `lastCreateFailedTransport == true` aus einem früheren
         // Anlegen-Fehlschlag den "Erneut versuchen"-Button hier fälschlich
         // erneut `createCategory()` statt des Löschversuchs aufrufen lässt.
-        isOffline = false
+        lastCreateFailedTransport = false
         Task {
             do {
                 try await state.deleteContactCategory(id: cat.id, confirm: confirm)
@@ -287,9 +293,7 @@ struct ContactCategorySheet: View {
             } catch let protectedErr as ContactCategoryProtectedError {
                 blockedDeleteMessage = protectedErr.errorDescription
             } catch {
-                self.error = isTransportFailure(error)
-                    ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-                    : error.localizedDescription
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
             }
             deleting = false
         }

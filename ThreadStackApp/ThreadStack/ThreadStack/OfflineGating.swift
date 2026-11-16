@@ -137,6 +137,12 @@ enum OfflineGating {
         isOffline && isEmpty && dataAsOf == nil
     }
 
+    /// Text, wenn eine Online-only-Aktion trotz Sperre ausgeloest wird und im Dialog abbricht
+    /// (Eingabe bleibt erhalten). Ergaenzung P6.
+    static var notAvailableMessage: String {
+        OfflineError.notAvailableOffline.errorDescription ?? OfflineTexts.unavailableTitle
+    }
+
     /// Nutzertext zu einem Fehler: Transportfehler -> "Offline nicht verfuegbar. Deine Eingaben bleiben
     /// erhalten."; `OfflineError` -> sein eigener Text; sonst `fallback`.
     static func message(for error: Error, fallback: String) -> String {

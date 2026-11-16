@@ -45,10 +45,7 @@ struct SettingsView: View {
                     SecureField("Neues Passwort",     text: $newPassword)
                     SecureField("Bestätigen",         text: $confirm)
                     Button("Passwort ändern") { changePassword() }
-                        .disabled(!OfflineFeatureBLogic.canSave(
-                            isOffline: offline.isOffline,
-                            inputValid: !oldPassword.isEmpty && !newPassword.isEmpty && !confirm.isEmpty,
-                            isBusy: loading))
+                        .disabled(oldPassword.isEmpty || newPassword.isEmpty || confirm.isEmpty || loading)
                         .disabledWhenOffline(offline.isOffline)
                 }
 
@@ -78,7 +75,7 @@ struct SettingsView: View {
     }
 
     private func changePassword() {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         guard newPassword == confirm else { error = "Passwörter stimmen nicht überein."; return }
         loading = true; error = nil; success = false
         Task {
@@ -86,8 +83,7 @@ struct SettingsView: View {
                 try await state.changePassword(old: oldPassword, new: newPassword)
                 success = true; oldPassword = ""; newPassword = ""; confirm = ""
             } catch {
-                self.error = isTransportFailure(error)
-                    ? OfflineFeatureBLogic.blockedDialogMessage : error.localizedDescription
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
             }
             loading = false
         }

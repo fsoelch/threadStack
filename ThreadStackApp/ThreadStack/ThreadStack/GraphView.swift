@@ -46,6 +46,11 @@ struct GraphView: View {
             .map(\.key))
     }
 
+    /// `graphStore.isOffline` wird erst von P7 aus dem globalen Status abgeleitet und
+    /// kann bis dahin nur nach einem fehlgeschlagenen Graph-Load gesetzt sein; der
+    /// globale Status (`offline.isOffline`) kennt den Zustand frueher. Beide zaehlen.
+    private var isEffectivelyOffline: Bool { offline.isOffline || graphStore.isOffline }
+
     var body: some View {
         content
             .navigationTitle("Graph")
@@ -143,9 +148,9 @@ struct GraphView: View {
     }
 
     @ViewBuilder private var canvasArea: some View {
-        if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline || graphStore.isOffline,
+        if OfflineGating.showsUnavailable(isOffline: isEffectivelyOffline,
                                                  hasContent: !graphStore.nodes.isEmpty,
-                                                 loadFailedWithTransport: false) {
+                                                 loadFailedOffline: false) {
             // Nie geladen und offline: Platzhalter statt Leerzustand/Fehler (UX S1).
             OfflineUnavailableView(reason: .notLoadedYet) { Task { await graphStore.load() } }
         } else if graphStore.isLoading && graphStore.nodes.isEmpty {
@@ -164,7 +169,7 @@ struct GraphView: View {
                     visibleTypes: visibleTypes,
                     searchMatchKeys: searchMatchKeys,
                     focusKey: focusKey,
-                    editingEnabled: !(graphStore.isOffline || offline.isOffline),
+                    editingEnabled: !isEffectivelyOffline,
                     onTapNode: { selectedNode = $0 },
                     onTapEdge: { selectedEdge = $0 },
                     onNodeDragEnded: handleNodeDragEnded
@@ -278,7 +283,7 @@ struct GraphView: View {
     // MARK: - Drag handling (move / reparent)
 
     private func handleNodeDragEnded(_ node: GraphNode, previous: CGPoint, new: CGPoint, droppedOnKey: String?) {
-        guard !(graphStore.isOffline || offline.isOffline) else {
+        guard !isEffectivelyOffline else {
             // Editing is disabled while offline — revert visually.
             positions[node.key] = previous
             return

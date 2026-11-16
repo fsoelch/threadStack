@@ -22,9 +22,9 @@ struct MomentumView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
-                if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                                          hasContent: settings != nil,
-                                                         loadFailedWithTransport: loadFailedOffline) {
+                                                         loadFailedOffline: loadFailedOffline) {
                     OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
                         .frame(minHeight: 300)
                 } else if loading && settings == nil {
@@ -46,12 +46,7 @@ struct MomentumView: View {
             .padding()
         }
         .navigationTitle("Fortschritt")
-        .onChange(of: offline.isOffline) { was, now in
-            if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                wasOffline: was, isOffline: now, hasContent: settings != nil) {
-                Task { await reload() }
-            }
-        }
+        .reloadWhenBackOnline(hasContent: settings != nil) { Task { await reload() } }
         .task { await reload() }
     }
 
@@ -126,7 +121,7 @@ struct MomentumView: View {
                 Text(settingsError).font(.caption).foregroundStyle(.red)
             }
             if offline.isOffline {
-                Text(OfflineTexts.unavailableTitle).scaledFont(.caption2).foregroundStyle(.secondary)
+                OfflineUnavailableHint()
             }
             pauseDaysSection
         }
@@ -192,7 +187,7 @@ struct MomentumView: View {
     }
 
     private func reload() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         loading = true; error = nil; loadFailedOffline = false
         do {
             let overview = try await state.momentumOverview()

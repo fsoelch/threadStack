@@ -13,9 +13,9 @@ struct AdminView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
+                if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
                                                          hasContent: hasLoaded,
-                                                         loadFailedWithTransport: loadFailedOffline) {
+                                                         loadFailedOffline: loadFailedOffline) {
                     OfflineUnavailableView(reason: .notLoadedYet) { Task { await load() } }
                 } else {
                     List {
@@ -34,12 +34,7 @@ struct AdminView: View {
                         .accessibilityLabel("Neuer Benutzer")
                 }
             }
-            .onChange(of: offline.isOffline) { was, now in
-                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                    wasOffline: was, isOffline: now, hasContent: hasLoaded) {
-                    Task { await load() }
-                }
-            }
+            .reloadWhenBackOnline(hasContent: hasLoaded) { Task { await load() } }
             .task { await load() }
             .sheet(isPresented: $showNew, onDismiss: { Task { await load() } }) {
                 NewUserSheet()
@@ -49,7 +44,7 @@ struct AdminView: View {
     }
 
     private func load() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         loadFailedOffline = false
         do { users = try await state.fetchUsers(); hasLoaded = true }
         catch {
@@ -59,7 +54,7 @@ struct AdminView: View {
     }
 
     private func deleteUser(_ user: AdminUser) {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         Task {
             do { try await state.deleteUser(id: user.id); await load() }
             catch { self.error = error.localizedDescription }
@@ -110,10 +105,7 @@ struct NewUserSheet: View {
                 }
                 Section { Toggle("Admin-Rechte", isOn: $isAdmin) }
                 if offline.isOffline {
-                    Section {
-                        Text(OfflineFeatureBLogic.blockedDialogMessage)
-                            .foregroundStyle(.secondary).font(.footnote)
-                    }
+                    OfflineFormNotice(text: OfflineTexts.unavailableTitle)
                 }
                 if let error { Section { Text(error).foregroundStyle(.red).font(.footnote) } }
             }
@@ -123,24 +115,22 @@ struct NewUserSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Erstellen") { create() }
-                        .disabled(!OfflineFeatureBLogic.canSave(isOffline: offline.isOffline,
-                                                                inputValid: !username.isEmpty && !password.isEmpty,
-                                                                isBusy: loading))
-                        .accessibilityHint(offline.isOffline ? OfflineTexts.unavailableTitle : "")
+                        .disabled(username.isEmpty || password.isEmpty || loading)
+                        .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
         }
     }
 
     private func create() {
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true
         Task {
             do {
                 try await state.createUser(username: username, password: password, isAdmin: isAdmin)
                 dismiss()
             } catch {
-                self.error = isTransportFailure(error)
-                    ? OfflineFeatureBLogic.blockedDialogMessage : error.localizedDescription
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
                 loading = false
             }
         }

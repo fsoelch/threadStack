@@ -175,7 +175,7 @@ struct StackPanelView: View {
                     }
                 }
                 if offline.isOffline {
-                    Text(OfflineTexts.unavailableTitle).font(.caption2).foregroundStyle(.secondary)
+                    OfflineUnavailableHint()
                 }
                 if let r = reentry[f.id] {
                     Text(r).font(.caption2).padding(6)
@@ -202,7 +202,7 @@ struct StackPanelView: View {
     }
 
     private func runReentry(_ f: StackFrame) async {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         do {
             let r = try await state.aiReentry(frameId: f.id)
             reentry[f.id] = r.content.summary
@@ -280,10 +280,7 @@ struct StackPushSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Push") { submit() }
-                        .disabled(!OfflineFeatureBLogic.canSave(
-                            isOffline: offline.isOffline,
-                            inputValid: !note.trimmingCharacters(in: .whitespaces).isEmpty,
-                            isBusy: loading))
+                        .disabled(note.trimmingCharacters(in: .whitespaces).isEmpty || loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
@@ -309,7 +306,7 @@ struct StackPushSheet: View {
     }
 
     private func submit() {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         Task {
             do {
@@ -317,7 +314,7 @@ struct StackPushSheet: View {
                                               nextStepNote: note.trimmingCharacters(in: .whitespaces))
                 dismiss()
             } catch {
-                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
                 loading = false
             }
         }
@@ -416,7 +413,7 @@ struct StackPopSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Pop") { submit() }
-                        .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: loading)
+                        .disabled(loading
                                   || (StackPopCheckpointLogic.progressSource(forResolution: resolution) != nil
                                       && ProgressEntryCharLimit.isOverLimit(length: whereAmI.count)))
                         .disabledWhenOfflineCompact(offline.isOffline)
@@ -434,7 +431,7 @@ struct StackPopSheet: View {
     }
 
     private func submit() {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         Task {
             do {
@@ -527,10 +524,7 @@ struct StackNoteSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Speichern") { submit() }
-                        .disabled(!OfflineFeatureBLogic.canSave(
-                            isOffline: offline.isOffline,
-                            inputValid: !note.trimmingCharacters(in: .whitespaces).isEmpty,
-                            isBusy: loading))
+                        .disabled(note.trimmingCharacters(in: .whitespaces).isEmpty || loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
@@ -538,12 +532,12 @@ struct StackNoteSheet: View {
         }
     }
     private func submit() {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         Task {
             do { try await state.stackUpdateNote(frameId: frame.id, note: note); dismiss() }
             catch {
-                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
                 loading = false
             }
         }
@@ -564,58 +558,56 @@ struct StackHistoryView: View {
     var body: some View {
         NavigationStack {
             Group {
-            if OfflineFeatureBLogic.showsUnavailable(isOffline: offline.isOffline,
-                                                     hasContent: hasLoaded,
-                                                     loadFailedWithTransport: loadFailedOffline) {
-                OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
-            } else {
-            List {
-                Picker("Filter", selection: $resolutionFilter) {
-                    Text("Alle").tag("")
-                    Text("done").tag("done")
-                    Text("snoozed").tag("snoozed")
-                    Text("dropped").tag("dropped")
+                if OfflineGating.showsUnavailable(isOffline: offline.isOffline,
+                                                  hasContent: hasLoaded,
+                                                  loadFailedOffline: loadFailedOffline) {
+                    OfflineUnavailableView(reason: .notLoadedYet) { Task { await reload() } }
+                } else {
+                    historyList
                 }
-                .pickerStyle(.segmented)
-
-                if frames.isEmpty {
-                    Text("Keine Einträge").foregroundStyle(.secondary).font(.subheadline)
-                }
-                ForEach(frames) { f in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Image(systemName: f.ref_type == "topic" ? "bubble.left" : "checkmark.circle")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Text(f.title).font(.subheadline).fontWeight(.medium)
-                            Spacer()
-                            if let r = f.pop_resolution {
-                                Text(r).font(.caption2).bold()
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(badgeColor(r).opacity(0.18))
-                                    .foregroundStyle(badgeColor(r))
-                                    .clipShape(Capsule())
-                            }
-                        }
-                        Text(f.next_step_note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        if let p = f.popped_at {
-                            Text("gepoppt \(p.prefix(16))").font(.caption2).foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            }
             }
             .navigationTitle("Stack-Historie")
             .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Schließen") { dismiss() } } }
             .task { await reload() }
-            .onChange(of: offline.isOffline) { was, now in
-                if OfflineFeatureBLogic.shouldReloadAfterConnectivityChange(
-                    wasOffline: was, isOffline: now, hasContent: hasLoaded) {
-                    Task { await reload() }
+            .reloadWhenBackOnline(hasContent: hasLoaded) { Task { await reload() } }
+            .onChange(of: resolutionFilter) { _, _ in Task { await reload() } }
+        }
+    }
+    private var historyList: some View {
+        List {
+            Picker("Filter", selection: $resolutionFilter) {
+                Text("Alle").tag("")
+                Text("done").tag("done")
+                Text("snoozed").tag("snoozed")
+                Text("dropped").tag("dropped")
+            }
+            .pickerStyle(.segmented)
+
+            if frames.isEmpty {
+                Text("Keine Einträge").foregroundStyle(.secondary).font(.subheadline)
+            }
+            ForEach(frames) { f in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: f.ref_type == "topic" ? "bubble.left" : "checkmark.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(f.title).font(.subheadline).fontWeight(.medium)
+                        Spacer()
+                        if let r = f.pop_resolution {
+                            Text(r).font(.caption2).bold()
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(badgeColor(r).opacity(0.18))
+                                .foregroundStyle(badgeColor(r))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    Text(f.next_step_note).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    if let p = f.popped_at {
+                        Text("gepoppt \(p.prefix(16))").font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             }
-            .onChange(of: resolutionFilter) { _, _ in Task { await reload() } }
         }
     }
     private func badgeColor(_ r: String) -> Color {
@@ -628,7 +620,7 @@ struct StackHistoryView: View {
         }
     }
     private func reload() async {
-        guard OfflineFeatureBLogic.shouldPerformRequest(isOffline: offline.isOffline) else { return }
+        guard !offline.isOffline else { return }
         loadFailedOffline = false
         do {
             frames = try await state.stackHistory(resolution: resolutionFilter.isEmpty ? nil : resolutionFilter)
@@ -672,7 +664,7 @@ struct EndOfDayView: View {
                             .disabledWhenOfflineCompact(offline.isOffline)
                         }
                         if offline.isOffline {
-                            Text(OfflineTexts.unavailableTitle).font(.caption2).foregroundStyle(.secondary)
+                            OfflineUnavailableHint()
                         }
                     }
                 }
@@ -683,7 +675,7 @@ struct EndOfDayView: View {
         }
     }
     private func actTomorrow(_ f: StackFrame) async {
-        guard !offline.isOffline else { state.showToast(OfflineFeatureBLogic.blockedToast); return }
+        guard !offline.isOffline else { state.showToast(OfflineTexts.unavailableTitle); return }
         guard let tomorrow9 = Calendar.current.date(bySettingHour: 9, minute: 0, second: 0,
                                                     of: Calendar.current.date(byAdding: .day, value: 1, to: Date())!)
         else { return }
@@ -748,7 +740,7 @@ struct FrameDetailSheet: View {
                         } label: {
                             Label("Auf dieses Frame zurück", systemImage: "arrow.uturn.backward")
                         }
-                        .disabled(OfflineFeatureBLogic.isActionDisabled(isOffline: offline.isOffline, isBusy: loading))
+                        .disabled(loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                     }
                 }
@@ -757,11 +749,11 @@ struct FrameDetailSheet: View {
     }
 
     private func activate() async {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         do { try await state.stackResume(frameId: frame.id); dismiss() }
         catch {
-            self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+            self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
             loading = false
         }
     }
@@ -800,11 +792,8 @@ struct QuickPushSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Anlegen & pushen") { submit() }
-                        .disabled(!OfflineFeatureBLogic.canSave(
-                            isOffline: offline.isOffline,
-                            inputValid: !title.trimmingCharacters(in: .whitespaces).isEmpty
-                                && !note.trimmingCharacters(in: .whitespaces).isEmpty,
-                            isBusy: loading))
+                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || note.trimmingCharacters(in: .whitespaces).isEmpty || loading)
                         .disabledWhenOfflineCompact(offline.isOffline)
                 }
             }
@@ -812,7 +801,7 @@ struct QuickPushSheet: View {
     }
 
     private func submit() {
-        guard !offline.isOffline else { error = OfflineFeatureBLogic.blockedDialogMessage; return }
+        guard !offline.isOffline else { error = OfflineGating.notAvailableMessage; return }
         loading = true; error = nil
         Task {
             do {
@@ -822,64 +811,9 @@ struct QuickPushSheet: View {
                 _ = try await state.stackPush(refType: "todo", refId: t.id, nextStepNote: cleanNote)
                 dismiss()
             } catch {
-                self.error = OfflineFeatureBLogic.message(for: error, fallback: error.localizedDescription)
+                self.error = OfflineGating.message(for: error, fallback: error.localizedDescription)
                 loading = false
             }
         }
     }
-}
-
-// MARK: - Offline-Gating (Paket P6, reine Entscheidungslogik, unit-testbar)
-
-/// Gemeinsame Entscheidungslogik der Offline-Bereiche "B" (Archiv, Digest,
-/// Momentum, Admin, KI, Wissen, Kontakte, Themen, Stack). Die Views reichen
-/// nur `OfflineStatusStore.isOffline` und ihren Ladezustand durch.
-enum OfflineFeatureBLogic {
-    /// Toast beim Tippen auf eine nicht verfuegbare Aktion (UX Fehlermeldungen).
-    static let blockedToast = "Offline nicht verfügbar"
-    /// Online-only-Aktion im Moment des Tippens abgebrochen (UX S11).
-    static let blockedDialogMessage = "Keine Verbindung – dein Inhalt bleibt im Dialog erhalten. Bitte versuche es erneut, sobald du wieder online bist."
-
-    /// Nie geladener Bereich -> `OfflineUnavailableView` statt Leerzustand/Fehler.
-    /// Echte leere Online-Daten (`hasContent == false`, online, kein
-    /// Transportfehler) ergeben `false` und damit den normalen Leerzustand.
-    static func showsUnavailable(isOffline: Bool, hasContent: Bool, loadFailedWithTransport: Bool) -> Bool {
-        guard !hasContent else { return false }
-        return isOffline || loadFailedWithTransport
-    }
-
-    /// Online-only-Aktion ist offline gesperrt; waehrend einer laufenden
-    /// Aktion ebenfalls (Doppeltipp-Schutz).
-    static func isActionDisabled(isOffline: Bool, isBusy: Bool = false) -> Bool {
-        isOffline || isBusy
-    }
-
-    /// Speichern-Gating: offline nie, sonst nur bei gueltiger Eingabe und ohne laufende Aktion.
-    static func canSave(isOffline: Bool, inputValid: Bool, isBusy: Bool) -> Bool {
-        !isOffline && inputValid && !isBusy
-    }
-
-    /// Nach Wiederverbindung ohne Neustart nachladen, aber nur wenn noch nichts da ist.
-    static func shouldReloadAfterConnectivityChange(wasOffline: Bool, isOffline: Bool, hasContent: Bool) -> Bool {
-        wasOffline && !isOffline && !hasContent
-    }
-
-    /// Fehlertext fuer Online-only-Aktionen: Transportfehler -> UX-Wortlaut, sonst Fallback.
-    static func message(for error: Error, fallback: String) -> String {
-        isTransportFailure(error) ? blockedDialogMessage : fallback
-    }
-
-    /// Erklaerung im Platzhalter fuer KI-Funktionen (nie zwischengespeichert).
-    static let aiUnavailableReason = OfflineUnavailableReason.custom(
-        "KI-Funktionen brauchen eine Verbindung zum Server. Sie sind verfügbar, sobald du wieder online bist.")
-
-    /// Listen, die aus dem Snapshot/Online-Stand gespeist werden: Platzhalter nur,
-    /// wenn offline, die Liste leer ist UND nie ein Stand geladen wurde
-    /// (`dataAsOf == nil`). Eine leere, aber geladene Liste bleibt normaler Leerzustand.
-    static func showsUnavailableForList(isOffline: Bool, isEmpty: Bool, dataAsOf: Date?) -> Bool {
-        isOffline && isEmpty && dataAsOf == nil
-    }
-
-    /// Server-Calls fuer Online-only-Bereiche sind offline nutzlos.
-    static func shouldPerformRequest(isOffline: Bool) -> Bool { !isOffline }
 }
