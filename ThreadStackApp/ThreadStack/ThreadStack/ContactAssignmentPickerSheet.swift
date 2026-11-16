@@ -279,10 +279,7 @@ func loadAssignedContactIds(state: AppState, refType: String, refId: String?) as
         let assignments = try await state.loadAssignments(refType: refType, refId: refId)
         return .success(Set(assignments.map(\.contactId)))
     } catch {
-        let message = isTransportFailure(error)
-            ? "Keine Verbindung — bitte erneut versuchen, sobald du wieder online bist."
-            : "Ansprechpartner konnten nicht geladen werden."
-        return .failure(message)
+        return .failure(OfflineGating.message(for: error, fallback: "Ansprechpartner konnten nicht geladen werden."))
     }
 }
 
