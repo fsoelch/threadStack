@@ -37,6 +37,7 @@ struct LoginView: View {
     @State private var loading = false
     @State private var showSettings = false
     @State private var rememberWithBiometry = true
+    @State private var didAutoBiometricAttempt = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -106,7 +107,7 @@ struct LoginView: View {
                     if Keychain.biometryAvailable {
                         Toggle(isOn: $rememberWithBiometry) {
                             Label("Mit \(Keychain.biometryTypeDescription) merken",
-                                  systemImage: biometryIconName)
+                                  systemImage: Keychain.biometryIconName)
                                 .font(.footnote)
                         }
                     }
@@ -128,6 +129,20 @@ struct LoginView: View {
                     .tint(DS.brandIndigo)
                     .disabled(loading || username.isEmpty || password.isEmpty)
                     .controlSize(.large)
+
+                    if state.hasStoredCredentials {
+                        Button {
+                            Task { await doBiometricLogin() }
+                        } label: {
+                            Label("Mit \(Keychain.biometryTypeDescription) anmelden",
+                                  systemImage: Keychain.biometryIconName)
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(DS.brandIndigo)
+                        .disabled(loading)
+                        .controlSize(.large)
+                    }
                 }
             }
             .padding(32)
@@ -153,6 +168,14 @@ struct LoginView: View {
         .sheet(isPresented: $showSettings) { SettingsURLView() }
         .onAppear {
             if mode == .reauth, username.isEmpty { username = state.currentUser?.username ?? "" }
+        }
+        .task {
+            // Re-Auth-Sheet (Sitzung abgelaufen, z.B. weil die Erneuerung im Hintergrund keinen
+            // Face-ID-Dialog zeigen durfte): genau einmal automatisch Face ID anbieten.
+            if mode == .reauth, !didAutoBiometricAttempt, state.hasStoredCredentials {
+                didAutoBiometricAttempt = true
+                await doBiometricLogin()
+            }
         }
         .alert(LoginOfflineTexts.discardAlertTitle, isPresented: $showDiscardConfirm) {
             Button(LoginOfflineTexts.discardConfirm, role: .destructive) {
@@ -181,12 +204,28 @@ struct LoginView: View {
         }
     }
 
-    private var biometryIconName: String {
-        switch Keychain.biometryTypeDescription {
-        case "Face ID":  return "faceid"
-        case "Touch ID": return "touchid"
-        case "Optic ID": return "opticid"
-        default:         return "lock.shield"
+    /// Anmeldung mit den biometrisch geschuetzten, gespeicherten Zugangsdaten - ohne Benutzername/Passwort.
+    /// `.initial` (z.B. nach Abmelden): wie der Lock-Screen (`unlockAndAutoLogin`). `.reauth`: Sitzung mit den
+    /// gespeicherten Zugangsdaten erneuern und die Warteschlange senden.
+    private func doBiometricLogin() async {
+        error = nil; loading = true
+        defer { loading = false }
+        if mode == .reauth {
+            if await state.tryServerReLogin() {
+                await state.refreshAfterReauth()
+            } else if !state.hasStoredCredentials {
+                error = KeychainError.itemNotFound.errorDescription
+            }
+            return
+        }
+        do {
+            try await state.unlockAndAutoLogin()
+        } catch KeychainError.userCancelled {
+            // Abgebrochen: Formular bzw. erneuter Versuch per Button bleiben moeglich.
+        } catch KeychainError.itemNotFound {
+            state.forgetStoredCredentials()
+        } catch {
+            self.error = LoginOfflineTexts.message(for: error)
         }
     }
 }

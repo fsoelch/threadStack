@@ -53,6 +53,16 @@ enum Keychain {
         }
     }
 
+    /// SF-Symbol passend zur Biometrie-Art (gemeinsam fuer Lock-Screen und Login).
+    static var biometryIconName: String {
+        switch biometryTypeDescription {
+        case "Face ID":  return "faceid"
+        case "Touch ID": return "touchid"
+        case "Optic ID": return "opticid"
+        default:         return "lock.shield"
+        }
+    }
+
     /// Speichert Username + Passwort verschlüsselt, geschützt durch Biometrie (Fallback: Geräte-Passcode).
     /// Speicherung ausschließlich auf diesem Gerät (kein iCloud-Sync).
     static func save(username: String, password: String) throws {
@@ -86,6 +96,7 @@ enum Keychain {
         ]
         let status = SecItemAdd(attrs as CFDictionary, nil)
         if status != errSecSuccess { throw KeychainError.unhandled(status) }
+        storedHint = true
     }
 
     /// Liefert die Credentials nach erfolgreichem Biometrie-Prompt.
@@ -128,19 +139,41 @@ enum Keychain {
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
+        storedHint = false
     }
 
     /// Prüft ob Credentials gespeichert sind — OHNE Biometrie-Prompt auszulösen.
+    ///
+    /// Frueher per `kSecUseAuthenticationUISkip`: laut Apple werden Biometrie-geschuetzte Eintraege damit
+    /// UEBERSPRUNGEN (`errSecItemNotFound`) - die App hielt die Anmeldedaten dann fuer "nicht vorhanden"
+    /// und zeigte nach Ablauf der Server-Sitzung das Login-Formular statt Face ID. Jetzt: LAContext mit
+    /// `interactionNotAllowed` (offizieller Ersatz) PLUS ein nicht-geheimer Merker in den UserDefaults
+    /// als Rueckfallebene. Stimmt der Merker nicht mehr (Eintrag fehlt doch), endet das Entsperren mit
+    /// `itemNotFound`, und der Lock-Screen faellt sauber auf das Login-Formular zurueck.
     static var hasStoredCredentials: Bool {
+        keychainItemExists || storedHint
+    }
+
+    private static var keychainItemExists: Bool {
+        let ctx = LAContext()
+        ctx.interactionNotAllowed = true
         let query: [String: Any] = [
-            kSecClass as String:               kSecClassGenericPassword,
-            kSecAttrService as String:         service,
-            kSecAttrAccount as String:         account,
-            kSecMatchLimit as String:          kSecMatchLimitOne,
-            kSecUseAuthenticationUI as String: kSecUseAuthenticationUISkip,
+            kSecClass as String:                    kSecClassGenericPassword,
+            kSecAttrService as String:              service,
+            kSecAttrAccount as String:              account,
+            kSecMatchLimit as String:               kSecMatchLimitOne,
+            kSecReturnAttributes as String:         true,
+            kSecUseAuthenticationContext as String: ctx,
         ]
         let status = SecItemCopyMatching(query as CFDictionary, nil)
         // errSecInteractionNotAllowed = Item existiert, würde aber Auth verlangen → es ist also da.
         return status == errSecSuccess || status == errSecInteractionNotAllowed
+    }
+
+    /// Nicht-geheimer Merker "es wurden Anmeldedaten mit Biometrie gespeichert" (enthaelt keine Zugangsdaten).
+    private static let storedHintKey = "com.threadstack.app.credentialsStoredHint"
+    private static var storedHint: Bool {
+        get { UserDefaults.standard.bool(forKey: storedHintKey) }
+        set { UserDefaults.standard.set(newValue, forKey: storedHintKey) }
     }
 }

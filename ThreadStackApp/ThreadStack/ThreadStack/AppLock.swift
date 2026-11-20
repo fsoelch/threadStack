@@ -43,7 +43,7 @@ struct LockScreenView: View {
                 ProgressView()
             } else {
                 Button { Task { await unlock() } } label: {
-                    Label("Entsperren", systemImage: lockIconName)
+                    Label("Entsperren", systemImage: Keychain.biometryIconName)
                         .frame(maxWidth: 220)
                 }
                 .buttonStyle(.borderedProminent)
@@ -83,14 +83,6 @@ struct LockScreenView: View {
         } message: {
             Text("Beim nächsten Start musst du dich wieder mit Server-URL, Benutzername und Passwort anmelden.")
         }
-    }
-
-    private var lockIconName: String {
-        let t = Keychain.biometryTypeDescription
-        if t == "Face ID"  { return "faceid" }
-        if t == "Touch ID" { return "touchid" }
-        if t == "Optic ID" { return "opticid" }
-        return "lock"
     }
 
     private func unlock() async {
