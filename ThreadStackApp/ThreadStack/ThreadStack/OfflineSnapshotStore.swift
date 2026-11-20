@@ -6,9 +6,9 @@ import Foundation
 //  im geschuetzten `UserScopedFileStore` (Namespace "Offline").
 
 struct OfflineSnapshotStore {
-    static let snapshotFile = "snapshot"
-    static let progressCacheFile = "progress_cache"
-    static let markerFile = "session"
+    nonisolated static let snapshotFile = "snapshot"
+    nonisolated static let progressCacheFile = "progress_cache"
+    nonisolated static let markerFile = "session"
     static let maxProgressRefs = 300
     private static let schemaVersion = 1
 

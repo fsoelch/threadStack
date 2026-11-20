@@ -18,7 +18,7 @@ import SwiftUI
 // MARK: - Reine Logik (testbar)
 
 enum OfflineGating {
-    static func isLocal(_ id: String) -> Bool { OfflineIds.isLocal(id) }
+    nonisolated static func isLocal(_ id: String) -> Bool { OfflineIds.isLocal(id) }
 
     /// Aktionen ohne Bezug zu einem bestehenden Eintrag, die nur online gehen
     /// (Meeting bearbeiten, KI, Archiv ...). `nil` = erlaubt.

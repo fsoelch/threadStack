@@ -209,7 +209,7 @@ final class OfflineSyncAPI {
 
     // MARK: Helfer
 
-    private static func nonEmpty(_ s: String) -> String? {
+    nonisolated private static func nonEmpty(_ s: String) -> String? {
         s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : s
     }
 

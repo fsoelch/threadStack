@@ -33,9 +33,9 @@ struct OfflineSessionMarker: Codable, Equatable {
 }
 
 enum OfflineIds {
-    static let localPrefix = "local-"
+    nonisolated static let localPrefix = "local-"
 
-    static func isLocal(_ id: String) -> Bool { id.hasPrefix(localPrefix) }
+    nonisolated static func isLocal(_ id: String) -> Bool { id.hasPrefix(localPrefix) }
 
     /// `^[A-Za-z0-9_-]{1,64}$` und nicht lokal. Pflicht vor jedem Pfadaufbau.
     static func isSafeServerId(_ id: String) -> Bool {
